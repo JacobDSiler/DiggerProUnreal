@@ -1,0 +1,102 @@
+#pragma once
+
+#include "CoreMinimal.h"
+#include "UObject/NoExportTypes.h"
+#include "SparseVoxelGrid.generated.h"
+
+class ADiggerManager;
+// Forward declaration
+class UVoxelChunk;
+
+// Struct to hold SDF value and possibly other data like voxel material, etc.
+USTRUCT()
+struct FVoxelData
+{
+	GENERATED_BODY()
+
+	// SDF value for marching cubes (negative inside, positive outside, zero on the surface)
+	float SDFValue;
+
+	// Optionally, additional data like material or color can be stored here
+	// Example: int32 MaterialID;
+
+	FVoxelData() : SDFValue(0.0f) {}
+	FVoxelData(float InSDFValue) : SDFValue(InSDFValue) {}
+};
+
+UCLASS()
+class DIGGERPROUNREAL_API USparseVoxelGrid : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	USparseVoxelGrid();  // Add this line to declare the constructor
+
+	void Initialize(FIntVector ParentChunkPosition);
+	void InitializeDiggerManager();
+
+	void SetDensityAt(FVector Position, float Density);
+	float GetDensityAt(FVector Position) const;
+	
+	// Adds a voxel at the given coordinates with the provided SDF value
+	void SetVoxel(FIntVector Position, float SDFValue);
+	void SetVoxel(int32 X, int32 Y, int32 Z, float SDFValue);
+
+	// Retrieves the voxel's SDF value; returns true if the voxel exists
+	float GetVoxel(int32 X, int32 Y, int32 Z) const;
+
+	// Method to get all voxel data
+	TMap<FVector, float> GetVoxels() const;
+	
+	// Checks if a voxel exists at the given coordinates
+	bool VoxelExists(int32 X, int32 Y, int32 Z) const;
+	
+	// Logs the current voxels and their SDF values
+	void LogVoxelData() const;
+	void RenderVoxels();
+
+	// Converts world-space coordinates to voxel-space coordinates
+	FIntVector WorldToVoxelSpace(const FVector& WorldPosition, float SubdividedVoxelSize);
+
+	// Converts voxel-space coordinates to world-space coordinates
+	FVector3d VoxelToWorldSpace(const FIntVector& VoxelPosition, float SubdividedVoxelSize);
+
+	void SetParentChunkCoordinates(FIntVector& NewParentChunkPosition)
+	{
+		this->ParentChunkCoordinates = NewParentChunkPosition;
+	}
+	
+	
+	FVector3d GetParentChunkCoordinatesV3D() const
+	{
+		float X=ParentChunkCoordinates.X;
+		float Y=ParentChunkCoordinates.Y;
+		float Z=ParentChunkCoordinates.Z;
+		return FVector3d(X,Y,Z);
+	}
+	
+	FIntVector GetParentChunkCoordinates() const
+	{
+		return ParentChunkCoordinates;
+	}
+
+
+	
+private:
+	// The sparse voxel data map, keyed by 3D coordinates, storing FVoxelData
+	TMap<FIntVector, FVoxelData> VoxelData;
+
+	int32 ChunkSize = 32;  // Number of subdivisions per grid size
+
+	//The VoxelSize which will be set to the VoxelSize within DiggerManager during InitializeDiggerManager;
+	int VoxelSize=100;
+	
+	//Reference to the DiggerManager
+	UPROPERTY()
+	ADiggerManager* DiggerManager;
+	
+	// Declare but don't initialize here
+	UPROPERTY()
+	FIntVector ParentChunkCoordinates;
+	
+};
