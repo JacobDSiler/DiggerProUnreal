@@ -29,40 +29,33 @@ void USparseVoxelGrid::InitializeDiggerManager()
         DiggerManager = *It;
         if (DiggerManager)
             ChunkSize=DiggerManager->ChunkSize;
-                VoxelSize=DiggerManager->VoxelSize;
+            TerrainGridSize=DiggerManager->TerrainGridSize;
+            Subdivisions=DiggerManager->Subdivisions;
+            VoxelSize=DiggerManager->VoxelSize;
             break;
     }
 }
 
 
-FIntVector USparseVoxelGrid::WorldToVoxelSpace(const FVector& WorldPosition, float SubdividedVoxelSize)
+FIntVector USparseVoxelGrid::WorldToVoxelSpace(const FVector& WorldPosition, float SubdividedVoxelSize) const
 {
-    UE_LOG(LogTemp, Warning, TEXT("VoxelToWorldSpace turns coordinates: X=%f Y=%f Z=%f"), 
-WorldPosition.X, WorldPosition.Y, WorldPosition.Z);
-    UE_LOG(LogTemp, Warning, TEXT("VoxelToWorldSpace results in coordinates: X=%lld Y=%lld Z=%lld"), 
-FMath::FloorToInt(WorldPosition.X / SubdividedVoxelSize),         FMath::FloorToInt(WorldPosition.Y / SubdividedVoxelSize),         FMath::FloorToInt(WorldPosition.Z / SubdividedVoxelSize));
-    
+    FVector ChunkMinCorner = GetParentChunkCoordinatesV3D() * ChunkSize * TerrainGridSize / 2.0f;
+    FVector AdjustedPosition = WorldPosition - ChunkMinCorner;
     return FIntVector(
-        FMath::FloorToInt(WorldPosition.X / SubdividedVoxelSize),
-        FMath::FloorToInt(WorldPosition.Y / SubdividedVoxelSize),
-        FMath::FloorToInt(WorldPosition.Z / SubdividedVoxelSize)
+        FMath::FloorToInt(AdjustedPosition.X / SubdividedVoxelSize),
+        FMath::FloorToInt(AdjustedPosition.Y / SubdividedVoxelSize),
+        FMath::FloorToInt(AdjustedPosition.Z / SubdividedVoxelSize)
     );
 }
 
+
 // Converts voxel-space coordinates to world-space coordinates
-FVector3d USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelPosition, float SubdividedVoxelSize)
+FVector USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelPosition, float SubdividedVoxelSize) const
 {
-    UE_LOG(LogTemp, Warning, TEXT("VoxelToWorldSpace turns coordinates: X=%d Y=%d Z=%d"), 
-VoxelPosition.X, VoxelPosition.Y, VoxelPosition.Z);
-    UE_LOG(LogTemp, Warning, TEXT("VoxelToWorldSpace results in coordinates: X=%f Y=%f Z=%f"), 
-VoxelPosition.X * SubdividedVoxelSize, VoxelPosition.Y * SubdividedVoxelSize, VoxelPosition.Z * SubdividedVoxelSize);
-    
-    return FVector(
-        VoxelPosition.X * SubdividedVoxelSize,
-        VoxelPosition.Y * SubdividedVoxelSize,
-        VoxelPosition.Z * SubdividedVoxelSize
-    );
+    FVector ChunkMinCorner = GetParentChunkCoordinatesV3D() * ChunkSize * TerrainGridSize / 2.0f;
+    return ChunkMinCorner + FVector(VoxelPosition) * SubdividedVoxelSize;
 }
+
 
 void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue)
 {
@@ -156,31 +149,21 @@ void USparseVoxelGrid::RenderVoxels()
 
     for (const auto& VoxelPair : VoxelData)
     {
-        FVector Position = FVector(VoxelPair.Key) * VoxelSize;
+        FVector Position = VoxelToWorldSpace(VoxelPair.Key, TerrainGridSize / Subdivisions);
+        FVector VoxelExtent = FVector(TerrainGridSize / (2.0f * Subdivisions));
+
         float SDFValue = VoxelPair.Value.SDFValue;
+        FColor VoxelColor = (SDFValue < 0.0f) ? FColor::Red : (SDFValue > 0.0f) ? FColor::Green : FColor::Yellow;
 
-        // Determine the color based on the SDF value
-        FColor VoxelColor;
-        if (SDFValue < 0.0f)
-        {
-            VoxelColor = FColor::Red;  // Solid voxel (inside the surface)
-        }
-        else if (SDFValue > 0.0f)
-        {
-            VoxelColor = FColor::Green;  // Air voxel (outside the surface)
-        }
-        else
-        {
-            VoxelColor = FColor::Yellow;  // Surface voxel (SDF = 0)
-        }
-
-        // Log voxel's SDF value and position
         UE_LOG(LogTemp, Warning, TEXT("Voxel at position: X=%f Y=%f Z=%f | SDFValue=%f"), Position.X, Position.Y, Position.Z, SDFValue);
 
-        // Render the voxel using the determined color
         DrawDebugPoint(World, Position, 10.0f, VoxelColor, false, 10.0f);
-        DrawDebugBox(World, Position, FVector(VoxelSize * 0.5f), VoxelColor, false, 10.0f);
+        DrawDebugBox(World, Position, VoxelExtent, VoxelColor, false, 10.0f);
     }
 }
+
+
+
+
 
 

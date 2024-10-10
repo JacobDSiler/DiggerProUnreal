@@ -130,11 +130,11 @@ void UVoxelBrushShape::ApplyCubeBrush(FVector3d BrushPosition)
         return;
     }
     // Example logic for cube brush: Iterate over chunk voxels and modify SDF values
-    for (int32 X = 0; X < TargetChunk->ChunkSize; ++X)
+    for (int32 X = 0; X < TargetChunk->GetChunkSize(); ++X)
     {
-        for (int32 Y = 0; Y < TargetChunk->ChunkSize; ++Y)
+        for (int32 Y = 0; Y < TargetChunk->GetChunkSize(); ++Y)
         {
-            for (int32 Z = 0; Z < TargetChunk->ChunkSize; ++Z)
+            for (int32 Z = 0; Z < TargetChunk->GetChunkSize(); ++Z)
             {
                 FVector VoxelPosition = FVector(X, Y, Z) * TargetChunk->GetVoxelSize();
                 if (FVector::Dist(BrushLocation, VoxelPosition) < BrushSize)

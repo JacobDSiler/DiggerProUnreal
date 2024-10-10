@@ -398,7 +398,7 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 
     		UE_LOG(LogTemp, Warning, TEXT("GenerateMesh() GetVoxel called with position: X=%f, Y=%f, Z=%f, returning SDF=%f"), P[i].X, P[i].Y, P[i].Z, V[i]);
 
-    		if (!ChunkPtr->IsValidLocalCoordinate(VoxelCoord.X, VoxelCoord.Y, VoxelCoord.Z))
+    		if (!ChunkPtr->IsValidChunkLocalCoordinate(VoxelCoord.X, VoxelCoord.Y, VoxelCoord.Z))
     		{
     			UE_LOG(LogTemp, Warning, TEXT("Invalid voxel position at corner [%d]"), i);
     			continue;

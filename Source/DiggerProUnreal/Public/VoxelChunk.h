@@ -28,7 +28,7 @@ public:
 	// Function to create a sphere-shaped voxel grid
 	void CreateSphereVoxelGrid(float Radius) const;
 
-	bool IsValidLocalCoordinate(int32 LocalX, int32 LocalY, int32 LocalZ) const;
+	bool IsValidChunkLocalCoordinate(int32 LocalX, int32 LocalY, int32 LocalZ) const;
 	// Sets a voxel's SDF value in the chunk
 	void SetVoxel(int32 X, int32 Y, int32 Z, float SDFValue) const;
 	void SetVoxel(const FVector& Position, float SDFValue) const;
@@ -45,12 +45,18 @@ public:
 	// Generates mesh data by delegating to the MarchingCubes class
 	void GenerateMesh() const;
 
-	// Define the chunk size as a public member
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Chunk Settings")
-	int32 ChunkSize = 64;
 
 private:
 	FIntVector ChunkCoordinates;
+
+public:
+	[[nodiscard]] int32 GetChunkSize() const
+	{
+		return ChunkSize;
+	}
+
+private:
+	int32 ChunkSize;
 	int16 TerrainGridSize;  // Default size of 1 meter
 	int8 Subdivisions;
 	int16 VoxelSize;

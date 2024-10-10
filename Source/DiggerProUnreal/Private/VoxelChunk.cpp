@@ -58,7 +58,8 @@ void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates)
 		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null during chunk initialization!"));
 		return;
 	}
-	
+
+	ChunkSize=DiggerManager->ChunkSize;
 	TerrainGridSize = DiggerManager->TerrainGridSize;
 	Subdivisions = DiggerManager->Subdivisions;
 	VoxelSize = TerrainGridSize/Subdivisions;
@@ -82,24 +83,17 @@ void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates)
 
 void UVoxelChunk::DebugDrawChunk() const
 {
-	// Get the world context for the chunk
 	UWorld* World = GetWorld();
 	if (!World) return;
 
-	UE_LOG(LogTemp, Log, TEXT("DebugDrawChunk: World is valid, continuing..."));
-	UE_LOG(LogTemp, Log, TEXT("DebugDrawChunk: World is valid, continuing..."));
-	UE_LOG(LogTemp, Log, TEXT("DebugDrawChunk: World is valid, continuing..."));
-	UE_LOG(LogTemp, Log, TEXT("DebugDrawChunk: World is valid, continuing..."));
-	UE_LOG(LogTemp, Log, TEXT("DebugDrawChunk: World is valid, continuing..."));
-	UE_LOG(LogTemp, Log, TEXT("DebugDrawChunk: World is valid, continuing..."));
-	UE_LOG(LogTemp, Log, TEXT("DebugDrawChunk: World is valid, continuing..."));
-	
-	const FVector ChunkCenter = FVector(ChunkCoordinates * ChunkSize * VoxelSize); // Position in world space
-	const FVector ChunkExtent = FVector(ChunkSize * VoxelSize / 2.0f); // Half the size of the chunk
+	FVector ChunkCenter = FVector(ChunkCoordinates) * ChunkSize * TerrainGridSize / 2.0f;
+	FVector ChunkExtent = FVector(ChunkSize * VoxelSize / 2.0f); 
 
-	// Draw the bounding box of the chunk
-	DrawDebugBox(World, ChunkCenter, ChunkExtent, FColor::Red, false, 10.0f); // Display for 10 seconds
+	UE_LOG(LogTemp, Warning, TEXT("DebugDrawChunk: World is valid, continuing to render the chunk bounds."));
+	DrawDebugBox(World, ChunkCenter, ChunkExtent, FColor::Red, false, 10.0f);
 }
+
+
 
 
 void UVoxelChunk::MarkDirty()
@@ -169,7 +163,7 @@ void UVoxelChunk::ForceUpdate()
 
 
 
-bool UVoxelChunk::IsValidLocalCoordinate(int32 LocalX, int32 LocalY, int32 LocalZ) const
+bool UVoxelChunk::IsValidChunkLocalCoordinate(int32 LocalX, int32 LocalY, int32 LocalZ) const
 {
 	// Check if the coordinates are within valid bounds
 	return (LocalX >= 0 && LocalX < ChunkSize) &&
@@ -180,7 +174,7 @@ bool UVoxelChunk::IsValidLocalCoordinate(int32 LocalX, int32 LocalY, int32 Local
 
 void UVoxelChunk::SetVoxel(int32 X, int32 Y, int32 Z, const float SDFValue) const
 {
-	if (SparseVoxelGrid && IsValidLocalCoordinate(X, Y, Z))
+	if (SparseVoxelGrid && IsValidChunkLocalCoordinate(X, Y, Z))
 	{
 		SparseVoxelGrid->SetVoxel(X, Y, Z, SDFValue);
 	}
@@ -198,7 +192,7 @@ void UVoxelChunk::SetVoxel(const FVector& Position, const float SDFValue) const
 float UVoxelChunk::GetVoxel(int32 X, int32 Y, int32 Z) const
 {
 	// Check if the coordinate is out of bounds
-	if (!IsValidLocalCoordinate(X, Y, Z))
+	if (!IsValidChunkLocalCoordinate(X, Y, Z))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Attempt to access out-of-bounds voxel at X=%d, Y=%d, Z=%d"), X, Y, Z);
 		return 1.0f;  // Return default air value for out-of-bounds voxels
@@ -219,7 +213,7 @@ float UVoxelChunk::GetVoxel(const FVector& Position) const
 	int32 Z = Position.Z;
 	
 	// Check if the coordinate is out of bounds
-	if (!IsValidLocalCoordinate(X, Y, Z))
+	if (!IsValidChunkLocalCoordinate(X, Y, Z))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Attempt to access out-of-bounds voxel at X=%d, Y=%d, Z=%d"), X, Y, Z);
 		return 1.0f;  // Return default air value for out-of-bounds voxels

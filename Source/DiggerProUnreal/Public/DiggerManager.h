@@ -24,7 +24,7 @@ protected:
 public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
-	int32 ChunkSize = 32;  // Number of subdivisions per grid size
+	int32 ChunkSize = 4;  // Number of subdivisions per grid size
 	
 	// Chunk and grid settings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")

@@ -297,8 +297,7 @@ void ADiggerManager::CreateSphereVoxelGrid(UVoxelChunk* Chunk, float Radius)
             }
         }
     }
-	GenerateAxesAlignedVoxelsInChunk(Chunk);
-	Chunk->GetSparseVoxelGrid()->RenderVoxels();
+
 }
 
 void ADiggerManager::PlaceVoxelForVoxelLine(UVoxelChunk* Chunk, USparseVoxelGrid* VoxelGrid, int32 X, int32 Y, int32 Z)
@@ -316,19 +315,33 @@ void ADiggerManager::PlaceVoxelForVoxelLine(UVoxelChunk* Chunk, USparseVoxelGrid
 void ADiggerManager::GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk)
 {
 	if (!Chunk) return;
-	
-	USparseVoxelGrid* VoxelGrid= Chunk->GetSparseVoxelGrid();
-	// Start at the local origin (0,0,0) in chunk space.
-	// Iterate through every voxel in the chunk in the x, y, and z to make a single row of voxels along these axes.
-	for (int32 X = 0; X < ChunkSize; ++X)
-	{PlaceVoxelForVoxelLine(Chunk, VoxelGrid, X, 0, 0);}
-	for (int32 Y = 0; Y < ChunkSize; ++Y)
-	{PlaceVoxelForVoxelLine(Chunk, VoxelGrid, 0, Y, 0);}
-	for (int32 Z = 0; Z < ChunkSize; ++Z)
-	{PlaceVoxelForVoxelLine(Chunk, VoxelGrid, 0, 0, Z);}
-	// After filling the chunk, generate the mesh from the filled voxel data
-	Chunk->GenerateMesh();
+
+	USparseVoxelGrid* VoxelGrid = Chunk->GetSparseVoxelGrid();
+	int32 ChunkVoxels = ChunkSize;  // No need for additional scaling factors
+	int32 HalfChunkVoxels = ChunkVoxels / 2;
+
+	// Iterate through the center line of each axis from -HalfChunkVoxels to HalfChunkVoxels
+	for (int32 X = -HalfChunkVoxels; X < HalfChunkVoxels; ++X)
+	{
+		VoxelGrid->SetVoxel(FIntVector(X, 0, 0), -1.0f);  // Center Y and Z
+	}
+	for (int32 Y = -HalfChunkVoxels; Y < HalfChunkVoxels; ++Y)
+	{
+		VoxelGrid->SetVoxel(FIntVector(0, Y, 0), 1.0f);
+	}
+	for (int32 Z = -HalfChunkVoxels; Z < HalfChunkVoxels; ++Z)
+	{
+		VoxelGrid->SetVoxel(FIntVector(0, 0, Z), -1.0f);
+	}
+
+	// Generate the mesh after setting all voxels
+	//Chunk->GenerateMesh();
 }
+
+
+
+
+
 
 
 void ADiggerManager::GenerateVoxelsTest()
@@ -337,5 +350,7 @@ void ADiggerManager::GenerateVoxelsTest()
 	FIntVector ChunkLocation = FIntVector(0,0,0);
 	ZeroChunk = GetOrCreateChunkAt(ChunkLocation);
 	if(!ZeroChunk) return;
-		CreateSphereVoxelGrid(ZeroChunk, 50.f);
+	GenerateAxesAlignedVoxelsInChunk(ZeroChunk);
+	ZeroChunk->GetSparseVoxelGrid()->RenderVoxels();
+		//CreateSphereVoxelGrid(ZeroChunk, 50.f);
 }

@@ -56,10 +56,10 @@ public:
 	void RenderVoxels();
 
 	// Converts world-space coordinates to voxel-space coordinates
-	FIntVector WorldToVoxelSpace(const FVector& WorldPosition, float SubdividedVoxelSize);
+	FIntVector WorldToVoxelSpace(const FVector& WorldPosition, float SubdividedVoxelSize) const;
 
 	// Converts voxel-space coordinates to world-space coordinates
-	FVector3d VoxelToWorldSpace(const FIntVector& VoxelPosition, float SubdividedVoxelSize);
+	FVector3d VoxelToWorldSpace(const FIntVector& VoxelPosition, float SubdividedVoxelSize) const;
 
 	void SetParentChunkCoordinates(FIntVector& NewParentChunkPosition)
 	{
@@ -98,5 +98,6 @@ private:
 	// Declare but don't initialize here
 	UPROPERTY()
 	FIntVector ParentChunkCoordinates;
-	
+	int TerrainGridSize;
+	int Subdivisions;
 };
