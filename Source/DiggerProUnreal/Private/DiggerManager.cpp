@@ -312,12 +312,12 @@ void ADiggerManager::PlaceVoxelForVoxelLine(UVoxelChunk* Chunk, USparseVoxelGrid
 	Chunk->SetVoxel(X, Y, Z, bIsSolid);
 }
 
-void ADiggerManager::GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk)
+void ADiggerManager::GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk) const
 {
 	if (!Chunk) return;
 
 	USparseVoxelGrid* VoxelGrid = Chunk->GetSparseVoxelGrid();
-	int32 ChunkVoxels = ChunkSize;  // No need for additional scaling factors
+	int32 ChunkVoxels = ChunkSize;
 	int32 HalfChunkVoxels = ChunkVoxels / 2;
 
 	// Iterate through the center line of each axis from -HalfChunkVoxels to HalfChunkVoxels
@@ -337,10 +337,6 @@ void ADiggerManager::GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk)
 	// Generate the mesh after setting all voxels
 	//Chunk->GenerateMesh();
 }
-
-
-
-
 
 
 

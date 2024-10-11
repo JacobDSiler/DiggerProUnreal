@@ -24,7 +24,7 @@ protected:
 public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
-	int32 ChunkSize = 4;  // Number of subdivisions per grid size
+	int32 ChunkSize = 8;  // Number of subdivisions per grid size
 	
 	// Chunk and grid settings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
@@ -84,7 +84,7 @@ private:
 
 	void CreateSphereVoxelGrid(UVoxelChunk* Chunk, float Radius);
 	void PlaceVoxelForVoxelLine(UVoxelChunk* Chunk, USparseVoxelGrid* VoxelGrid, int32 X, int32 Y, int32 Z);
-	void GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk);
+	void GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk) const;
 	// Handle the generation of mesh using marching cubes
 	void GenerateVoxelsTest();
 };

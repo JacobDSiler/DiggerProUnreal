@@ -34,6 +34,8 @@ public:
 
 	void Initialize(FIntVector ParentChunkPosition);
 	void InitializeDiggerManager();
+	FIntVector WorldToVoxelSpace(const FVector& WorldPosition, float SubdividedVoxelSize);
+	FVector VoxelToWorldSpace(const FIntVector& VoxelPosition, float SubdividedVoxelSize);
 
 	void SetDensityAt(FVector Position, float Density);
 	float GetDensityAt(FVector Position) const;

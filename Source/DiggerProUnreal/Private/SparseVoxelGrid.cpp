@@ -37,7 +37,7 @@ void USparseVoxelGrid::InitializeDiggerManager()
 }
 
 
-FIntVector USparseVoxelGrid::WorldToVoxelSpace(const FVector& WorldPosition, float SubdividedVoxelSize) const
+FIntVector USparseVoxelGrid::WorldToVoxelSpace(const FVector& WorldPosition, float SubdividedVoxelSize)
 {
     FVector ChunkMinCorner = GetParentChunkCoordinatesV3D() * ChunkSize * TerrainGridSize / 2.0f;
     FVector AdjustedPosition = WorldPosition - ChunkMinCorner;
@@ -50,10 +50,10 @@ FIntVector USparseVoxelGrid::WorldToVoxelSpace(const FVector& WorldPosition, flo
 
 
 // Converts voxel-space coordinates to world-space coordinates
-FVector USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelPosition, float SubdividedVoxelSize) const
+FVector USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelPosition, float SubdividedVoxelSize)
 {
     FVector ChunkMinCorner = GetParentChunkCoordinatesV3D() * ChunkSize * TerrainGridSize / 2.0f;
-    return ChunkMinCorner + FVector(VoxelPosition) * SubdividedVoxelSize;
+    return ChunkMinCorner + FVector(VoxelPosition) * SubdividedVoxelSize + FVector(SubdividedVoxelSize / 2.0f); // Shift by half voxel
 }
 
 
