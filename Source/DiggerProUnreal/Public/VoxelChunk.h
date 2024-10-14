@@ -13,6 +13,9 @@ class DIGGERPROUNREAL_API UVoxelChunk : public UObject
 
 public:
 	UVoxelChunk();
+
+	FIntVector WorldToChunkCoordinates(const FVector& WorldCoords) const;
+	FVector ChunkToWorldCoordinates(const FVector& ChunkCoords) const;
 	void SetUniqueSectionIndex();
 
 	// Initializes the chunk
@@ -25,10 +28,12 @@ public:
 	void UpdateIfDirty();
 	void ForceUpdate();
 
-	// Function to create a sphere-shaped voxel grid
-	void CreateSphereVoxelGrid(float Radius) const;
-
+	bool IsValidChunkLocalCoordinate(FVector Position) const;
+	FVector GetWorldPosition(const FIntVector& VoxelCoordinates) const;
+	FVector GetWorldPosition() const;
 	bool IsValidChunkLocalCoordinate(int32 LocalX, int32 LocalY, int32 LocalZ) const;
+	FVector VoxelToWorldCoordinates(const FIntVector& VoxelCoords) const;
+	FIntVector WorldToVoxelCoordinates(const FVector& WorldCoords) const;
 	// Sets a voxel's SDF value in the chunk
 	void SetVoxel(int32 X, int32 Y, int32 Z, float SDFValue) const;
 	void SetVoxel(const FVector& Position, float SDFValue) const;
@@ -44,12 +49,18 @@ public:
 
 	// Generates mesh data by delegating to the MarchingCubes class
 	void GenerateMesh() const;
-
+	FIntVector WorldToChunkSpace(const FVector& WorldPosition) const;
+	FVector ChunkToWorldSpace(const FVector& ChunkCoords) const;
 
 private:
 	FIntVector ChunkCoordinates;
 
 public:
+	[[nodiscard]] FIntVector GetChunkPosition() const
+	{
+		return ChunkCoordinates;
+	}
+
 	[[nodiscard]] int32 GetChunkSize() const
 	{
 		return ChunkSize;

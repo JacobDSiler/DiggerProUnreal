@@ -304,7 +304,7 @@ UMarchingCubes::UMarchingCubes(const FObjectInitializer& ObjectInitializer, cons
 {
 }
 
-void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, TArray<FVector> OutVertices, TArray<int32> OutTriangles) const
+void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex,const TArray<FVector>& OutVertices,const TArray<int32>& OutTriangles) const
 {
 	// Procedural mesh building
 	TArray<FVector> Normals;
@@ -312,7 +312,9 @@ void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, TArray<FVector> 
 	TArray<FColor> VertexColors;
 	TArray<FProcMeshTangent> Tangents;
 
-	DiggerManager->ProceduralMesh->ClearMeshSection(SectionIndex);
+	
+	UE_LOG(LogTemp, Warning, TEXT("ClearMeshSection: SectionIndex = %d"), SectionIndex);
+	if(SectionIndex) DiggerManager->ProceduralMesh->ClearMeshSection(SectionIndex);
 	DiggerManager->ProceduralMesh->CreateMeshSection(
 		SectionIndex, 
 		OutVertices, 
@@ -374,18 +376,18 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
         //ind++;
 
     	// Get voxel-space coordinates from world-space position
-    	FIntVector VoxelPosition = VoxelGrid->WorldToVoxelSpace(WorldPosition, SubdividedVoxelSize);
+    	FIntVector VoxelPosition = VoxelGrid->WorldToVoxelSpace(WorldPosition);
 
     	// Define 8 corner positions of the voxel in voxel space
     	FVector P[8] = {
-    		VoxelGrid->VoxelToWorldSpace(VoxelPosition, SubdividedVoxelSize),
-			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(1, 0, 0), SubdividedVoxelSize),
-			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(1, 1, 0), SubdividedVoxelSize),
-			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(0, 1, 0), SubdividedVoxelSize),
-			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(0, 0, 1), SubdividedVoxelSize),
-			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(1, 0, 1), SubdividedVoxelSize),
-			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(1, 1, 1), SubdividedVoxelSize),
-			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(0, 1, 1), SubdividedVoxelSize)
+    		VoxelGrid->VoxelToWorldSpace(VoxelPosition),
+			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(1, 0, 0)),
+			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(1, 1, 0)),
+			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(0, 1, 0)),
+			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(0, 0, 1)),
+			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(1, 0, 1)),
+			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(1, 1, 1)),
+			VoxelGrid->VoxelToWorldSpace(VoxelPosition + FIntVector(0, 1, 1))
 		};
 
 
@@ -393,7 +395,7 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
     	float V[8];
     	for (int i = 0; i < 8; ++i)
     	{
-    		FIntVector VoxelCoord = VoxelGrid->WorldToVoxelSpace(P[i], SubdividedVoxelSize);
+    		FIntVector VoxelCoord = VoxelGrid->WorldToVoxelSpace(P[i]);
     		V[i] = VoxelGrid->GetVoxel(VoxelCoord.X, VoxelCoord.Y, VoxelCoord.Z);
 
     		UE_LOG(LogTemp, Warning, TEXT("GenerateMesh() GetVoxel called with position: X=%f, Y=%f, Z=%f, returning SDF=%f"), P[i].X, P[i].Y, P[i].Z, V[i]);

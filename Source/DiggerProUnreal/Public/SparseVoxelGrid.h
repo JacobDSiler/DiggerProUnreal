@@ -32,13 +32,11 @@ class DIGGERPROUNREAL_API USparseVoxelGrid : public UObject
 public:
 	USparseVoxelGrid();  // Add this line to declare the constructor
 
-	void Initialize(FIntVector ParentChunkPosition);
+	void Initialize(UVoxelChunk* ParentChunkReference);
 	void InitializeDiggerManager();
-	FIntVector WorldToVoxelSpace(const FVector& WorldPosition, float SubdividedVoxelSize);
-	FVector VoxelToWorldSpace(const FIntVector& VoxelPosition, float SubdividedVoxelSize);
-
-	void SetDensityAt(FVector Position, float Density);
-	float GetDensityAt(FVector Position) const;
+	FIntVector WorldToVoxelSpace(const FVector& WorldCoords);
+	FVector VoxelToWorldSpace(const FIntVector& VoxelCoords);
+	
 	
 	// Adds a voxel at the given coordinates with the provided SDF value
 	void SetVoxel(FIntVector Position, float SDFValue);
@@ -57,11 +55,11 @@ public:
 	void LogVoxelData() const;
 	void RenderVoxels();
 
-	// Converts world-space coordinates to voxel-space coordinates
+/*	// Converts world-space coordinates to voxel-space coordinates
 	FIntVector WorldToVoxelSpace(const FVector& WorldPosition, float SubdividedVoxelSize) const;
 
 	// Converts voxel-space coordinates to world-space coordinates
-	FVector3d VoxelToWorldSpace(const FIntVector& VoxelPosition, float SubdividedVoxelSize) const;
+	FVector3d VoxelToWorldSpace(const FIntVector& VoxelPosition, float SubdividedVoxelSize) const;*/
 
 	void SetParentChunkCoordinates(FIntVector& NewParentChunkPosition)
 	{
@@ -99,7 +97,21 @@ private:
 	
 	// Declare but don't initialize here
 	UPROPERTY()
+	UVoxelChunk* ParentChunk;
+
+	FIntVector WorldToChunkSpace(float x, float y, float z) const
+	{/* Calculate chunk space coordinates*/ return FIntVector(x, y, z) / (ChunkSize * TerrainGridSize);}
+
+public:
+	[[nodiscard]] UVoxelChunk* GetParentChunk() const
+	{
+		return ParentChunk;
+	}
+
+private:
+	UPROPERTY()
 	FIntVector ParentChunkCoordinates;
+	
 	int TerrainGridSize;
 	int Subdivisions;
 };

@@ -1,11 +1,9 @@
 #include "DiggerManager.h"
 
-#include "InputBehavior.h"
 #include "SparseVoxelGrid.h"
 #include "MarchingCubes.h"
 #include "VoxelChunk.h"
 #include "VoxelBrushShape.h"
-#include "Chaos/ImplicitQRSVD.h"
 
 ADiggerManager::ADiggerManager()
 {
@@ -52,25 +50,27 @@ void ADiggerManager::ApplyBrush(FVector BrushPosition, float BrushRadius)
 	}
 }
 
-FIntVector ADiggerManager::CalculateChunkPosition(const FIntVector3& WorldPosition) const
+FIntVector ADiggerManager::CalculateChunkPosition(const FIntVector& ProposedChunkPosition) const
 {
+	// Calculate world position based on chunk coordinates
+	FVector ChunkWorldPosition = FVector(ProposedChunkPosition) * ChunkSize * TerrainGridSize;
 
-	// Calculate the chunk index based on the world position
-	int32 ChunkIndexX = WorldPosition.X / ChunkSize;
-	int32 ChunkIndexY = WorldPosition.Y / ChunkSize;
-	int32 ChunkIndexZ = WorldPosition.Z / ChunkSize;
+	// Log the chunk position calculation for debugging
+	UE_LOG(LogTemp, Warning, TEXT("CalculateChunkPosition: ProposedChunkPosition = %s, ChunkWorldPosition = %s"),
+		   *ProposedChunkPosition.ToString(), *ChunkWorldPosition.ToString());
 
-	// Return the chunk position as an FIntVector
-	return FIntVector(ChunkIndexX, ChunkIndexY, ChunkIndexZ);
+	return ProposedChunkPosition;
 }
+
+
 
 FIntVector ADiggerManager::CalculateChunkPosition(const FVector3d& WorldPosition) const
 {
-
+	int32 ChunkWorldSize=ChunkSize*TerrainGridSize;
 	// Calculate the chunk index based on the world position
-	int32 ChunkIndexX = FMath::FloorToInt(WorldPosition.X / ChunkSize);
-	int32 ChunkIndexY = FMath::FloorToInt(WorldPosition.Y / ChunkSize);
-	int32 ChunkIndexZ = FMath::FloorToInt(WorldPosition.Z / ChunkSize);
+	int32 ChunkIndexX = FMath::FloorToInt(WorldPosition.X / ChunkWorldSize);
+	int32 ChunkIndexY = FMath::FloorToInt(WorldPosition.Y / ChunkWorldSize);
+	int32 ChunkIndexZ = FMath::FloorToInt(WorldPosition.Z / ChunkWorldSize);
 
 	// Return the chunk position as an FIntVector
 	return FIntVector(ChunkIndexX, ChunkIndexY, ChunkIndexZ);
@@ -78,10 +78,11 @@ FIntVector ADiggerManager::CalculateChunkPosition(const FVector3d& WorldPosition
 
 UVoxelChunk* ADiggerManager::GetOrCreateChunkAt(const FVector3d& ProposedChunkPosition)
 {
+	int32 ChunkWorldSize=ChunkSize*TerrainGridSize;
 	// Convert FVector3d to FIntVector by flooring the coordinates
-	int32 FlooredX = FMath::FloorToInt(ProposedChunkPosition.X / TerrainGridSize);
-	int32 FlooredY = FMath::FloorToInt(ProposedChunkPosition.Y / TerrainGridSize);
-	int32 FlooredZ = FMath::FloorToInt(ProposedChunkPosition.Z / TerrainGridSize);
+	int32 FlooredX = FMath::FloorToInt(ProposedChunkPosition.X / ChunkWorldSize);
+	int32 FlooredY = FMath::FloorToInt(ProposedChunkPosition.Y / ChunkWorldSize);
+	int32 FlooredZ = FMath::FloorToInt(ProposedChunkPosition.Z / ChunkWorldSize);
     
 	// Create an FIntVector from the floored coordinates
 	FIntVector ChunkCoords(FlooredX, FlooredY, FlooredZ);
@@ -90,17 +91,18 @@ UVoxelChunk* ADiggerManager::GetOrCreateChunkAt(const FVector3d& ProposedChunkPo
 	return GetOrCreateChunkAt(ChunkCoords);
 }
 
+UVoxelChunk* ADiggerManager::GetOrCreateChunkAt(const float& ProposedChunkX, const float& ProposedChunkY, const float& ProposedChunkZ)
+{ return GetOrCreateChunkAt(FIntVector(ProposedChunkX,ProposedChunkY,ProposedChunkZ));}
 
 UVoxelChunk* ADiggerManager::GetOrCreateChunkAt(const FIntVector& ProposedChunkPosition)
 {
 	// Determine the chunk position based on ProposedChunkPosition
-	FIntVector ChunkPosition = CalculateChunkPosition(ProposedChunkPosition);
+	FIntVector ChunkPosition = FIntVector(CalculateChunkPosition(ProposedChunkPosition));
 
 	// Check if the chunk already exists in the map
 	UVoxelChunk** ExistingChunk = ChunkMap.Find(ChunkPosition);
 	if (ExistingChunk)
 	{
-		// Chunk already exists
 		UE_LOG(LogTemp, Log, TEXT("Found existing chunk at position: %s"), *ChunkPosition.ToString());
 		return *ExistingChunk; // Return the existing chunk
 	}
@@ -124,6 +126,7 @@ UVoxelChunk* ADiggerManager::GetOrCreateChunkAt(const FIntVector& ProposedChunkP
 		return nullptr; // Return nullptr if creation failed
 	}
 }
+
 
 
 void ADiggerManager::UpdateChunks()
@@ -150,23 +153,19 @@ void ADiggerManager::DebugLogVoxelChunkGrid() const
 		UE_LOG(LogTemp, Warning, TEXT("No chunks in ChunkMap!"));
 		return;
 	}
-	
 
-	for (auto& Elem : ChunkMap)
+	// Assuming you have a map or array of chunks
+	for (auto& ChunkPair : ChunkMap)
 	{
-		FIntVector ChunkCoords = Elem.Key;
-		UVoxelChunk* Chunk = Elem.Value;
-
-		// Calculate the chunk's world size using ChunkSize and VoxelSize
-		int32 ChunkWorldSizeX = ChunkSize * VoxelSize;
-		int32 ChunkWorldSizeY = ChunkSize * VoxelSize;
-		int32 ChunkWorldSizeZ = ChunkSize * VoxelSize;
-
-		UE_LOG(LogTemp, Warning, TEXT("Chunk at Grid X=%d Y=%d Z=%d | World Size: (%d, %d, %d)"),
-			ChunkCoords.X, ChunkCoords.Y, ChunkCoords.Z, 
-			ChunkWorldSizeX, ChunkWorldSizeY, ChunkWorldSizeZ);
+		UVoxelChunk* Chunk = ChunkPair.Value;
+		if (Chunk)
+		{
+			Chunk->DebugDrawChunk();
+		}
 	}
 }
+
+
 
 
 void ADiggerManager::CreateSingleHole(FVector3d HoleCenter, int HoleSize)
@@ -179,7 +178,7 @@ void ADiggerManager::CreateSingleHole(FVector3d HoleCenter, int HoleSize)
 		return;
 	}*/
 
-	CreateSphereVoxelGrid(ZeroChunk, 50.f);
+	CreateSphereVoxelGrid(ZeroChunk, FVector(0,0,0), 50.f);
 /*
 	int32 CenterX = FMath::FloorToInt(HoleCenter.X / VoxelSize);
 	int32 CenterY = FMath::FloorToInt(HoleCenter.Y / VoxelSize);
@@ -228,14 +227,14 @@ void ADiggerManager::DebugVoxels()
 
 			if (Chunk && Chunk->GetSparseVoxelGrid())
 			{
-				Chunk->DebugDrawChunk(); // Visualize chunk boundaries
-				Chunk->MarkDirty();
-				Chunk->ForceUpdate();
+				DebugLogVoxelChunkGrid();
+				//Chunk->MarkDirty();
+				//Chunk->ForceUpdate();
 				USparseVoxelGrid* SparseVoxelGridPtr = Chunk->GetSparseVoxelGrid();
 				if (SparseVoxelGridPtr)
 				{
 					UE_LOG(LogTemp, Warning, TEXT("Rendering voxels for SparseVoxelGrid..."));
-					SparseVoxelGridPtr->LogVoxelData();
+					//SparseVoxelGridPtr->LogVoxelData();
 					SparseVoxelGridPtr->RenderVoxels();
 				} // Render voxels
 				UE_LOG(LogTemp, Warning, TEXT("Rendering voxels for chunk at coordinates: %s"), *ChunkCoordinates.ToString());
@@ -252,13 +251,12 @@ void ADiggerManager::DebugVoxels()
 	}
 }
 
-
-void ADiggerManager::CreateSphereVoxelGrid(UVoxelChunk* Chunk, float Radius)
+void ADiggerManager::CreateSphereVoxelGrid(UVoxelChunk* Chunk, const FVector& Position, float Radius) const
 {
-	if (!Chunk) return;
-    // Get or create the chunk at the desired position
-    FVector Center = FVector(0, 0, 0); // Center of the sphere (can be modified if needed)
-    FIntVector ChunkLocation = Chunk->GetSparseVoxelGrid()->GetParentChunkCoordinates();
+    if (!Chunk) return;
+
+    FVector Center = Position; // Center of the sphere based on the input position
+    FIntVector ChunkLocation = Chunk->GetChunkPosition() * TerrainGridSize * Subdivisions * 2;
 
     // Calculate the size of the grid based on the radius and add 1 for all sides
     int32 SphereDiameter = FMath::CeilToInt(Radius * 2.0f);
@@ -290,26 +288,13 @@ void ADiggerManager::CreateSphereVoxelGrid(UVoxelChunk* Chunk, float Radius)
                 // Clamp the SDF value between -1.0 and 1.0
                 NormalizedSDFValue = FMath::Clamp(NormalizedSDFValue, -1.0f, 1.0f);
 
-            	UE_LOG(LogTemp, Warning, TEXT("Setting voxel at X=%d, Y=%d, Z=%d with SDF=%f"), x, y, z, NormalizedSDFValue);
+                UE_LOG(LogTemp, Warning, TEXT("Setting voxel at X=%d, Y=%d, Z=%d with SDF=%f"), x, y, z, NormalizedSDFValue);
 
                 // Set the voxel in the chunk using the clamped SDF value
-                Chunk->SetVoxel(FVector3d(x, y, z), NormalizedSDFValue);
+                Chunk->SetVoxel(FVector(ChunkLocation) + FVector3d(x, y, z), NormalizedSDFValue);
             }
         }
     }
-
-}
-
-void ADiggerManager::PlaceVoxelForVoxelLine(UVoxelChunk* Chunk, USparseVoxelGrid* VoxelGrid, int32 X, int32 Y, int32 Z)
-{
-	// Calculate world position of the current voxel based on the chunk's world position
-	FVector VoxelPosition = VoxelGrid->GetParentChunkCoordinatesV3D() + FVector(X, Y, Z) * VoxelSize;
-
-	// Optionally: Check if voxel is inside a valid area, apply any function to decide whether it's solid or air
-	bool bIsSolid = true;  // Here you can use any rule to determine if a voxel is solid or air
-
-	// Add voxel to chunk grid (implement SetVoxel method in your chunk to handle voxel data)
-	Chunk->SetVoxel(X, Y, Z, bIsSolid);
 }
 
 void ADiggerManager::GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk) const
@@ -317,21 +302,35 @@ void ADiggerManager::GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk) const
 	if (!Chunk) return;
 
 	USparseVoxelGrid* VoxelGrid = Chunk->GetSparseVoxelGrid();
-	int32 ChunkVoxels = ChunkSize;
+	int32 ChunkVoxels = ChunkSize * TerrainGridSize / VoxelSize;
 	int32 HalfChunkVoxels = ChunkVoxels / 2;
+
+	// Get the chunk's world position
+	FVector WorldSpaceChunkPosition = Chunk->GetWorldPosition();
+
+	UE_LOG(LogTemp, Warning, TEXT("Generating voxels in chunk at world position: %s"), *WorldSpaceChunkPosition.ToString());
 
 	// Iterate through the center line of each axis from -HalfChunkVoxels to HalfChunkVoxels
 	for (int32 X = -HalfChunkVoxels; X < HalfChunkVoxels; ++X)
 	{
-		VoxelGrid->SetVoxel(FIntVector(X, 0, 0), -1.0f);  // Center Y and Z
+		FVector LocalVoxelPosition = FVector(X, 0, 0);
+		FVector VoxelPosition = LocalVoxelPosition + WorldSpaceChunkPosition;
+		UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s in chunk at world position %s"), *VoxelPosition.ToString(), *WorldSpaceChunkPosition.ToString());
+		Chunk->SetVoxel(X, 0, 0, 1.0f);  // Center Y and Z
 	}
 	for (int32 Y = -HalfChunkVoxels; Y < HalfChunkVoxels; ++Y)
 	{
-		VoxelGrid->SetVoxel(FIntVector(0, Y, 0), 1.0f);
+		FVector LocalVoxelPosition = FVector(0, Y, 0);
+		FVector VoxelPosition = LocalVoxelPosition + WorldSpaceChunkPosition;
+		UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s in chunk at world position %s"), *VoxelPosition.ToString(), *WorldSpaceChunkPosition.ToString());
+		Chunk->SetVoxel(0, Y, 0, 1.0f);  // Center X and Z
 	}
 	for (int32 Z = -HalfChunkVoxels; Z < HalfChunkVoxels; ++Z)
 	{
-		VoxelGrid->SetVoxel(FIntVector(0, 0, Z), -1.0f);
+		FVector LocalVoxelPosition = FVector(0, 0, Z);
+		FVector VoxelPosition = LocalVoxelPosition + WorldSpaceChunkPosition;
+		UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s in chunk at world position %s"), *VoxelPosition.ToString(), *WorldSpaceChunkPosition.ToString());
+		Chunk->SetVoxel(0, 0, Z, 1.0);  // Center X and Y
 	}
 
 	// Generate the mesh after setting all voxels
@@ -343,10 +342,14 @@ void ADiggerManager::GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk) const
 void ADiggerManager::GenerateVoxelsTest()
 {
 	// Use GetOrCreateChunkAt method to retrieve or create the chunk at ChunkLocation
-	FIntVector ChunkLocation = FIntVector(0,0,0);
-	ZeroChunk = GetOrCreateChunkAt(ChunkLocation);
+	ZeroChunk = GetOrCreateChunkAt(0,0,0);
+	FIntVector ChunkLocation = FIntVector(1, 2, 0);
+	OneChunk = GetOrCreateChunkAt(ChunkLocation);
 	if(!ZeroChunk) return;
 	GenerateAxesAlignedVoxelsInChunk(ZeroChunk);
 	ZeroChunk->GetSparseVoxelGrid()->RenderVoxels();
-		//CreateSphereVoxelGrid(ZeroChunk, 50.f);
+	if(!OneChunk) return;
+	GenerateAxesAlignedVoxelsInChunk(OneChunk);
+	OneChunk->GetSparseVoxelGrid()->RenderVoxels();
+		//CreateSphereVoxelGrid(OneChunk, FVector(0,0,0), 50.f);
 }

@@ -21,7 +21,7 @@ public:
 	// Generate the mesh based on the voxel grid
 	void GenerateMesh(const UVoxelChunk* ChunkPtr);
 
-	void ReconstructMeshSection(int32 SectionIndex, TArray<FVector> OutVertices, TArray<int32> OutTriangles) const;
+	void ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutVertices, const TArray<int32>& OutTriangles) const;
 
 	// Reference to the associated voxel chunk
 	UPROPERTY()

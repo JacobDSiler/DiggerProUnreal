@@ -3,15 +3,19 @@
 #include "DrawDebugHelpers.h"
 #include "DiggerManager.h"
 #include "EngineUtils.h"
+#include "VoxelChunk.h"
 
-USparseVoxelGrid::USparseVoxelGrid(): DiggerManager(nullptr), ParentChunkCoordinates(0, 0, 0)
+USparseVoxelGrid::USparseVoxelGrid(): DiggerManager(nullptr), ParentChunk(nullptr), ParentChunkCoordinates(0, 0, 0),
+                                      TerrainGridSize(0),
+                                      Subdivisions(0)
 {
     // Constructor logic
 }
 
-void USparseVoxelGrid::Initialize(FIntVector ParentChunkPosition)
+void USparseVoxelGrid::Initialize(UVoxelChunk* ParentChunkReference)
 {
-    ParentChunkCoordinates = ParentChunkPosition; // Store parent chunk position
+    ParentChunk=ParentChunkReference;
+    ParentChunkCoordinates = ParentChunk->GetChunkPosition();
 }
 
 void USparseVoxelGrid::InitializeDiggerManager()
@@ -37,50 +41,49 @@ void USparseVoxelGrid::InitializeDiggerManager()
 }
 
 
-FIntVector USparseVoxelGrid::WorldToVoxelSpace(const FVector& WorldPosition, float SubdividedVoxelSize)
+// Converts voxel-local coordinates to world space (using chunk world position)
+FVector USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelCoords)
 {
-    FVector ChunkMinCorner = GetParentChunkCoordinatesV3D() * ChunkSize * TerrainGridSize / 2.0f;
-    FVector AdjustedPosition = WorldPosition - ChunkMinCorner;
-    return FIntVector(
-        FMath::FloorToInt(AdjustedPosition.X / SubdividedVoxelSize),
-        FMath::FloorToInt(AdjustedPosition.Y / SubdividedVoxelSize),
-        FMath::FloorToInt(AdjustedPosition.Z / SubdividedVoxelSize)
+    return ParentChunk->GetWorldPosition() + FVector(
+        VoxelCoords.X * VoxelSize,
+        VoxelCoords.Y * VoxelSize,
+        VoxelCoords.Z * VoxelSize
     );
 }
 
-
-// Converts voxel-space coordinates to world-space coordinates
-FVector USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelPosition, float SubdividedVoxelSize)
+// Converts world space to voxel-local coordinates (for a specific chunk)
+FIntVector USparseVoxelGrid::WorldToVoxelSpace(const FVector& WorldCoords)
 {
-    FVector ChunkMinCorner = GetParentChunkCoordinatesV3D() * ChunkSize * TerrainGridSize / 2.0f;
-    return ChunkMinCorner + FVector(VoxelPosition) * SubdividedVoxelSize + FVector(SubdividedVoxelSize / 2.0f); // Shift by half voxel
+    return FIntVector((WorldCoords - ParentChunk->GetWorldPosition()) / VoxelSize);
 }
+
 
 
 void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue)
 {
-    FVoxelData NewVoxelData(SDFValue);
-    VoxelData.Add(Position, NewVoxelData); // Add the voxel to the map
-
-    UE_LOG(LogTemp, Warning, TEXT("Set voxel at coordinates: X=%d Y=%d Z=%d with SDFValue: %f"), 
-    Position.X, Position.Y, Position.Z, SDFValue);
-
-    // Verify if the voxel was added
-    if (VoxelData.Contains(Position))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Successfully added a voxel at: %s"), *Position.ToString());
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("Failed to add a voxel at: %s"), *Position.ToString());
-    }
+    SetVoxel(Position.X, Position.Y, Position.Z, SDFValue);
 }
 
-
+// In USparseVoxelGrid, update SetVoxel to use world coordinates comparison
 void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float SDFValue)
 {
-    SetVoxel(FIntVector(X, Y, Z), SDFValue);
+    FVector WorldPosition = VoxelToWorldSpace(FIntVector(X, Y, Z));
+    
+    // Use the world position for chunk comparison
+    FIntVector ChunkPosition = ParentChunk->WorldToChunkCoordinates(WorldPosition);
+
+    // Ensure the voxel coordinates match the chunk
+  // if (ChunkPosition == ParentChunk->GetChunkPosition()) // Already in chunk space
+   // {
+        VoxelData.Add(FIntVector(X, Y, Z), FVoxelData(SDFValue));
+        UE_LOG(LogTemp, Warning, TEXT("Set voxel at: X=%d Y=%d Z=%d with SDFValue=%f"), X, Y, Z, SDFValue);
+   // }
+  //  else
+   // {
+    //    UE_LOG(LogTemp, Error, TEXT("Invalid voxel coordinates: X=%d Y=%d Z=%d"), X, Y, Z);
+   // }
 }
+
 
 float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z) const
 {
@@ -147,20 +150,24 @@ void USparseVoxelGrid::RenderVoxels()
         UE_LOG(LogTemp, Warning, TEXT("VoxelData contains %d voxels."), VoxelData.Num());
     }
 
-    for (const auto& VoxelPair : VoxelData)
+    for (const auto& Voxel : VoxelData)
     {
-        FVector Position = VoxelToWorldSpace(VoxelPair.Key, TerrainGridSize / Subdivisions);
-        FVector VoxelExtent = FVector(TerrainGridSize / (2.0f * Subdivisions));
+        FIntVector VoxelCoords = Voxel.Key;
+        FVoxelData VoxelInfo = Voxel.Value;
 
-        float SDFValue = VoxelPair.Value.SDFValue;
-        FColor VoxelColor = (SDFValue < 0.0f) ? FColor::Red : (SDFValue > 0.0f) ? FColor::Green : FColor::Yellow;
+        // Convert voxel coordinates to world space
+        FVector WorldPos = VoxelToWorldSpace(VoxelCoords);
 
-        UE_LOG(LogTemp, Warning, TEXT("Voxel at position: X=%f Y=%f Z=%f | SDFValue=%f"), Position.X, Position.Y, Position.Z, SDFValue);
+        // Adjust to the center
+        FVector Center = WorldPos + FVector(VoxelSize / 2);
 
-        DrawDebugPoint(World, Position, 10.0f, VoxelColor, false, 10.0f);
-        DrawDebugBox(World, Position, VoxelExtent, VoxelColor, false, 10.0f);
+        // Create a cube mesh or similar for rendering
+        DrawDebugBox(World, Center, FVector(VoxelSize / 2), FQuat::Identity, FColor::Green, false, 15.f, 0, 2);
+        DrawDebugPoint(World, Center, 2.0f, FColor::Green, false, 15.f, 0);
     }
 }
+git add .
+
 
 
 
