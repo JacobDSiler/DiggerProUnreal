@@ -1,8 +1,9 @@
 #include "VoxelChunk.h"
-#include "MarchingCubes.h"
-#include "SparseVoxelGrid.h"
 #include "DiggerManager.h"
 #include "EngineUtils.h"
+#include "MarchingCubes.h"
+#include "SparseVoxelGrid.h"
+#include "Async/Async.h"
 #include "Net/Core/Connection/NetConnectionFaultRecoveryBase.h"
 
 
@@ -10,8 +11,8 @@ UVoxelChunk::UVoxelChunk()
 	: ChunkCoordinates(FIntVector::ZeroValue), TerrainGridSize(100), Subdivisions(4), VoxelSize(100),
 	  DiggerManager(nullptr),
 	  SparseVoxelGrid(CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid"))),
-	  bIsDirty(false), 
-	  SectionIndex(-1)
+SectionIndex(-1),
+bIsDirty(false)
 {
 	// Initialize the SparseVoxelGrid
 	SparseVoxelGrid->Initialize( this); 
@@ -22,14 +23,15 @@ UVoxelChunk::UVoxelChunk()
 
 //Change a world space coordinate into chunk space
 FIntVector UVoxelChunk::WorldToChunkCoordinates(const FVector& WorldCoords) const
-{return FIntVector(WorldCoords / (ChunkSize * Subdivisions));}
+{return FIntVector(WorldCoords / (ChunkSize * VoxelSize));}
 
 //Change Chunk Coordinates to world space.
 FVector UVoxelChunk::ChunkToWorldCoordinates(const FVector& ChunkCoords) const
-{    return FVector(ChunkCoords) * ChunkSize * Subdivisions;}
+{    return FVector(ChunkCoords) * ChunkSize * VoxelSize;}
 
 void UVoxelChunk::SetUniqueSectionIndex()
 {
+	// Format coordinates as positive/negative strings
 	auto FormatCoordinate = [](int32 Coordinate) -> FString {
 		if (Coordinate < 0)
 		{
@@ -49,12 +51,15 @@ void UVoxelChunk::SetUniqueSectionIndex()
 	// Concatenate the strings
 	FString ConcatenatedString = XString + YString + ZString;
 
-	// Convert the concatenated string to a number
-	// Using Hash function to convert string to a unique number
-	SectionIndex = FCrc::StrCrc32(*ConcatenatedString);
+	// Convert the concatenated string to a number using CRC32, ensuring the result is positive
+	uint32 RawSectionIndex = FCrc::StrCrc32(*ConcatenatedString);
+
+	// Make sure the SectionIndex is within bounds
+	SectionIndex = RawSectionIndex % 16770;  // Bound the index to the array size
 
 	UE_LOG(LogTemp, Warning, TEXT("SectionID Set to: %i for ChunkCoordinates X=%d Y=%d Z=%d"), SectionIndex, ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
 }
+
 
 
 void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates)
@@ -117,7 +122,21 @@ void UVoxelChunk::DebugDrawChunk() const
 	DrawDebugBox(World, ChunkCenter, ChunkExtent, FColor::Red, false, 15.0f);
 }
 
+void UVoxelChunk::DebugPrintVoxelData() const
+{
+	if (!SparseVoxelGrid)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SparseVoxelGrid is null in DebugPrintVoxelData"));
+		return;
+	}
 
+	UE_LOG(LogTemp, Log, TEXT("Voxel Data for Chunk at %s:"), *GetChunkPosition().ToString());
+	for (const auto& Pair : SparseVoxelGrid->VoxelData)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Voxel at (%d,%d,%d): Value = %f"),
+			Pair.Key.X, Pair.Key.Y, Pair.Key.Z, Pair.Value.SDFValue);
+	}
+}
 
 
 void UVoxelChunk::MarkDirty()
@@ -131,7 +150,7 @@ void UVoxelChunk::UpdateIfDirty()
 	
 		// Perform the update (e.g., regenerate the mesh)
 		// Regenerate the mesh only if dirty
-		GenerateMesh();
+		GenerateMeshAsync();
 		
 		// Reset the dirty flag
 		bIsDirty = false;
@@ -141,7 +160,7 @@ void UVoxelChunk::ForceUpdate()
 {
 	// Perform the update (e.g., regenerate the mesh)
 	// Regenerate the mesh only if dirty
-	GenerateMesh();
+	GenerateMeshAsync();
 		
 	// Reset the dirty flag
 	bIsDirty = false;
@@ -312,6 +331,8 @@ TMap<FVector, float> UVoxelChunk::GetActiveVoxels() const
 	return GetSparseVoxelGrid()->GetVoxels();
 }
 
+
+
 //ToDo: Give this proper arguments and structure to function properly, pull data from SparseVoxelGrid for it if necessary.
 void UVoxelChunk::GenerateMesh() const
 {
@@ -330,4 +351,22 @@ void UVoxelChunk::GenerateMesh() const
 		UE_LOG(LogTemp, Error, TEXT("MarchingCubesGenerator is null!"));
 	}
 
+}
+
+void UVoxelChunk::GenerateMeshAsync()
+{
+	if (!SparseVoxelGrid)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SparseVoxelGrid is null!"));
+		return;
+	}
+
+	if (MarchingCubesGenerator != nullptr)
+	{
+		MarchingCubesGenerator->GenerateMesh(this);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("MarchingCubesGenerator is null!"));
+	}
 }

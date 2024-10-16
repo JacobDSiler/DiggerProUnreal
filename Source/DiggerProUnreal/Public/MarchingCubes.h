@@ -14,14 +14,20 @@ class DIGGERPROUNREAL_API UMarchingCubes : public UObject
 	GENERATED_BODY()
 
 public:
+	FIntVector GetCornerOffset(int32 Index);
 	// Constructors
 	UMarchingCubes();
 	UMarchingCubes(const FObjectInitializer& ObjectInitializer, const UVoxelChunk* VoxelChunk);
 
 	// Generate the mesh based on the voxel grid
 	void GenerateMesh(const UVoxelChunk* ChunkPtr);
+	FVector InterpolateVertex(const FVector& P1, const FVector& P2, float SDF1, float SDF2);
 
-	void ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutVertices, const TArray<int32>& OutTriangles) const;
+	int32 CalculateMarchingCubesIndex(const TArray<float>& CornerSDFValues);
+
+	void ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutOutVertices, const TArray<int32>& OutTriangles, const TArray<FVector>&
+	                            Normals) const;
+	bool EnsureDiggerManager();
 
 	// Reference to the associated voxel chunk
 	UPROPERTY()
@@ -29,10 +35,13 @@ public:
 
 private:
 	// Helper functions for mesh generation
-	FVector InterpolateVertex(float Value1, FVector V1, float Value2, FVector V2);
+	//FVector InterpolateVertex(float Value1, FVector V1, float Value2, FVector V2);
 	int32 GetVertexIndex(const FVector& Vertex, TMap<FVector, int32>& VertexMap, TArray<FVector>& Vertices);
 
 	//DiggerManager Reference
 	UPROPERTY()
 	ADiggerManager* DiggerManager;
+
+	UPROPERTY()
+	USparseVoxelGrid* VoxelGrid;
 };

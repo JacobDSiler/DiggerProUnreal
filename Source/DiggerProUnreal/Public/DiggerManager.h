@@ -20,17 +20,18 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	void UpdateVoxelSize();
 
 public:
 
 	FVector ChunkToWorldCoordinates(int32 XInd, int32 YInd, int32 ZInd) const
 	{
-		UE_LOG(LogTemp, Warning, TEXT("ChunkToWorldSpace: XInd=1 YInd=1 ZInd=0"));
+		// UE_LOG(LogTemp, Warning, TEXT("ChunkToWorldSpace: XInd=1 YInd=1 ZInd=0"));
 		/* Calculate world space coordinates*/ return FVector(XInd * ChunkSize * TerrainGridSize, YInd * ChunkSize * TerrainGridSize, ZInd * ChunkSize * TerrainGridSize);
 	}
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
-	int32 ChunkSize = 8;  // Number of subdivisions per grid size
+	int32 ChunkSize = 4;  // Number of subdivisions per grid size
 	
 	// Chunk and grid settings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
@@ -78,6 +79,11 @@ public:
 	
 	//The world map of the voxel chunks
 	TMap<FIntVector, UVoxelChunk*> ChunkMap;
+	//Aggregates Logs Dictionary Declaration
+	/*TMap<FString, int32> LogCounts; // Global or passed to functions
+
+	void LogVoxelOperation( FString& LogMessage);
+	void OutputAggregatedLogs();*/
 
 private:
 	// Reference to the sparse voxel grid and marching cubes
@@ -94,8 +100,8 @@ private:
 	UVoxelChunk* OneChunk;
 
 	void CreateSphereVoxelGrid(UVoxelChunk* Chunk, const FVector& Position, float Radius) const;
-	void PlaceVoxelForVoxelLine(UVoxelChunk* Chunk, int32 X, int32 Y, int32 Z) const;
 	void GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk) const;
+	void FillChunkWithPerlinNoiseVoxels(UVoxelChunk* Chunk) const;
 	// Handle the generation of mesh using marching cubes
 	void GenerateVoxelsTest();
 

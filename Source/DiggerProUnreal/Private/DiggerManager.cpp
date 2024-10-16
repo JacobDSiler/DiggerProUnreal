@@ -21,10 +21,14 @@ ADiggerManager::ADiggerManager()
 void ADiggerManager::BeginPlay()
 {
 	Super::BeginPlay();
+	UpdateVoxelSize();
+	
 	GenerateVoxelsTest();
 }
-
-
+void ADiggerManager::UpdateVoxelSize()
+{
+	VoxelSize=TerrainGridSize/Subdivisions;
+}
 
 void ADiggerManager::ApplyBrush(FVector BrushPosition, float BrushRadius)
 {
@@ -79,6 +83,8 @@ FIntVector ADiggerManager::CalculateChunkPosition(const FVector3d& WorldPosition
 UVoxelChunk* ADiggerManager::GetOrCreateChunkAt(const FVector3d& ProposedChunkPosition)
 {
 	int32 ChunkWorldSize=ChunkSize*TerrainGridSize;
+	//Make sure theVoxelSize Member Variable is up to date.
+	UpdateVoxelSize();
 	// Convert FVector3d to FIntVector by flooring the coordinates
 	int32 FlooredX = FMath::FloorToInt(ProposedChunkPosition.X / ChunkWorldSize);
 	int32 FlooredY = FMath::FloorToInt(ProposedChunkPosition.Y / ChunkWorldSize);
@@ -228,13 +234,13 @@ void ADiggerManager::DebugVoxels()
 			if (Chunk && Chunk->GetSparseVoxelGrid())
 			{
 				DebugLogVoxelChunkGrid();
-				//Chunk->MarkDirty();
-				//Chunk->ForceUpdate();
+				Chunk->MarkDirty();
+				Chunk->ForceUpdate();
 				USparseVoxelGrid* SparseVoxelGridPtr = Chunk->GetSparseVoxelGrid();
 				if (SparseVoxelGridPtr)
 				{
-					UE_LOG(LogTemp, Warning, TEXT("Rendering voxels for SparseVoxelGrid..."));
-					//SparseVoxelGridPtr->LogVoxelData();
+					//UE_LOG(LogTemp, Warning, TEXT("Rendering voxels for SparseVoxelGrid..."));
+					SparseVoxelGridPtr->LogVoxelData();
 					SparseVoxelGridPtr->RenderVoxels();
 				} // Render voxels
 				UE_LOG(LogTemp, Warning, TEXT("Rendering voxels for chunk at coordinates: %s"), *ChunkCoordinates.ToString());
@@ -300,9 +306,8 @@ void ADiggerManager::CreateSphereVoxelGrid(UVoxelChunk* Chunk, const FVector& Po
 void ADiggerManager::GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk) const
 {
 	if (!Chunk) return;
-
-	USparseVoxelGrid* VoxelGrid = Chunk->GetSparseVoxelGrid();
-	int32 ChunkVoxels = ChunkSize * TerrainGridSize / VoxelSize;
+	
+	int32 ChunkVoxels = ChunkSize * Subdivisions;
 	int32 HalfChunkVoxels = ChunkVoxels / 2;
 
 	// Get the chunk's world position
@@ -315,41 +320,84 @@ void ADiggerManager::GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk) const
 	{
 		FVector LocalVoxelPosition = FVector(X, 0, 0);
 		FVector VoxelPosition = LocalVoxelPosition + WorldSpaceChunkPosition;
-		UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s in chunk at world position %s"), *VoxelPosition.ToString(), *WorldSpaceChunkPosition.ToString());
+		//UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s in chunk at world position %s"), *VoxelPosition.ToString(), *WorldSpaceChunkPosition.ToString());
 		Chunk->SetVoxel(X, 0, 0, 1.0f);  // Center Y and Z
 	}
 	for (int32 Y = -HalfChunkVoxels; Y < HalfChunkVoxels; ++Y)
 	{
 		FVector LocalVoxelPosition = FVector(0, Y, 0);
 		FVector VoxelPosition = LocalVoxelPosition + WorldSpaceChunkPosition;
-		UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s in chunk at world position %s"), *VoxelPosition.ToString(), *WorldSpaceChunkPosition.ToString());
-		Chunk->SetVoxel(0, Y, 0, 1.0f);  // Center X and Z
+		//UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s in chunk at world position %s"), *VoxelPosition.ToString(), *WorldSpaceChunkPosition.ToString());
+		Chunk->SetVoxel(0, Y, 0, -1.0f);  // Center X and Z
 	}
 	for (int32 Z = -HalfChunkVoxels; Z < HalfChunkVoxels; ++Z)
 	{
 		FVector LocalVoxelPosition = FVector(0, 0, Z);
 		FVector VoxelPosition = LocalVoxelPosition + WorldSpaceChunkPosition;
-		UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s in chunk at world position %s"), *VoxelPosition.ToString(), *WorldSpaceChunkPosition.ToString());
+		//UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s in chunk at world position %s"), *VoxelPosition.ToString(), *WorldSpaceChunkPosition.ToString());
 		Chunk->SetVoxel(0, 0, Z, 1.0);  // Center X and Y
 	}
 
 	// Generate the mesh after setting all voxels
-	//Chunk->GenerateMesh();
+	Chunk->MarkDirty();
+	Chunk->ForceUpdate();
 }
 
+
+void ADiggerManager::FillChunkWithPerlinNoiseVoxels(UVoxelChunk* Chunk) const
+{
+	if (!Chunk) return;
+	
+	int32 ChunkVoxels = ChunkSize * Subdivisions;
+	int32 HalfChunkVoxels = ChunkVoxels / 2;
+	
+
+	// Iterate through all voxels within the chunk
+	for (int32 X = -HalfChunkVoxels; X < HalfChunkVoxels; ++X)
+	{
+		for (int32 Y = -HalfChunkVoxels; Y < HalfChunkVoxels; ++Y)
+		{
+			for (int32 Z = -HalfChunkVoxels; Z < HalfChunkVoxels; ++Z)
+			{
+				FVector LocalVoxelPosition = FVector(X, Y, Z);
+
+				// Generate Perlin noise for the voxel position
+				float NoiseValue = FMath::PerlinNoise3D(LocalVoxelPosition * 0.5f); // Adjust the scale as needed
+
+				// Map Perlin noise value (-1.0f to 1.0f)
+				float SDFValue = FMath::Clamp(NoiseValue, -1.0f, 1.0f);
+
+				// Log the voxel position and SDF value for debugging
+				UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s with SDF: %f"), *LocalVoxelPosition.ToString(), SDFValue);
+
+				// Set the voxel SDF value in the chunk
+				Chunk->SetVoxel(X, Y, Z, SDFValue);
+			}
+		}
+	}
+
+	//OutputAggregatedLogs();
+	// Generate the mesh after filling the voxels
+	//Chunk->MarkDirty();
+	//Chunk->ForceUpdate();
+}
 
 
 void ADiggerManager::GenerateVoxelsTest()
 {
 	// Use GetOrCreateChunkAt method to retrieve or create the chunk at ChunkLocation
 	ZeroChunk = GetOrCreateChunkAt(0,0,0);
-	FIntVector ChunkLocation = FIntVector(1, 2, 0);
-	OneChunk = GetOrCreateChunkAt(ChunkLocation);
+
 	if(!ZeroChunk) return;
-	GenerateAxesAlignedVoxelsInChunk(ZeroChunk);
-	ZeroChunk->GetSparseVoxelGrid()->RenderVoxels();
+	//GenerateAxesAlignedVoxelsInChunk(ZeroChunk);
+	FillChunkWithPerlinNoiseVoxels(ZeroChunk);
+	//ZeroChunk->GetSparseVoxelGrid()->RenderVoxels();
+
+	FIntVector ChunkLocation = FIntVector(1, 1, 0);
+	OneChunk = GetOrCreateChunkAt(ChunkLocation);
 	if(!OneChunk) return;
 	GenerateAxesAlignedVoxelsInChunk(OneChunk);
+	//FillChunkWithPerlinNoiseVoxels(OneChunk);
 	OneChunk->GetSparseVoxelGrid()->RenderVoxels();
 		//CreateSphereVoxelGrid(OneChunk, FVector(0,0,0), 50.f);
 }

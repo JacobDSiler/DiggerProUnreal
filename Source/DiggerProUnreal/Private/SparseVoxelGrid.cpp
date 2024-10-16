@@ -3,6 +3,7 @@
 #include "DrawDebugHelpers.h"
 #include "DiggerManager.h"
 #include "EngineUtils.h"
+#include "SWarningOrErrorBox.h"
 #include "VoxelChunk.h"
 
 USparseVoxelGrid::USparseVoxelGrid(): DiggerManager(nullptr), ParentChunk(nullptr), ParentChunkCoordinates(0, 0, 0),
@@ -27,34 +28,65 @@ void USparseVoxelGrid::InitializeDiggerManager()
     }
 
     UE_LOG(LogTemp, Warning, TEXT("World is not null in InitializeDiggerManager. Grabbing the DiggerManager."));
-    // Find and assign DiggerManager if not already assigned
-    for (TActorIterator<ADiggerManager> It(GetWorld()); It; ++It)
-    {
-        DiggerManager = *It;
+    // Find and assign DiggerManager if not already assigned and set the member variables from it
+    EnsureDiggerManager();
         if (DiggerManager)
+        {
             ChunkSize=DiggerManager->ChunkSize;
             TerrainGridSize=DiggerManager->TerrainGridSize;
             Subdivisions=DiggerManager->Subdivisions;
-            VoxelSize=DiggerManager->VoxelSize;
-            break;
-    }
+            LocalVoxelSize=DiggerManager->VoxelSize;
+        }
 }
 
+
+bool USparseVoxelGrid::EnsureDiggerManager()
+{
+    if (!DiggerManager)
+    {
+        DiggerManager = ParentChunk->GetDiggerManager();
+        
+        if (!DiggerManager)
+        {
+            UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in VoxelToWorldSpace"));
+            return false;
+        }
+        UE_LOG(LogTemp, Warning, TEXT("DiggerManager set correctly in an instance of SVG!"));
+        LocalVoxelSize = DiggerManager->VoxelSize;
+    }
+    return true;
+}
 
 // Converts voxel-local coordinates to world space (using chunk world position)
 FVector USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelCoords)
 {
+    if (!EnsureDiggerManager()) return FVector::ZeroVector;
+
     return ParentChunk->GetWorldPosition() + FVector(
-        VoxelCoords.X * VoxelSize,
-        VoxelCoords.Y * VoxelSize,
-        VoxelCoords.Z * VoxelSize
+        VoxelCoords.X * LocalVoxelSize,
+        VoxelCoords.Y * LocalVoxelSize,
+        VoxelCoords.Z * LocalVoxelSize
     );
 }
 
 // Converts world space to voxel-local coordinates (for a specific chunk)
 FIntVector USparseVoxelGrid::WorldToVoxelSpace(const FVector& WorldCoords)
 {
-    return FIntVector((WorldCoords - ParentChunk->GetWorldPosition()) / VoxelSize);
+    if (!EnsureDiggerManager()) return FIntVector::ZeroValue;
+       
+    FVector LocalCoords = WorldCoords - ParentChunk->GetWorldPosition();
+    
+    FIntVector VoxelCoords = FIntVector(
+           FMath::FloorToInt(LocalCoords.X / LocalVoxelSize),
+           FMath::FloorToInt(LocalCoords.Y / LocalVoxelSize),
+           FMath::FloorToInt(LocalCoords.Z / LocalVoxelSize)
+       );
+
+    UE_LOG(LogTemp, Log, TEXT("WorldToVoxelSpace: World(%f,%f,%f) -> Voxel(%d,%d,%d)"),
+        WorldCoords.X, WorldCoords.Y, WorldCoords.Z,
+        VoxelCoords.X, VoxelCoords.Y, VoxelCoords.Z);
+
+    return VoxelCoords;
 }
 
 
@@ -67,22 +99,23 @@ void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue)
 // In USparseVoxelGrid, update SetVoxel to use world coordinates comparison
 void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float SDFValue)
 {
-    FVector WorldPosition = VoxelToWorldSpace(FIntVector(X, Y, Z));
+    // Calculate the valid range for voxel coordinates
+    int32 HalfChunkSize = ChunkSize * Subdivisions / 2;
     
-    // Use the world position for chunk comparison
-    FIntVector ChunkPosition = ParentChunk->WorldToChunkCoordinates(WorldPosition);
-
-    // Ensure the voxel coordinates match the chunk
-  // if (ChunkPosition == ParentChunk->GetChunkPosition()) // Already in chunk space
-   // {
+    // Validate the voxel coordinates
+    /*if (X >= -HalfChunkSize && X < HalfChunkSize &&
+        Y >= -HalfChunkSize && Y < HalfChunkSize &&
+        Z >= -HalfChunkSize && Z < HalfChunkSize)
+    {*/
         VoxelData.Add(FIntVector(X, Y, Z), FVoxelData(SDFValue));
         UE_LOG(LogTemp, Warning, TEXT("Set voxel at: X=%d Y=%d Z=%d with SDFValue=%f"), X, Y, Z, SDFValue);
-   // }
-  //  else
-   // {
-    //    UE_LOG(LogTemp, Error, TEXT("Invalid voxel coordinates: X=%d Y=%d Z=%d"), X, Y, Z);
-   // }
+    /*}
+    else
+    {
+    UE_LOG(LogTemp, Error, TEXT("Invalid voxel coordinates: X=%d Y=%d Z=%d"), X, Y, Z);
+    }*/
 }
+
 
 
 float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z) const
@@ -141,6 +174,8 @@ void USparseVoxelGrid::RenderVoxels()
         return;
     }
 
+    if(!EnsureDiggerManager()) return;
+
     if (VoxelData.IsEmpty())
     {
         UE_LOG(LogTemp, Warning, TEXT("VoxelData is empty, no voxels to render!"));
@@ -153,21 +188,39 @@ void USparseVoxelGrid::RenderVoxels()
     for (const auto& Voxel : VoxelData)
     {
         FIntVector VoxelCoords = Voxel.Key;
-        FVoxelData VoxelInfo = Voxel.Value;
+        FVoxelData VoxelDataValue = Voxel.Value;
 
         // Convert voxel coordinates to world space
         FVector WorldPos = VoxelToWorldSpace(VoxelCoords);
 
-        // Adjust to the center
-        FVector Center = WorldPos + FVector(VoxelSize / 2);
+        // Adjust to the center of the voxel
+        FVector Center = WorldPos + FVector(LocalVoxelSize / 2);
 
-        // Create a cube mesh or similar for rendering
-        DrawDebugBox(World, Center, FVector(VoxelSize / 2), FQuat::Identity, FColor::Green, false, 15.f, 0, 2);
-        DrawDebugPoint(World, Center, 2.0f, FColor::Green, false, 15.f, 0);
+        // Access the SDF value from the VoxelData
+        float SDFValue = VoxelDataValue.SDFValue;
+
+        // Determine color based on SDF value
+        FColor VoxelColor;
+        if (SDFValue > 0)
+        {
+            VoxelColor = FColor::Green; // Air (SDF > 0)
+        }
+        else if (SDFValue < 0)
+        {
+            VoxelColor = FColor::Red; // Solid (SDF < 0)
+        }
+        else
+        {
+            VoxelColor = FColor::Yellow; // Surface (SDF == 0)
+        }
+
+        // Draw the voxel cube with the correct color
+        DrawDebugBox(World, Center, FVector(LocalVoxelSize / 2), FQuat::Identity, VoxelColor, false, 15.f, 0, 2);
+
+        // Optionally, draw a point at the center of the voxel
+        DrawDebugPoint(World, Center, 2.0f, VoxelColor, false, 15.f, 0);
     }
 }
-git add .
-
 
 
 

@@ -34,6 +34,7 @@ public:
 
 	void Initialize(UVoxelChunk* ParentChunkReference);
 	void InitializeDiggerManager();
+	bool EnsureDiggerManager();
 	FIntVector WorldToVoxelSpace(const FVector& WorldCoords);
 	FVector VoxelToWorldSpace(const FIntVector& VoxelCoords);
 	
@@ -79,17 +80,17 @@ public:
 	{
 		return ParentChunkCoordinates;
 	}
-
+	
+	// The sparse voxel data map, keyed by 3D coordinates, storing FVoxelData
+	TMap<FIntVector, FVoxelData> VoxelData;
 
 	
 private:
-	// The sparse voxel data map, keyed by 3D coordinates, storing FVoxelData
-	TMap<FIntVector, FVoxelData> VoxelData;
 
 	int32 ChunkSize = 32;  // Number of subdivisions per grid size
 
 	//The VoxelSize which will be set to the VoxelSize within DiggerManager during InitializeDiggerManager;
-	int VoxelSize=100;
+	int LocalVoxelSize;
 	
 	//Reference to the DiggerManager
 	UPROPERTY()
@@ -99,6 +100,13 @@ private:
 	UPROPERTY()
 	UVoxelChunk* ParentChunk;
 
+public:
+	[[nodiscard]] ADiggerManager* GetDiggerManager() const
+	{
+		return DiggerManager;
+	}
+
+private:
 	FIntVector WorldToChunkSpace(float x, float y, float z) const
 	{/* Calculate chunk space coordinates*/ return FIntVector(x, y, z) / (ChunkSize * TerrainGridSize);}
 

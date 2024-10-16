@@ -23,6 +23,7 @@ public:
 
 	// Debug function to visualize chunk boundaries
 	void DebugDrawChunk() const;
+	void DebugPrintVoxelData() const;
 
 	void MarkDirty();
 	void UpdateIfDirty();
@@ -49,6 +50,7 @@ public:
 
 	// Generates mesh data by delegating to the MarchingCubes class
 	void GenerateMesh() const;
+	void GenerateMeshAsync();
 	FIntVector WorldToChunkSpace(const FVector& WorldPosition) const;
 	FVector ChunkToWorldSpace(const FVector& ChunkCoords) const;
 
@@ -64,6 +66,11 @@ public:
 	[[nodiscard]] int32 GetChunkSize() const
 	{
 		return ChunkSize;
+	}
+	
+	[[nodiscard]] ADiggerManager* GetDiggerManager() const
+	{
+		return DiggerManager;
 	}
 
 private:
