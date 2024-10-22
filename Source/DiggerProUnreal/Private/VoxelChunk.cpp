@@ -3,15 +3,15 @@
 #include "EngineUtils.h"
 #include "MarchingCubes.h"
 #include "SparseVoxelGrid.h"
+#include "VoxelBrushShape.h"
 #include "Async/Async.h"
 #include "Net/Core/Connection/NetConnectionFaultRecoveryBase.h"
 
 
 UVoxelChunk::UVoxelChunk()
-	: ChunkCoordinates(FIntVector::ZeroValue), TerrainGridSize(100), Subdivisions(4), VoxelSize(100),
+	: ChunkCoordinates(FIntVector::ZeroValue), TerrainGridSize(100), Subdivisions(4), VoxelSize(100),SectionIndex(-1),
 	  DiggerManager(nullptr),
 	  SparseVoxelGrid(CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid"))),
-SectionIndex(-1),
 bIsDirty(false)
 {
 	// Initialize the SparseVoxelGrid
@@ -204,6 +204,101 @@ void UVoxelChunk::ForceUpdate()
 	
 }*/
 
+void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
+{
+    switch (Stroke.BrushType)
+    {
+    case EVoxelBrushType::Cube:
+        ApplyCubeBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig);
+        break;
+    case EVoxelBrushType::Sphere:
+        ApplySphereBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig);
+        break;
+    case EVoxelBrushType::Cone:
+        ApplyConeBrush(Stroke.BrushPosition, Stroke.BrushRadius, 45.0f, Stroke.bDig);  // Assuming a fixed angle for now
+        break;
+    default:
+        break;
+    }
+
+    MarkDirty();
+}
+
+void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig)
+{
+    FVector3d MinBounds = BrushPosition - FVector3d(Radius);
+    FVector3d MaxBounds = BrushPosition + FVector3d(Radius);
+
+    for (int32 X = MinBounds.X; X <= MaxBounds.X; ++X)
+    {
+        for (int32 Y = MinBounds.Y; Y <= MaxBounds.Y; ++Y)
+        {
+            for (int32 Z = MinBounds.Z; Z <= MaxBounds.Z; ++Z)
+            {
+                FVector3d VoxelPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+                float Distance = FVector3d::Dist(VoxelPosition, BrushPosition);
+
+                if (Distance <= Radius)
+                {
+                    float SDFValue = Distance - Radius;
+                    SDFValue = bDig ? -FMath::Abs(SDFValue) : FMath::Abs(SDFValue);
+
+                    SetVoxel(X, Y, Z, SDFValue);
+                }
+            }
+        }
+    }
+}
+
+void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig)
+{
+    FVector3d MinBounds = BrushPosition - FVector3d(Size);
+    FVector3d MaxBounds = BrushPosition + FVector3d(Size);
+
+    for (int32 X = MinBounds.X; X <= MaxBounds.X; ++X)
+    {
+        for (int32 Y = MinBounds.Y; Y <= MaxBounds.Y; ++Y)
+        {
+            for (int32 Z = MinBounds.Z; Z <= MaxBounds.Z; ++Z)
+            {
+                FVector3d VoxelPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+
+                //if (IsVoxelWithinBounds(VoxelPosition, MinBounds, MaxBounds))
+               // {
+                    SetVoxel(X, Y, Z, bDig ? -1.0f : 1.0f);
+               // }
+            }
+        }
+    }
+}
+
+void UVoxelChunk::ApplyConeBrush(FVector3d BrushPosition, float Height, float Angle, bool bDig) {
+	for (int32 X = 0; X <= ChunkSize; ++X) {
+		for (int32 Y = 0; X <= ChunkSize; ++Y) {
+			for (int32 Z = 0; Z <= ChunkSize; ++Z) {
+				FVector3d VoxelPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+				FVector3d RelativePosition = VoxelPosition - BrushPosition;
+				float DistanceXY = FVector2D(RelativePosition.X, RelativePosition.Y).Size();
+				float DistanceZ = RelativePosition.Z;
+
+				/*if (FlipOrientation.IsSet() && FlipOrientation.GetValue()) {
+					DistanceZ = Height - DistanceZ;  // Flip the cone upside down
+				}*/
+
+				if (DistanceZ <= Height && DistanceXY <= (Height - DistanceZ) * FMath::Tan(FMath::DegreesToRadians(Angle))) {
+					float SDFValue = bDig ? -1.0f : 1.0f;
+					SetVoxel(X, Y, Z, SDFValue);
+				}
+			}
+		}
+	}
+	MarkDirty();
+}
+
+
+void UVoxelChunk::BakeSDFValues() {
+	// Placeholder for baking SDF values into the chunk
+}
 
 bool UVoxelChunk::IsValidChunkLocalCoordinate(FVector Position) const
 {
@@ -353,7 +448,7 @@ void UVoxelChunk::GenerateMesh() const
 
 }
 
-void UVoxelChunk::GenerateMeshAsync()
+void UVoxelChunk::GenerateMeshAsync() const
 {
 	if (!SparseVoxelGrid)
 	{

@@ -4,9 +4,6 @@
 #include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
 
-class ADiggerManager;
-class UVoxelChunk;
-
 
 void UVoxelBrushShape::InitializeBrush(EVoxelBrushType InBrushType, float InSize, FVector InLocation)
 {
@@ -257,22 +254,27 @@ void UVoxelBrushShape::ApplyCustomBrush(FVector3d BrushPosition)
 
 
 
-void UVoxelBrushShape::DebugBrush(UWorld* World)
-{
-    // Draw debug shapes in the world for visualization
-    switch (BrushType)
-    {
-        case EVoxelBrushType::Cube:
-            DrawDebugBox(World, BrushLocation, FVector(BrushSize), FColor::Green, false, 5.0f);
+void UVoxelBrushShape::DebugBrush(UWorld* World) {
+    switch (BrushType) {
+    case EVoxelBrushType::Cube:
+        DrawDebugBox(World, BrushLocation, FVector(BrushSize), FColor::Green, false, 5.0f);
+        break;
+    case EVoxelBrushType::Sphere:
+        DrawDebugSphere(World, BrushLocation, BrushSize, 32, FColor::Red, false, 5.0f);
+        break;
+    case EVoxelBrushType::Cone: {
+            float ConeHeight = BrushSize;
+            //float ConeAngle = ConeAngle.IsSet() ? ConeAngle.GetValue() : 45.0f;
+            //bool bFlip = FlipOrientation.IsSet() ? FlipOrientation.GetValue() : false;
+            //FVector ConeDirection = bFlip ? FVector::DownVector * ConeHeight : FVector::UpVector * ConeHeight;
+            DrawDebugCone(World, BrushLocation, FVector(0, 1, 0)/*ConeDirection*/, ConeHeight, FMath::DegreesToRadians(45/*ConeAngle*/), FMath::DegreesToRadians(45/*ConeAngle*/), 32, FColor::Blue, false, 5.0f);
             break;
-        case EVoxelBrushType::Sphere:
-            DrawDebugSphere(World, BrushLocation, BrushSize, 32, FColor::Red, false, 5.0f);
-            break;
-        case EVoxelBrushType::Cone:
-            // Draw a cone, might use a custom debug visualization
-            break;
-        case EVoxelBrushType::Custom:
-            // Debug custom shapes
+    }
+    case EVoxelBrushType::Custom:
+        // Debug custom
             break;
     }
 }
+
+
+

@@ -2,18 +2,13 @@
 
 #include "CoreMinimal.h"
 #include "VoxelChunk.h"
+#include "VoxelBrushTypes.h" // Include the shared header
 #include "UObject/NoExportTypes.h"
 #include "VoxelBrushShape.generated.h"
 
-// Enum for different brush types
-UENUM(BlueprintType)
-enum class EVoxelBrushType : uint8
-{
-	Cube,
-	Sphere,
-	Cone,
-	Custom
-};
+class ADiggerManager;
+class UVoxelChunk;
+
 
 UCLASS()
 class DIGGERPROUNREAL_API UVoxelBrushShape : public UObject
@@ -30,22 +25,71 @@ public:
 	void ApplyBrushToChunk(FVector3d BrushPosition, float BrushSize);
 
 	// Debug the brush in the world
+	UFUNCTION(BlueprintCallable, Category = "Brush")
 	void DebugBrush(UWorld* World);
+	
+	UFUNCTION(BlueprintCallable, Category = "Brush")
+	EVoxelBrushType GetBrushType() const
+	{
+		return BrushType;
+	}
+	
+	UFUNCTION(BlueprintCallable, Category = "Brush")
+	void SetBrushType(EVoxelBrushType NewBrushType)
+	{
+		this->BrushType = NewBrushType;
+	}
 
-	[[nodiscard]] bool Dig() const
+	UFUNCTION(BlueprintCallable, Category = "Brush")
+	float GetBrushSize() const
+	{
+		return BrushSize;
+	}
+	
+	UFUNCTION(BlueprintCallable, Category = "Brush")
+	void SetBrushSize(float NewBrushSize)
+	{
+		this->BrushSize = NewBrushSize;
+	}
+
+	UFUNCTION(BlueprintCallable, Category = "Brush")
+	FVector GetBrushLocation() const
+	{
+		return BrushLocation;
+	}
+
+	UFUNCTION(BlueprintCallable, Category = "Brush")
+	void SetBrushLocation(const FVector& NewBrushLocation)
+	{
+		this->BrushLocation = NewBrushLocation;
+	}
+
+	UFUNCTION(BlueprintCallable, Category = "Brush")
+	float SdfChange() const
+	{
+		return SDFChange;
+	}
+
+	UFUNCTION(BlueprintCallable, Category = "Brush")
+	void SetSdfChange(float NewSdfChange)
+	{
+		SDFChange = NewSdfChange;
+	}
+
+	UFUNCTION(BlueprintCallable, Category = "Brush")
+	bool GetDig() const
 	{
 		return bDig;
 	}
-
+	
+	UFUNCTION(BlueprintCallable, Category = "Brush")
 	void SetDig(bool setBDig)
 	{
 		this->bDig = setBDig;
 	}
 
 protected:
-	// Brush type
-	EVoxelBrushType BrushType;
-
+	
 	//Brush Settings
 	// Size and location of the brush
 	float BrushSize;
@@ -79,4 +123,8 @@ private:
 	//A reference to the current target chunk
 	UPROPERTY()
 	UVoxelChunk* TargetChunk;
+
+	// Brush type
+	UPROPERTY()
+	EVoxelBrushType BrushType;
 };

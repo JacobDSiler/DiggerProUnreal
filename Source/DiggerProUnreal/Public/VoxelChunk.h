@@ -2,6 +2,7 @@
 
 #include "VoxelChunk.generated.h"
 
+struct FBrushStroke;
 class ADiggerManager;
 class USparseVoxelGrid;
 class UMarchingCubes;
@@ -25,6 +26,9 @@ public:
 	void DebugDrawChunk() const;
 	void DebugPrintVoxelData() const;
 
+	//Strokes
+	void ApplyBrushStroke(const FBrushStroke& Stroke);
+	
 	void MarkDirty();
 	void UpdateIfDirty();
 	void ForceUpdate();
@@ -50,7 +54,7 @@ public:
 
 	// Generates mesh data by delegating to the MarchingCubes class
 	void GenerateMesh() const;
-	void GenerateMeshAsync();
+	void GenerateMeshAsync() const;
 	FIntVector WorldToChunkSpace(const FVector& WorldPosition) const;
 	FVector ChunkToWorldSpace(const FVector& ChunkCoords) const;
 
@@ -72,6 +76,13 @@ public:
 	{
 		return DiggerManager;
 	}
+
+protected:
+	void ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig);
+	void ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig);
+	void ApplyConeBrush(FVector3d BrushPosition, float Height, float Angle, bool bDig);
+	void BakeSDFValues();
+
 
 private:
 	int32 ChunkSize;

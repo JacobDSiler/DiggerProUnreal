@@ -3,7 +3,12 @@
 #include "SparseVoxelGrid.h"
 #include "MarchingCubes.h"
 #include "VoxelChunk.h"
-#include "VoxelBrushShape.h"
+
+class UVoxelChunk;
+class UVoxelBrushType;
+class USparseVoxelGrid;
+class UMarchingCubes;
+class UVoxelBrushShape;
 
 ADiggerManager::ADiggerManager()
 {
@@ -36,7 +41,7 @@ void ADiggerManager::ApplyBrush(FVector BrushPosition, float BrushRadius)
 	// Use the helper function to get the target chunk if it isn't passed
 	if (!TargetChunk)
 	{
-		TargetChunk = ActiveBrush->GetTargetChunkFromBrushPosition(BrushPosition);
+		TargetChunk = GetOrCreateChunkAt(BrushPosition);
 	}
 
 	if (!TargetChunk)

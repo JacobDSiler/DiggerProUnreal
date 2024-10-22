@@ -3,12 +3,34 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "ProceduralMeshComponent.h"
+#include "VoxelBrushShape.h"
+#include "VoxelBrushTypes.h"
 #include "DiggerManager.generated.h"
 
-class UVoxelChunk;
-class UVoxelBrushShape;
-class USparseVoxelGrid;
-class UMarchingCubes;
+// Define the FBrushStroke struct
+USTRUCT(BlueprintType)
+struct FBrushStroke {
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite)
+	FVector BrushPosition;
+
+	UPROPERTY(BlueprintReadWrite)
+	float BrushRadius;
+
+	UPROPERTY(BlueprintReadWrite)
+	EVoxelBrushType BrushType;
+
+	UPROPERTY(BlueprintReadWrite)
+	bool bDig;
+
+	//UPROPERTY(BlueprintReadWrite)
+	//TOptional<float> ConeAngle;  // Optional property for cone brush angle
+
+	//UPROPERTY(BlueprintReadWrite)
+	//TOptional<bool> FlipOrientation;  // Optional property for flipping the brush rotation 180 degrees
+};
+
 
 UCLASS()
 class DIGGERPROUNREAL_API ADiggerManager : public AActor
@@ -104,6 +126,13 @@ private:
 	void FillChunkWithPerlinNoiseVoxels(UVoxelChunk* Chunk) const;
 	// Handle the generation of mesh using marching cubes
 	void GenerateVoxelsTest();
+
+	TArray<FBrushStroke> UndoQueue;
+	FTimerHandle ProcessingTimerHandle;
+
+	void ProcessQueue();
+	void BakeSDF();
+    
 
 	//Space Conversion Helper Methods
 	FIntVector WorldToChunkCoordinates(float x, float y, float z) const
