@@ -80,38 +80,29 @@ void UVoxelBrushShape::ApplyBrushToChunk(FVector3d BrushPosition, float BrushRad
     }
 }
 
-FVector UVoxelBrushShape::GetCameraHitLocation()
-{
-    // Get the player controller
+FHitResult UVoxelBrushShape::GetCameraHitLocation(){
     APlayerController* PlayerController = UGameplayStatics::GetPlayerController(GetWorld(), 0);
-    if (!PlayerController) return FVector::ZeroVector;
+    if (!PlayerController) return FHitResult();
 
-    // Get the camera's location and direction
-    FVector CameraLocation;
-    FRotator CameraRotation;
-    PlayerController->GetPlayerViewPoint(CameraLocation, CameraRotation);
+    FVector2D ScreenPosition;
+    PlayerController->GetMousePosition(ScreenPosition.X, ScreenPosition.Y);
 
-    // Calculate the end location of the raycast
-    FVector End = CameraLocation + (CameraRotation.Vector() * 10000.0f); // Extend the raycast
+    FVector WorldLocation, WorldDirection;
+    if (PlayerController->DeprojectScreenPositionToWorld(ScreenPosition.X, ScreenPosition.Y, WorldLocation, WorldDirection)){
+        FVector End = WorldLocation + (WorldDirection * 10000.0f);
 
-    // Setup the collision parameters
-    FHitResult HitResult;
-    FCollisionQueryParams CollisionParams;
-    CollisionParams.AddIgnoredActor(PlayerController->GetPawn()); // Ignore the player pawn
+        FHitResult HitResult;
+        FCollisionQueryParams CollisionParams;
+        CollisionParams.AddIgnoredActor(PlayerController->GetPawn());  // Ignore the player pawn
 
-    // Perform the raycast
-    if (GetWorld()->LineTraceSingleByChannel(HitResult, CameraLocation, End, ECC_Visibility, CollisionParams))
-    {
-        // Optionally draw a debug line for visualization
-        DrawDebugLine(GetWorld(), CameraLocation, HitResult.Location, FColor::Red, false, 1.0f, 0, 1.0f);
-
-        // Return the hit location
-        return HitResult.Location;
+        if (GetWorld()->LineTraceSingleByChannel(HitResult, WorldLocation, End, ECC_Visibility, CollisionParams)){
+            DrawDebugLine(GetWorld(), WorldLocation, HitResult.Location, FColor::Red, false, 1.0f, 0, 1.0f);
+            return HitResult;  // Return the entire FHitResult
+        }
     }
-
-    // If no hit, return zero vector
-    return FVector::ZeroVector;
+    return FHitResult();  // Return an empty FHitResult if nothing is hit
 }
+
 
 void UVoxelBrushShape::ApplyCubeBrush(FVector3d BrushPosition)
 {

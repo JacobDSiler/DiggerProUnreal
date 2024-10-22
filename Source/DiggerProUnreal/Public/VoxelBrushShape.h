@@ -101,7 +101,7 @@ protected:
 	bool bDig;
 
 	UFUNCTION(BlueprintCallable, Category = "Brush")
-	FVector GetCameraHitLocation();
+	FHitResult GetCameraHitLocation();
 
 	// Cube brush logic
 	void ApplyCubeBrush(FVector3d BrushPosition);
