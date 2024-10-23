@@ -28,6 +28,9 @@ public:
 
 	//Strokes
 	void ApplyBrushStroke(const FBrushStroke& Stroke);
+
+	//SDF Baking
+	void BakeSDFValues();
 	
 	void MarkDirty();
 	void UpdateIfDirty();
@@ -55,8 +58,6 @@ public:
 	// Generates mesh data by delegating to the MarchingCubes class
 	void GenerateMesh() const;
 	void GenerateMeshAsync() const;
-	FIntVector WorldToChunkSpace(const FVector& WorldPosition) const;
-	FVector ChunkToWorldSpace(const FVector& ChunkCoords) const;
 
 private:
 	FIntVector ChunkCoordinates;
@@ -81,8 +82,7 @@ protected:
 	void ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig);
 	void ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig);
 	void ApplyConeBrush(FVector3d BrushPosition, float Height, float Angle, bool bDig);
-	void BakeSDFValues();
-
+	void BakeSingleBrushStroke(FBrushStroke StrokeToBake);
 
 private:
 	int32 ChunkSize;

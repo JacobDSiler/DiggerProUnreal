@@ -4,6 +4,13 @@
 #include "EngineUtils.h"
 #include "Kismet/GameplayStatics.h"
 
+UVoxelBrushShape::UVoxelBrushShape()
+    : BrushSize(150.0f), SDFChange(0), bDig(false), World(nullptr), DiggerManager(nullptr), TargetChunk(nullptr),
+      BrushType(EVoxelBrushType::Sphere)
+{
+
+}
+
 
 void UVoxelBrushShape::InitializeBrush(EVoxelBrushType InBrushType, float InSize, FVector InLocation)
 {
@@ -14,7 +21,7 @@ void UVoxelBrushShape::InitializeBrush(EVoxelBrushType InBrushType, float InSize
     // Get the terrain and grid settings from the DiggerManager
     if (!DiggerManager)
     {
-        for (TActorIterator<ADiggerManager> It(GetWorld()); It; ++It)
+        for (TActorIterator<ADiggerManager> It(World); It; ++It)
         {
             DiggerManager = *It;
             break;
@@ -26,15 +33,19 @@ void UVoxelBrushShape::InitializeBrush(EVoxelBrushType InBrushType, float InSize
         UE_LOG(LogTemp, Error, TEXT("DiggerManager is null!"));
         return;
     }
+    //World
+    World = DiggerManager->GetWorldFromManager();
+    /*if (World)
+    {
+        // Start the timer to redraw the debug brush every 5 seconds
+        World->GetTimerManager().SetTimer(DebugBrushTimerHandle, this, FTimerDelegate::TMethodPtr<UVoxelBrushShape>(&UVoxelBrushShape::DebugBrush), 5.0f, true);
+    }*/
 }
 
 
 // Helper function to retrieve the target chunk from a brush position
 UVoxelChunk* UVoxelBrushShape::GetTargetChunkFromBrushPosition(const FVector3d& BrushPosition)
 {
-    // Ensure we have a valid world context
-    if (!GetWorld()) return nullptr;
-
     // Get a reference to the Digger Manager (or the system managing your chunks)
     if (!DiggerManager) return nullptr;
 
@@ -49,7 +60,7 @@ UVoxelChunk* UVoxelBrushShape::GetTargetChunkFromBrushPosition(const FVector3d& 
 }
 
 
-void UVoxelBrushShape::ApplyBrushToChunk(FVector3d BrushPosition, float BrushRadius)
+void UVoxelBrushShape::ApplyBrushToChunk(UVoxelChunk* BrushChunk, FVector3d BrushPosition, float BrushRadius)
 {
     // Use the helper function to get the target chunk if it isn't passed
     if (!TargetChunk)
@@ -80,26 +91,31 @@ void UVoxelBrushShape::ApplyBrushToChunk(FVector3d BrushPosition, float BrushRad
     }
 }
 
-FHitResult UVoxelBrushShape::GetCameraHitLocation(){
-    APlayerController* PlayerController = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+
+FHitResult UVoxelBrushShape::GetCameraHitLocation()
+{
+    if(!World)
+    { SetWorld( GetWorld());}
+    
+    APlayerController* PlayerController = UGameplayStatics::GetPlayerController(World, 0);
     if (!PlayerController) return FHitResult();
 
-    FVector2D ScreenPosition;
-    PlayerController->GetMousePosition(ScreenPosition.X, ScreenPosition.Y);
-
     FVector WorldLocation, WorldDirection;
-    if (PlayerController->DeprojectScreenPositionToWorld(ScreenPosition.X, ScreenPosition.Y, WorldLocation, WorldDirection)){
-        FVector End = WorldLocation + (WorldDirection * 10000.0f);
+    PlayerController->DeprojectMousePositionToWorld(WorldLocation, WorldDirection);  // Simplified for clarity
 
-        FHitResult HitResult;
-        FCollisionQueryParams CollisionParams;
-        CollisionParams.AddIgnoredActor(PlayerController->GetPawn());  // Ignore the player pawn
+    FVector End = WorldLocation + (WorldDirection * 10000.0f);
+    FHitResult HitResult;
+    FCollisionQueryParams CollisionParams;
+    CollisionParams.AddIgnoredActor(PlayerController->GetPawn());  // Ignore the player pawn
 
-        if (GetWorld()->LineTraceSingleByChannel(HitResult, WorldLocation, End, ECC_Visibility, CollisionParams)){
-            DrawDebugLine(GetWorld(), WorldLocation, HitResult.Location, FColor::Red, false, 1.0f, 0, 1.0f);
-            return HitResult;  // Return the entire FHitResult
-        }
+    if (World->LineTraceSingleByChannel(HitResult, WorldLocation, End, ECC_Visibility, CollisionParams))
+    {
+        DrawDebugLine(World, WorldLocation, HitResult.Location, FColor::Red, false, 1.0f, 0, 1.0f);
+        BrushLocation = HitResult.Location;  // Update BrushLocation to where the raycast hit
+        DebugBrush();
+        return HitResult;  // Return the entire FHitResult
     }
+
     return FHitResult();  // Return an empty FHitResult if nothing is hit
 }
 
@@ -245,7 +261,17 @@ void UVoxelBrushShape::ApplyCustomBrush(FVector3d BrushPosition)
 
 
 
-void UVoxelBrushShape::DebugBrush(UWorld* World) {
+void UVoxelBrushShape::DebugBrush()
+{
+    if (!World)
+    {
+        SetWorld(GetWorld());
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("BrushType: %d"), (int32)BrushType);
+    UE_LOG(LogTemp, Warning, TEXT("BrushLocation: X=%f Y=%f Z=%f"), BrushLocation.X, BrushLocation.Y, BrushLocation.Z);
+    UE_LOG(LogTemp, Warning, TEXT("BrushSize: %f"), BrushSize);
+    
     switch (BrushType) {
     case EVoxelBrushType::Cube:
         DrawDebugBox(World, BrushLocation, FVector(BrushSize), FColor::Green, false, 5.0f);
@@ -265,6 +291,13 @@ void UVoxelBrushShape::DebugBrush(UWorld* World) {
         // Debug custom
             break;
     }
+
+   /* UWorld* TheWorld = World();
+    if (World)
+    {
+        // Start the timer to redraw the debug brush every 5 seconds
+        TheWorld->GetTimerManager().SetTimer(DebugBrushTimerHandle, this, FTimerDelegate::TMethodPtr<UVoxelBrushShape>(&UVoxelBrushShape::DebugBrush), 5.0f, true);
+    }*/
 }
 
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DiggerManager.h"
 #include "UObject/NoExportTypes.h"
 #include "SparseVoxelGrid.generated.h"
 
@@ -37,7 +38,10 @@ public:
 	bool EnsureDiggerManager();
 	FIntVector WorldToVoxelSpace(const FVector& WorldCoords);
 	FVector VoxelToWorldSpace(const FIntVector& VoxelCoords);
-	
+
+	//Baked SDF Methods
+	void BakeSdf();
+	void BakeBrush(FBrushStroke);
 	
 	// Adds a voxel at the given coordinates with the provided SDF value
 	void SetVoxel(FIntVector Position, float SDFValue);
@@ -86,7 +90,11 @@ public:
 
 	
 private:
-
+	//Baked SDF for BaseSDF values for after the undo queue brush strokes fall out the end of the queue and get baked.
+	TMap<FIntVector, FVoxelData> BakedSDF;
+	
+	void ApplyBakedSDF();
+	
 	int32 ChunkSize = 32;  // Number of subdivisions per grid size
 
 	//The VoxelSize which will be set to the VoxelSize within DiggerManager during InitializeDiggerManager;

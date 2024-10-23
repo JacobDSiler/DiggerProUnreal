@@ -1,5 +1,8 @@
 #pragma once
 
+#include <mutex>
+#include <queue>
+
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "ProceduralMeshComponent.h"
@@ -39,10 +42,12 @@ class DIGGERPROUNREAL_API ADiggerManager : public AActor
 
 public:
 	ADiggerManager();
+	bool EnsureWorldReference();
 
 protected:
 	virtual void BeginPlay() override;
 	void UpdateVoxelSize();
+	void ProcessDirtyChunks();
 
 public:
 
@@ -108,6 +113,7 @@ public:
 	void OutputAggregatedLogs();*/
 
 private:
+	std::mutex ChunkProcessingMutex;
 	// Reference to the sparse voxel grid and marching cubes
 	UPROPERTY()
 	USparseVoxelGrid* SparseVoxelGrid;
@@ -121,17 +127,32 @@ private:
 	UPROPERTY()
 	UVoxelChunk* OneChunk;
 
+public:
+	UPROPERTY()
+	UWorld* World;
+	
+	[[nodiscard]] UWorld* GetWorldFromManager()
+	{
+		if(EnsureWorldReference())
+			return World;
+		else
+			return nullptr;
+	}
+
+private:
 	void CreateSphereVoxelGrid(UVoxelChunk* Chunk, const FVector& Position, float Radius) const;
 	void GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk) const;
 	void FillChunkWithPerlinNoiseVoxels(UVoxelChunk* Chunk) const;
 	// Handle the generation of mesh using marching cubes
 	void GenerateVoxelsTest();
 
-	TArray<FBrushStroke> UndoQueue;
-	FTimerHandle ProcessingTimerHandle;
+	std::queue<FBrushStroke> BrushStrokeQueue;
+	const int32 MaxUndoLength = 10; // Example limit
+	
+	FTimerHandle ChunkProcessTimerHandle;
 
 	void ProcessQueue();
-	void BakeSDF();
+	void BakeSingleBrushStroke(UVoxelChunk* TargetChunk, const FBrushStroke& Stroke);
     
 
 	//Space Conversion Helper Methods

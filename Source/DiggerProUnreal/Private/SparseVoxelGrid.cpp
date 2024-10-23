@@ -6,7 +6,8 @@
 #include "SWarningOrErrorBox.h"
 #include "VoxelChunk.h"
 
-USparseVoxelGrid::USparseVoxelGrid(): DiggerManager(nullptr), ParentChunk(nullptr), ParentChunkCoordinates(0, 0, 0),
+USparseVoxelGrid::USparseVoxelGrid(): LocalVoxelSize(0), DiggerManager(nullptr), ParentChunk(nullptr),
+                                      ParentChunkCoordinates(0, 0, 0),
                                       TerrainGridSize(0),
                                       Subdivisions(0)
 {
@@ -222,8 +223,17 @@ void USparseVoxelGrid::RenderVoxels()
     }
 }
 
+// Method to bake the current voxel data to BaseSDF
+void USparseVoxelGrid::BakeSdf()
+{
+    BakedSDF = VoxelData;
+    UE_LOG(LogTemp, Warning, TEXT("Baked current voxel data to BakedSDF."));
+}
 
-
-
-
+// Method to apply the BaseSDF to VoxelData
+void USparseVoxelGrid::ApplyBakedSDF()
+{
+    VoxelData = BakedSDF;
+    UE_LOG(LogTemp, Warning, TEXT("Applied BakedSDF to current voxel data."));
+}
 

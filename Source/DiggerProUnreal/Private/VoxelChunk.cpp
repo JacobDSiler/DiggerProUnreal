@@ -296,8 +296,12 @@ void UVoxelChunk::ApplyConeBrush(FVector3d BrushPosition, float Height, float An
 }
 
 
-void UVoxelChunk::BakeSDFValues() {
+void UVoxelChunk::BakeSingleBrushStroke(FBrushStroke StrokeToBake) {
 	// Placeholder for baking SDF values into the chunk
+if (SparseVoxelGrid)
+{
+//	SparseVoxelGrid->BakeBrush();
+}
 }
 
 bool UVoxelChunk::IsValidChunkLocalCoordinate(FVector Position) const

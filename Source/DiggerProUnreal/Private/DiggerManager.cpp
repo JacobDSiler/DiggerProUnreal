@@ -1,5 +1,4 @@
 #include "DiggerManager.h"
-
 #include "SparseVoxelGrid.h"
 #include "MarchingCubes.h"
 #include "VoxelChunk.h"
@@ -20,44 +19,109 @@ ADiggerManager::ADiggerManager()
 	SparseVoxelGrid = CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid"));
 	MarchingCubes = CreateDefaultSubobject<UMarchingCubes>(TEXT("MarchingCubes"));
 
-	//Initialize the brush component
+	// Initialize the brush component
+	ActiveBrush = CreateDefaultSubobject<UVoxelBrushShape>(TEXT("ActiveBrush"));
+}
+
+bool ADiggerManager::EnsureWorldReference()
+{
+	if (World)
+	{return true;}
+
+	World = GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogTemp, Error, TEXT("World not found in BeginPlay of DiggerManager."));
+		return false; // Exit if World is not found
+	}
+	return true;
 }
 
 void ADiggerManager::BeginPlay()
 {
 	Super::BeginPlay();
+	
+	if(!EnsureWorldReference()) return;
+	
+	
 	UpdateVoxelSize();
 	
 	GenerateVoxelsTest();
+
+	// Start the timer to process dirty chunks
+	GetWorld()->GetTimerManager().SetTimer(ChunkProcessTimerHandle, this, &ADiggerManager::ProcessDirtyChunks, 1.0f, true);
 }
+
 void ADiggerManager::UpdateVoxelSize()
 {
 	VoxelSize=TerrainGridSize/Subdivisions;
 }
 
+void ADiggerManager::ProcessDirtyChunks()
+{
+	// Call the asynchronous method to process dirty chunks
+	AsyncTask(ENamedThreads::GameThread, [this]()
+	{
+		// Lock the mutex to prevent overlapping method calls
+		std::lock_guard<std::mutex> Lock(ChunkProcessingMutex);
+
+		// Your logic to process dirty chunks goes here
+		for (TMap<FIntVector, UVoxelChunk*>::TIterator It(ChunkMap); It; ++It)
+		{
+			UVoxelChunk* Chunk = It->Value; // (*It).Key is the FIntVector, (*It).Value is the UVoxelChunk*
+			if (Chunk)
+			{
+				Chunk->UpdateIfDirty(); // Call the function for each chunk
+			}
+		}
+
+
+		// After processing, you can reset the timer if needed
+		World->GetTimerManager().ClearTimer(ChunkProcessTimerHandle);
+		World->GetTimerManager().SetTimer(ChunkProcessTimerHandle, this, &ADiggerManager::ProcessDirtyChunks, 2.0f, true);
+	});
+}
+
+
 void ADiggerManager::ApplyBrush(FVector BrushPosition, float BrushRadius)
 {
-	UVoxelChunk* TargetChunk = nullptr;
-	// Use the helper function to get the target chunk if it isn't passed
-	if (!TargetChunk)
-	{
-		TargetChunk = GetOrCreateChunkAt(BrushPosition);
-	}
+    FBrushStroke BrushStroke = {BrushPosition, BrushRadius};
+    BrushStrokeQueue.push(BrushStroke);
 
-	if (!TargetChunk)
-	{
-		// Log error or handle the case where no chunk is found
-		return;
-	}
-	// Assuming ActiveBrush is properly initialized
-	if (ActiveBrush)
-	{
-		if (TargetChunk)
-		{
-			ActiveBrush->ApplyBrushToChunk(BrushPosition, BrushRadius);
-		}
-	}
+    // Use the helper function to get the target chunk if it isn't passed
+    UVoxelChunk* TargetChunk = GetOrCreateChunkAt(BrushPosition);
+
+    if (TargetChunk)
+    {
+    	UE_LOG(LogTemp, Warning, TEXT("BrushPosition: X=%f Y=%f Z=%f BrushRadius: %f"), 
+    	BrushPosition.X, BrushPosition.Y,BrushPosition.Z, BrushRadius);
+    
+        //TargetChunk->ApplyBrushStroke(BrushStroke);
+
+        // Check if the queue exceeds the configured limit
+    	if (BrushStrokeQueue.size() > MaxUndoLength)
+    	{
+    		FBrushStroke StrokeToBake = BrushStrokeQueue.front();
+    		BrushStrokeQueue.pop(); // This removes the oldest element, which is at the front
+    		//TargetChunk->BakeSingleBrushStroke(StrokeToBake);
+    	}
+    }
 }
+
+
+/*void ADiggerManager::BakeSDFValues(UVoxelChunk* TargetChunk)
+{
+    while (!BrushStrokeQueue.empty())
+    {
+        FBrushStroke Stroke = BrushStrokeQueue.front();
+        BrushStrokeQueue.pop();
+
+    	UE_LOG(LogTemp,Warning, TEXT("BakeSDFValues() called"));
+        // Logic to bake the stroke to the base SDF
+         TargetChunk->ApplyBrushStroke(Stroke);
+    }
+}*/
+
 
 FIntVector ADiggerManager::CalculateChunkPosition(const FIntVector& ProposedChunkPosition) const
 {

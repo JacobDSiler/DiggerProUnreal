@@ -16,17 +16,19 @@ class DIGGERPROUNREAL_API UVoxelBrushShape : public UObject
 	GENERATED_BODY()
 
 public:
+	UVoxelBrushShape();
 
 	// Initialize the brush
 	void InitializeBrush(EVoxelBrushType InBrushType, float InSize, FVector InLocation);
 	UVoxelChunk* GetTargetChunkFromBrushPosition(const FVector3d& BrushPosition);
 
 	// Apply the brush to the SDF in the chunk
-	void ApplyBrushToChunk(FVector3d BrushPosition, float BrushSize);
+	void ApplyBrushToChunk(UVoxelChunk* BrushChunk, FVector3d BrushPosition, float BrushSize);
+	void InitializeBrushProperties();
 
 	// Debug the brush in the world
 	UFUNCTION(BlueprintCallable, Category = "Brush")
-	void DebugBrush(UWorld* World);
+	void DebugBrush();
 	
 	UFUNCTION(BlueprintCallable, Category = "Brush")
 	EVoxelBrushType GetBrushType() const
@@ -89,7 +91,6 @@ public:
 	}
 
 protected:
-	
 	//Brush Settings
 	// Size and location of the brush
 	float BrushSize;
@@ -99,6 +100,9 @@ protected:
 	
 	//Dig Setting
 	bool bDig;
+	
+	//Debug Brush Timer
+	FTimerHandle DebugBrushTimerHandle;
 
 	UFUNCTION(BlueprintCallable, Category = "Brush")
 	FHitResult GetCameraHitLocation();
@@ -114,6 +118,17 @@ protected:
 
 	bool IsVoxelWithinBounds(const FVector3d& VoxelPosition, const FVector3d& MinBounds, const FVector3d& MaxBounds);
 	bool IsVoxelWithinSphere(const FVector3d& VoxelPosition, const FVector3d& SphereCenter, double Radius);
+
+private:
+	//World
+	UPROPERTY()
+	UWorld* World;
+
+public:
+	void SetWorld(UWorld* SetWorld)
+	{
+		this->World = SetWorld;
+	}
 
 private:
 	//DiggerManager Reference
