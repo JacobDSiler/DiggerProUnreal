@@ -4,6 +4,7 @@
 #include "MarchingCubes.h"
 #include "SparseVoxelGrid.h"
 #include "VoxelBrushShape.h"
+#include "VoxelBrushTypes.h"
 #include "Async/Async.h"
 #include "Net/Core/Connection/NetConnectionFaultRecoveryBase.h"
 
@@ -204,51 +205,58 @@ void UVoxelChunk::ForceUpdate()
 	
 }*/
 
-void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
+void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 {
-    switch (Stroke.BrushType)
-    {
-    case EVoxelBrushType::Cube:
-        ApplyCubeBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig);
-        break;
-    case EVoxelBrushType::Sphere:
-        ApplySphereBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig);
-        break;
-    case EVoxelBrushType::Cone:
-        ApplyConeBrush(Stroke.BrushPosition, Stroke.BrushRadius, 45.0f, Stroke.bDig);  // Assuming a fixed angle for now
-        break;
-    default:
-        break;
-    }
+	UE_LOG(LogTemp, Warning, TEXT("BrushType: %d"), (int32)Stroke.BrushType);
+	UE_LOG(LogTemp, Warning, TEXT("BrushPosition: X=%f Y=%f Z=%f"), Stroke.BrushPosition.X, Stroke.BrushPosition.Y, Stroke.BrushPosition.Z);
+	UE_LOG(LogTemp, Warning, TEXT("BrushRadius: %f"), Stroke.BrushRadius);
 
-    MarkDirty();
+	switch (Stroke.BrushType)
+	{
+	case EVoxelBrushType::Cube:
+		ApplyCubeBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig);
+		break;
+	case EVoxelBrushType::Sphere:
+		ApplySphereBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig);
+		break;
+	case EVoxelBrushType::Cone:
+		ApplyConeBrush(Stroke.BrushPosition, Stroke.BrushRadius, 45.0f, Stroke.bDig);
+		break;
+	default:
+		UE_LOG(LogTemp, Warning, TEXT("Invalid BrushType: %d"), (int32)Stroke.BrushType);
+		break;
+	}
+
+	MarkDirty();
+	UE_LOG(LogTemp, Warning, TEXT("BrushStroke applied successfully"));
 }
 
-void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig)
-{
-    FVector3d MinBounds = BrushPosition - FVector3d(Radius);
-    FVector3d MaxBounds = BrushPosition + FVector3d(Radius);
+void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig) {
+	UE_LOG(LogTemp, Warning, TEXT("Applying Sphere Brush: Position: %s, Radius: %f, Dig: %d"), *BrushPosition.ToString(), Radius, bDig);
+	FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
+	FVector3d MinBounds = FVector3d(VoxelCenter) - FVector3d(Radius + 2);
+	FVector3d MaxBounds = FVector3d(VoxelCenter) + FVector3d(Radius + 2);
 
-    for (int32 X = MinBounds.X; X <= MaxBounds.X; ++X)
-    {
-        for (int32 Y = MinBounds.Y; Y <= MaxBounds.Y; ++Y)
-        {
-            for (int32 Z = MinBounds.Z; Z <= MaxBounds.Z; ++Z)
-            {
-                FVector3d VoxelPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
-                float Distance = FVector3d::Dist(VoxelPosition, BrushPosition);
+	for (int32 X = MinBounds.X; X <= MaxBounds.X; ++X) {
+		for (int32 Y = MinBounds.Y; Y <= MaxBounds.Y; ++Y) {
+			for (int32 Z = MinBounds.Z; Z <= MaxBounds.Z; ++Z) {
+				FVector3d VoxelPosition = FVector3d(X, Y, Z);
+				FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+				float Distance = FVector3d::Dist(WorldPosition, BrushPosition);
 
-                if (Distance <= Radius)
-                {
-                    float SDFValue = Distance - Radius;
-                    SDFValue = bDig ? -FMath::Abs(SDFValue) : FMath::Abs(SDFValue);
-
-                    SetVoxel(X, Y, Z, SDFValue);
-                }
-            }
-        }
-    }
+				if (Distance <= Radius) {
+					float SDFValue = (Distance / Radius) * 2.0f - 1.0f; // Smooth transition between -1.0 and 1.0
+					SDFValue = bDig ? -SDFValue : SDFValue;
+					SetVoxel(X, Y, Z, SDFValue);
+					UE_LOG(LogTemp, Warning, TEXT("Set Voxel at %s with SDFValue: %f"), *VoxelPosition.ToString(), SDFValue);
+				}
+			}
+		}
+	}
 }
+
+
+
 
 void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig)
 {

@@ -427,7 +427,7 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
     TArray<int32> OutTriangles;
     TArray<FVector> Normals;
 	
-	FVector ChunkOrigin =FVector( ChunkPtr->GetChunkPosition() );
+	FVector ChunkOrigin = FVector( ChunkPtr->GetChunkPosition() );
 	
 	// Iterate through each voxel in the grid
 	for (const auto& Voxel : VoxelGrid->VoxelData)

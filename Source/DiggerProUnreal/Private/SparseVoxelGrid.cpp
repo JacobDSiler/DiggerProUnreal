@@ -100,21 +100,16 @@ void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue)
 // In USparseVoxelGrid, update SetVoxel to use world coordinates comparison
 void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float SDFValue)
 {
-    // Calculate the valid range for voxel coordinates
-    int32 HalfChunkSize = ChunkSize * Subdivisions / 2;
-    
-    // Validate the voxel coordinates
-    /*if (X >= -HalfChunkSize && X < HalfChunkSize &&
-        Y >= -HalfChunkSize && Y < HalfChunkSize &&
-        Z >= -HalfChunkSize && Z < HalfChunkSize)
-    {*/
-        VoxelData.Add(FIntVector(X, Y, Z), FVoxelData(SDFValue));
+        int32 HalfChunkSize = ChunkSize * Subdivisions / 2;
+
+        FVoxelData* ExistingVoxel = VoxelData.Find(FIntVector(X, Y, Z));
+        if (ExistingVoxel) {
+            // Blend the SDF values smoothly
+            ExistingVoxel->SDFValue = (ExistingVoxel->SDFValue + SDFValue) / 2.0f;
+        } else {
+            VoxelData.Add(FIntVector(X, Y, Z), FVoxelData(SDFValue));
+        }
         UE_LOG(LogTemp, Warning, TEXT("Set voxel at: X=%d Y=%d Z=%d with SDFValue=%f"), X, Y, Z, SDFValue);
-    /*}
-    else
-    {
-    UE_LOG(LogTemp, Error, TEXT("Invalid voxel coordinates: X=%d Y=%d Z=%d"), X, Y, Z);
-    }*/
 }
 
 

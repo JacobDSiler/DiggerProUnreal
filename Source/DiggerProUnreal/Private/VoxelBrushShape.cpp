@@ -35,11 +35,7 @@ void UVoxelBrushShape::InitializeBrush(EVoxelBrushType InBrushType, float InSize
     }
     //World
     World = DiggerManager->GetWorldFromManager();
-    /*if (World)
-    {
-        // Start the timer to redraw the debug brush every 5 seconds
-        World->GetTimerManager().SetTimer(DebugBrushTimerHandle, this, FTimerDelegate::TMethodPtr<UVoxelBrushShape>(&UVoxelBrushShape::DebugBrush), 5.0f, true);
-    }*/
+    if(!World) World = GetWorld();
 }
 
 

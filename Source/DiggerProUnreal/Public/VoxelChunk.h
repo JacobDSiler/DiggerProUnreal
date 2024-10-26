@@ -27,7 +27,7 @@ public:
 	void DebugPrintVoxelData() const;
 
 	//Strokes
-	void ApplyBrushStroke(const FBrushStroke& Stroke);
+	void ApplyBrushStroke(FBrushStroke& Stroke);
 
 	//SDF Baking
 	void BakeSDFValues();

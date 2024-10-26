@@ -41,7 +41,8 @@ void ADiggerManager::BeginPlay()
 {
 	Super::BeginPlay();
 	
-	if(!EnsureWorldReference()) return;
+	if(!EnsureWorldReference())
+	{ UE_LOG(LogTemp,Error,TEXT("World is null in DiggerManager BeginPlay() Continuing!"));}
 	
 	
 	UpdateVoxelSize();
@@ -49,7 +50,9 @@ void ADiggerManager::BeginPlay()
 	GenerateVoxelsTest();
 
 	// Start the timer to process dirty chunks
-	GetWorld()->GetTimerManager().SetTimer(ChunkProcessTimerHandle, this, &ADiggerManager::ProcessDirtyChunks, 1.0f, true);
+	World=GetWorld();
+	if (World)
+	{	World->GetTimerManager().SetTimer(ChunkProcessTimerHandle, this, &ADiggerManager::ProcessDirtyChunks, 1.0f, true);}
 }
 
 void ADiggerManager::UpdateVoxelSize()
@@ -85,7 +88,11 @@ void ADiggerManager::ProcessDirtyChunks()
 
 void ADiggerManager::ApplyBrush(FVector BrushPosition, float BrushRadius)
 {
-    FBrushStroke BrushStroke = {BrushPosition, BrushRadius};
+	FBrushStroke BrushStroke;
+	BrushStroke.BrushPosition = BrushPosition;
+	BrushStroke.BrushRadius = BrushRadius;
+	BrushStroke.bDig = ActiveBrush->GetDig();
+	BrushStroke.BrushType = ActiveBrush->GetBrushType(); // Ensure it captures the correct type
     BrushStrokeQueue.push(BrushStroke);
 
     // Use the helper function to get the target chunk if it isn't passed
@@ -96,15 +103,15 @@ void ADiggerManager::ApplyBrush(FVector BrushPosition, float BrushRadius)
     	UE_LOG(LogTemp, Warning, TEXT("BrushPosition: X=%f Y=%f Z=%f BrushRadius: %f"), 
     	BrushPosition.X, BrushPosition.Y,BrushPosition.Z, BrushRadius);
     
-        //TargetChunk->ApplyBrushStroke(BrushStroke);
+        TargetChunk->ApplyBrushStroke(BrushStroke);
 
         // Check if the queue exceeds the configured limit
-    	if (BrushStrokeQueue.size() > MaxUndoLength)
+    	/*if (BrushStrokeQueue.size() > MaxUndoLength)
     	{
     		FBrushStroke StrokeToBake = BrushStrokeQueue.front();
     		BrushStrokeQueue.pop(); // This removes the oldest element, which is at the front
     		//TargetChunk->BakeSingleBrushStroke(StrokeToBake);
-    	}
+    	}*/
     }
 }
 

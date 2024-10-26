@@ -32,6 +32,13 @@ struct FBrushStroke {
 
 	//UPROPERTY(BlueprintReadWrite)
 	//TOptional<bool> FlipOrientation;  // Optional property for flipping the brush rotation 180 degrees
+	
+	FBrushStroke()
+	: BrushType(EVoxelBrushType::Sphere), // Initialize the enum with a default value
+	  BrushRadius(0.f),
+	  BrushPosition(FVector::ZeroVector),
+	  bDig(false)
+	{}
 };
 
 
