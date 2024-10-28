@@ -62,32 +62,34 @@ void ADiggerManager::UpdateVoxelSize()
 
 void ADiggerManager::ProcessDirtyChunks()
 {
-	// Call the asynchronous method to process dirty chunks
-	AsyncTask(ENamedThreads::GameThread, [this]()
+	// Process chunks on a background thread
+	AsyncTask(ENamedThreads::AnyNormalThreadNormalTask, [this]()
 	{
-		// Lock the mutex to prevent overlapping method calls
-		std::lock_guard<std::mutex> Lock(ChunkProcessingMutex);
-
-		// Your logic to process dirty chunks goes here
-		for (TMap<FIntVector, UVoxelChunk*>::TIterator It(ChunkMap); It; ++It)
+		for (auto& Elem : ChunkMap)
 		{
-			UVoxelChunk* Chunk = It->Value; // (*It).Key is the FIntVector, (*It).Value is the UVoxelChunk*
+			UVoxelChunk* Chunk = Elem.Value;
 			if (Chunk)
 			{
-				Chunk->UpdateIfDirty(); // Call the function for each chunk
+				Chunk->UpdateIfDirty();
 			}
 		}
 
-
-		// After processing, you can reset the timer if needed
-		World->GetTimerManager().ClearTimer(ChunkProcessTimerHandle);
-		World->GetTimerManager().SetTimer(ChunkProcessTimerHandle, this, &ADiggerManager::ProcessDirtyChunks, 2.0f, true);
+		// Reset the timer on the game thread
+		AsyncTask(ENamedThreads::GameThread, [this]()
+		{
+			World->GetTimerManager().ClearTimer(ChunkProcessTimerHandle);
+			World->GetTimerManager().SetTimer(ChunkProcessTimerHandle, this, &ADiggerManager::ProcessDirtyChunks, 2.0f, true);
+		});
 	});
 }
 
 
-void ADiggerManager::ApplyBrush(FVector BrushPosition, float BrushRadius)
+
+
+void ADiggerManager::ApplyBrush()
 {
+	FVector BrushPosition = ActiveBrush->GetBrushLocation();
+	float BrushRadius = ActiveBrush->GetBrushSize();
 	FBrushStroke BrushStroke;
 	BrushStroke.BrushPosition = BrushPosition;
 	BrushStroke.BrushRadius = BrushRadius;
@@ -310,13 +312,9 @@ void ADiggerManager::DebugVoxels()
 			if (Chunk && Chunk->GetSparseVoxelGrid())
 			{
 				DebugLogVoxelChunkGrid();
-				Chunk->MarkDirty();
-				Chunk->ForceUpdate();
 				USparseVoxelGrid* SparseVoxelGridPtr = Chunk->GetSparseVoxelGrid();
 				if (SparseVoxelGridPtr)
 				{
-					//UE_LOG(LogTemp, Warning, TEXT("Rendering voxels for SparseVoxelGrid..."));
-					SparseVoxelGridPtr->LogVoxelData();
 					SparseVoxelGridPtr->RenderVoxels();
 				} // Render voxels
 				UE_LOG(LogTemp, Warning, TEXT("Rendering voxels for chunk at coordinates: %s"), *ChunkCoordinates.ToString());

@@ -344,6 +344,12 @@ UMarchingCubes::UMarchingCubes(const FObjectInitializer& ObjectInitializer, cons
 {
 }
 
+void UMarchingCubes::Initialize(ADiggerManager* InDiggerManager)
+{
+	DiggerManager = InDiggerManager;
+}
+
+
 void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutOutVertices, const TArray<int32>& OutTriangles, const TArray<FVector>& Normals) const
 {
     TArray<FVector2D> UVs;
@@ -355,10 +361,7 @@ void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVe
 		UE_LOG(LogTemp, Error, TEXT("DiggerManager or ProceduralMesh is null in ReconstructMeshSection"));
 		return;
 	}
-
-//	if (DiggerManager)
-	//{DiggerManager->LogVoxelOperation(FString::Printf(TEXT("ClearMeshSection: SectionIndex = %d"), SectionIndex);}
-    
+	
     // Clear the mesh section if it exists
     if (SectionIndex > 0) 
     {
@@ -378,132 +381,94 @@ void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVe
     );
 }
 
-bool UMarchingCubes::EnsureDiggerManager()
-{
-	if (!DiggerManager)
-	{
-		for (TActorIterator<ADiggerManager> It(GetWorld()); It; ++It)
-		{
-			DiggerManager = *It;
-			break;
-		}
-		
-		if (!DiggerManager)
-		{
-			UE_LOG(LogTemp, Error, TEXT("DiggerManager is null during MeshGeneration!"));
-			return false;
-		}
-	}
-	return true;
-}
 
 // Generate the mesh from voxel grid data
-void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
-{
-    if (!ChunkPtr)
-    {
+void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr) {
+    if (!ChunkPtr) {
         UE_LOG(LogTemp, Error, TEXT("ChunkPtr is null!"));
         return;
     }
 
-	// Get the terrain and grid settings from the DiggerManager
-	if (!EnsureDiggerManager()) return;
-	
+    // Ensure terrain and grid settings are valid
+    if (!DiggerManager) return;
 
+	int VoxelSize = 1;
     int32 SectionIndex = ChunkPtr->GetSectionIndex();
     UE_LOG(LogTemp, Error, TEXT("Generating Mesh for Section with Section ID: %i"), SectionIndex);
 
-	if (!VoxelGrid){VoxelGrid = ChunkPtr->GetSparseVoxelGrid();}
-	if (!VoxelGrid || VoxelGrid->VoxelData.IsEmpty())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("No voxel data to generate mesh! VoxelGrid: %s, VoxelData.Num(): %d"), 
-			VoxelGrid ? TEXT("Valid") : TEXT("Invalid"),
-			VoxelGrid ? VoxelGrid->VoxelData.Num() : 0);
-		ChunkPtr->DebugPrintVoxelData();
-		return;
-	}
+	VoxelGrid = ChunkPtr->GetSparseVoxelGrid();
+    if (!VoxelGrid || VoxelGrid->VoxelData.IsEmpty()) {
+        UE_LOG(LogTemp, Warning, TEXT("No voxel data to generate mesh! VoxelGrid: %s, VoxelData.Num(): %d"), VoxelGrid ? TEXT("Valid") : TEXT("Invalid"), VoxelGrid ? VoxelGrid->VoxelData.Num() : 0);
+        ChunkPtr->DebugPrintVoxelData();
+        return;
+    }
 
     TArray<FVector> OutVertices;
     TArray<int32> OutTriangles;
     TArray<FVector> Normals;
-	
-	FVector ChunkOrigin = FVector( ChunkPtr->GetChunkPosition() );
-	
-	// Iterate through each voxel in the grid
-	for (const auto& Voxel : VoxelGrid->VoxelData)
-	{
-		FIntVector VoxelCoords = Voxel.Key;
-		FVoxelData VoxelValue = Voxel.Value;
 
-		FVector CornerWSPositions[8];
-		float CornerSDFValues[8];
+    FVector ChunkOrigin = FVector(ChunkPtr->GetChunkPosition());
 
-		for (int32 i = 0; i < 8; i++)
-		{
-			FIntVector CornerCoords = VoxelCoords + GetCornerOffset(i);
-			CornerWSPositions[i] = ChunkOrigin + FVector(CornerCoords);;
-			CornerSDFValues[i] = VoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
-		}
-    	// Convert the fixed-size array into a TArray
-    	TArray<float> SDFValuesArray;
-    	SDFValuesArray.Append(CornerSDFValues, 8);  //
-    	
-        // Use the SDF values to determine which edges the surface passes through
+    // Iterate through each voxel in the grid
+    for (const auto& Voxel : VoxelGrid->VoxelData) {
+        FIntVector VoxelCoords = Voxel.Key;
+        FVoxelData VoxelValue = Voxel.Value;
+
+        FVector CornerWSPositions[8];
+        float CornerSDFValues[8];
+
+        for (int32 i = 0; i < 8; i++) {
+            FIntVector CornerCoords = VoxelCoords + GetCornerOffset(i);
+            CornerWSPositions[i] = ChunkOrigin + FVector(CornerCoords) * VoxelSize; // Ensure correct conversion
+            CornerSDFValues[i] = VoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
+        }
+
+        TArray<float> SDFValuesArray;
+        SDFValuesArray.Append(CornerSDFValues, 8);
+
         int32 CubeIndex = CalculateMarchingCubesIndex(SDFValuesArray);
-
-        // If no surface, continue
-        if (CubeIndex == 0 || CubeIndex == 255)
-        {
+        if (CubeIndex == 0 || CubeIndex == 255) {
             continue;
         }
 
-    	TMap<FVector, int32> VertexCache;
+        TMap<FVector, int32> VertexCache;
 
-    	// In the triangle generation loop:
-    	for (int32 i = 0; TriangleConnectionTable[CubeIndex][i] != -1; i += 3)
-    	{
-    		FVector Vertices[3];
-    		for (int32 j = 0; j < 3; ++j)
-    		{
-    			int32 EdgeIndex = TriangleConnectionTable[CubeIndex][i + j];
-    			FVector Vertex = InterpolateVertex(
-					CornerWSPositions[EdgeConnection[EdgeIndex][0]],
-					CornerWSPositions[EdgeConnection[EdgeIndex][1]],
-					CornerSDFValues[EdgeConnection[EdgeIndex][0]],
-					CornerSDFValues[EdgeConnection[EdgeIndex][1]]
-				);
-    			Vertices[j] = Vertex;
-    		}
+        for (int32 i = 0; TriangleConnectionTable[CubeIndex][i] != -1; i += 3) {
+            FVector Vertices[3];
 
-    		for (int32 j = 0; j < 3; ++j)
-    		{
-    			int32* CachedIndex = VertexCache.Find(Vertices[j]);
-    			if (CachedIndex)
-    			{
-    				OutTriangles.Add(*CachedIndex);
-    			}
-    			else
-    			{
-    				int32 NewIndex = OutVertices.Add(Vertices[j]);
-    				VertexCache.Add(Vertices[j], NewIndex);
-    				OutTriangles.Add(NewIndex);
-    			}
-    		}
+            for (int32 j = 0; j < 3; ++j) {
+                int32 EdgeIndex = TriangleConnectionTable[CubeIndex][i + j];
+                FVector Vertex = InterpolateVertex(CornerWSPositions[EdgeConnection[EdgeIndex][0]], CornerWSPositions[EdgeConnection[EdgeIndex][1]], CornerSDFValues[EdgeConnection[EdgeIndex][0]], CornerSDFValues[EdgeConnection[EdgeIndex][1]]);
+                Vertices[j] = Vertex;
+            }
 
-    		// Compute normal
-    		FVector Normal = FVector::CrossProduct(Vertices[1] - Vertices[0], Vertices[2] - Vertices[0]).GetSafeNormal();
-    		for (int32 j = 0; j < 3; ++j)
-    		{
-    			Normals.Add(Normal);
-    		}
-    	}
+            for (int32 j = 0; j < 3; ++j) {
+                int32* CachedIndex = VertexCache.Find(Vertices[j]);
+                if (CachedIndex) {
+                    OutTriangles.Add(*CachedIndex);
+                } else {
+                    int32 NewIndex = OutVertices.Add(Vertices[j]);
+                    VertexCache.Add(Vertices[j], NewIndex);
+                    OutTriangles.Add(NewIndex);
+                }
+            }
+
+            /*FVector Normal = FVector::CrossProduct(Vertices[1] - Vertices[0], Vertices[2] - Vertices[0]).GetSafeNormal();
+            for (int32 j = 0; j < 3; ++j) {
+                Normals.Add(Normal);
+            }*/
+        }
     }
 
     UE_LOG(LogTemp, Log, TEXT("Mesh generated with %d OutVertices and %d OutTriangles."), OutVertices.Num(), OutTriangles.Num());
 
-    // Reconstruct the mesh section with generated OutVertices and OutTriangles
-    ReconstructMeshSection(SectionIndex, OutVertices, OutTriangles, Normals);
+	// Pass the generated data to be processed on the game thread
+	AsyncTask(ENamedThreads::GameThread, [this, SectionIndex, OutVertices, OutTriangles, Normals]()
+	{
+		ReconstructMeshSection(SectionIndex, OutVertices, OutTriangles, Normals);
+    });
 }
+
 
 
 // Interpolates a vertex position on the edge between two points based on their SDF values

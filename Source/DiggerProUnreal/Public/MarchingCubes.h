@@ -18,6 +18,7 @@ public:
 	// Constructors
 	UMarchingCubes();
 	UMarchingCubes(const FObjectInitializer& ObjectInitializer, const UVoxelChunk* VoxelChunk);
+	void Initialize(ADiggerManager* InDiggerManager);
 
 	// Generate the mesh based on the voxel grid
 	void GenerateMesh(const UVoxelChunk* ChunkPtr);
@@ -27,7 +28,6 @@ public:
 
 	void ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutOutVertices, const TArray<int32>& OutTriangles, const TArray<FVector>&
 	                            Normals) const;
-	bool EnsureDiggerManager();
 
 	// Reference to the associated voxel chunk
 	UPROPERTY()
@@ -44,4 +44,10 @@ private:
 
 	UPROPERTY()
 	USparseVoxelGrid* VoxelGrid;
+	
+public:
+	void SetDiggerManager(ADiggerManager* SetDiggerManager)
+	{
+		this->DiggerManager = SetDiggerManager;
+	}
 };

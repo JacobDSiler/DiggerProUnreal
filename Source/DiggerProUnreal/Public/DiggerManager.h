@@ -83,7 +83,7 @@ public:
 
 	// Apply the active brush to the terrain
 	UFUNCTION(BlueprintCallable, Category = "Brush System")
-	void ApplyBrush(FVector BrushPosition, float BrushRadius);
+	void ApplyBrush();
 
 	// Get the relevant voxel chunk based on position
 	UFUNCTION(BlueprintCallable, Category = "Chunk Management")

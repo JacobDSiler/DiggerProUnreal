@@ -57,7 +57,6 @@ public:
 
 	// Generates mesh data by delegating to the MarchingCubes class
 	void GenerateMesh() const;
-	void GenerateMeshAsync() const;
 
 private:
 	FIntVector ChunkCoordinates;
@@ -110,6 +109,8 @@ private:
 	UPROPERTY()
 	UMarchingCubes* MarchingCubesGenerator;
 
+
+private:
 	//Dirty flag to update the chunk
 	bool bIsDirty;
 

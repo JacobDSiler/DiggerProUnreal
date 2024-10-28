@@ -87,6 +87,7 @@ void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates)
 		return;
 	}
 
+	MarchingCubesGenerator->SetDiggerManager(DiggerManager);
 	ChunkSize=DiggerManager->ChunkSize;
 	TerrainGridSize = DiggerManager->TerrainGridSize;
 	Subdivisions = DiggerManager->Subdivisions;
@@ -147,21 +148,22 @@ void UVoxelChunk::MarkDirty()
 
 void UVoxelChunk::UpdateIfDirty()
 {
-	if (!bIsDirty) return;  // Early exit if not dirty
-	
-		// Perform the update (e.g., regenerate the mesh)
-		// Regenerate the mesh only if dirty
-		GenerateMeshAsync();
-		
-		// Reset the dirty flag
-		bIsDirty = false;
+	if (bIsDirty)
+	{
+		// Generate mesh in background
+		//AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this]()
+		//{
+			GenerateMesh();
+			bIsDirty = false; // Reset dirty flag
+		//});
+	}
 }
 
 void UVoxelChunk::ForceUpdate()
 {
 	// Perform the update (e.g., regenerate the mesh)
 	// Regenerate the mesh only if dirty
-	GenerateMeshAsync();
+	GenerateMesh();
 		
 	// Reset the dirty flag
 	bIsDirty = false;
@@ -231,77 +233,171 @@ void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 	UE_LOG(LogTemp, Warning, TEXT("BrushStroke applied successfully"));
 }
 
-void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig) {
-	UE_LOG(LogTemp, Warning, TEXT("Applying Sphere Brush: Position: %s, Radius: %f, Dig: %d"), *BrushPosition.ToString(), Radius, bDig);
-	FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
-	FVector3d MinBounds = FVector3d(VoxelCenter) - FVector3d(Radius + 2);
-	FVector3d MaxBounds = FVector3d(VoxelCenter) + FVector3d(Radius + 2);
-
-	for (int32 X = MinBounds.X; X <= MaxBounds.X; ++X) {
-		for (int32 Y = MinBounds.Y; Y <= MaxBounds.Y; ++Y) {
-			for (int32 Z = MinBounds.Z; Z <= MaxBounds.Z; ++Z) {
-				FVector3d VoxelPosition = FVector3d(X, Y, Z);
-				FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
-				float Distance = FVector3d::Dist(WorldPosition, BrushPosition);
-
-				if (Distance <= Radius) {
-					float SDFValue = (Distance / Radius) * 2.0f - 1.0f; // Smooth transition between -1.0 and 1.0
-					SDFValue = bDig ? -SDFValue : SDFValue;
-					SetVoxel(X, Y, Z, SDFValue);
-					UE_LOG(LogTemp, Warning, TEXT("Set Voxel at %s with SDFValue: %f"), *VoxelPosition.ToString(), SDFValue);
-				}
-			}
-		}
-	}
-}
-
-
-
-
-void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig)
+// Improved sphere brush with correct SDF gradients
+void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig)
 {
-    FVector3d MinBounds = BrushPosition - FVector3d(Size);
-    FVector3d MaxBounds = BrushPosition + FVector3d(Size);
+    FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
+    float RadiusSquared = Radius * Radius;
 
-    for (int32 X = MinBounds.X; X <= MaxBounds.X; ++X)
+    // Set bounds with transition space
+    int32 MinX = FMath::FloorToInt(VoxelCenter.X - Radius - 1);
+    int32 MaxX = FMath::CeilToInt(VoxelCenter.X + Radius + 1);
+    int32 MinY = FMath::FloorToInt(VoxelCenter.Y - Radius - 1);
+    int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + Radius + 1);
+    int32 MinZ = FMath::FloorToInt(VoxelCenter.Z - Radius - 1);
+    int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + Radius + 1);
+
+    // Iterate through voxels
+    for (int32 X = MinX; X <= MaxX; ++X)
     {
-        for (int32 Y = MinBounds.Y; Y <= MaxBounds.Y; ++Y)
+        for (int32 Y = MinY; Y <= MaxY; ++Y)
         {
-            for (int32 Z = MinBounds.Z; Z <= MaxBounds.Z; ++Z)
+            for (int32 Z = MinZ; Z <= MaxZ; ++Z)
             {
-                FVector3d VoxelPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+                FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+                float DistanceSquared = FVector3d::DistSquared(WorldPosition, BrushPosition);
+                
+                if (DistanceSquared <= RadiusSquared * 2.0f)
+                {
+                    float Distance = FMath::Sqrt(DistanceSquared);
+                    float SignedDistance = Distance - Radius; // Distance from surface
+                    
+                    // For digging, we want:
+                    // Inside sphere: SignedDistance < 0 -> SDF = 1 (air)
+                    // Outside sphere: SignedDistance > 0 -> SDF = -1 (solid)
+                    // At surface: Smooth transition
+                    
+                    float SDFValue;
+                        // Keep your existing working code for add mode
+                        float NormalizedDist = Distance / Radius;
+                        
+                        if (NormalizedDist <= 1.0f)
+                        {
+                            SDFValue = -1.0f;
+                        }
+                        else if (NormalizedDist <= 1.3f)
+                        {
+                            float T = (NormalizedDist - 1.0f) / 0.1f;
+                            T = FMath::SmoothStep(0.0f, 1.0f, T);
+                            SDFValue = FMath::Lerp(-1.0f, 1.0f, T);
+                        }
+                        else
+                        {
+                            SDFValue = 1.0f;
+                        }
+                  //  }
 
-                //if (IsVoxelWithinBounds(VoxelPosition, MinBounds, MaxBounds))
-               // {
-                    SetVoxel(X, Y, Z, bDig ? -1.0f : 1.0f);
-               // }
+                    SetVoxel(X, Y, Z, SDFValue);
+                }
             }
         }
     }
 }
 
-void UVoxelChunk::ApplyConeBrush(FVector3d BrushPosition, float Height, float Angle, bool bDig) {
-	for (int32 X = 0; X <= ChunkSize; ++X) {
-		for (int32 Y = 0; X <= ChunkSize; ++Y) {
-			for (int32 Z = 0; Z <= ChunkSize; ++Z) {
-				FVector3d VoxelPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
-				FVector3d RelativePosition = VoxelPosition - BrushPosition;
-				float DistanceXY = FVector2D(RelativePosition.X, RelativePosition.Y).Size();
-				float DistanceZ = RelativePosition.Z;
 
-				/*if (FlipOrientation.IsSet() && FlipOrientation.GetValue()) {
-					DistanceZ = Height - DistanceZ;  // Flip the cone upside down
-				}*/
 
-				if (DistanceZ <= Height && DistanceXY <= (Height - DistanceZ) * FMath::Tan(FMath::DegreesToRadians(Angle))) {
-					float SDFValue = bDig ? -1.0f : 1.0f;
-					SetVoxel(X, Y, Z, SDFValue);
+void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig)
+{
+	FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
+	float HalfSize = Size / 2.0f;
+	int32 MinX = FMath::FloorToInt(VoxelCenter.X - HalfSize - 1);
+	int32 MaxX = FMath::CeilToInt(VoxelCenter.X + HalfSize + 1);
+	int32 MinY = FMath::FloorToInt(VoxelCenter.Y - HalfSize - 1);
+	int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + HalfSize + 1);
+	int32 MinZ = FMath::FloorToInt(VoxelCenter.Z - HalfSize - 1);
+	int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + HalfSize + 1);
+
+	for (int32 X = MinX; X <= MaxX; ++X)
+	{
+		for (int32 Y = MinY; Y <= MaxY; ++Y)
+		{
+			for (int32 Z = MinZ; Z <= MaxZ; ++Z)
+			{
+				FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+				float DistanceX = FMath::Abs(WorldPosition.X - BrushPosition.X);
+				float DistanceY = FMath::Abs(WorldPosition.Y - BrushPosition.Y);
+				float DistanceZ = FMath::Abs(WorldPosition.Z - BrushPosition.Z);
+				float MaxDistance = FMath::Max3(DistanceX, DistanceY, DistanceZ);
+				float NormalizedDist = MaxDistance / HalfSize;
+				float SDFValue;
+
+				if (NormalizedDist <= 1.0f)
+				{
+					SDFValue = bDig ? 1.0f : -1.0f;
 				}
+				else if (NormalizedDist <= 1.3f)
+				{
+					float T = (NormalizedDist - 1.0f) / 0.3f;
+					T = FMath::SmoothStep(0.0f, 1.0f, T);
+					SDFValue = bDig ? FMath::Lerp(1.0f, -1.0f, T) : FMath::Lerp(-1.0f, 1.0f, T);
+				}
+				else
+				{
+					SDFValue = bDig ? -1.0f : 1.0f;
+				}
+
+				SetVoxel(X, Y, Z, SDFValue);
 			}
 		}
 	}
-	MarkDirty();
 }
+
+
+
+
+void UVoxelChunk::ApplyConeBrush(FVector3d BrushPosition, float Height, float Angle, bool bDig)
+{
+    FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
+    float RadiusAtBase = Height * FMath::Tan(FMath::DegreesToRadians(Angle));
+    
+    // Set bounds with additional transition space
+    int32 MinX = FMath::FloorToInt(VoxelCenter.X - RadiusAtBase - 2); // Extended bounds
+    int32 MaxX = FMath::CeilToInt(VoxelCenter.X + RadiusAtBase + 2);  // Extended bounds
+    int32 MinY = FMath::FloorToInt(VoxelCenter.Y - RadiusAtBase - 2);
+    int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + RadiusAtBase + 2);
+    int32 MinZ = VoxelCenter.Z - 1;
+    int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + Height + 2); // Extended bounds
+
+    for (int32 X = MinX-1; X <= MaxX+1; ++X)
+    {
+        for (int32 Y = MinY-1; Y <= MaxY+1; ++Y)
+        {
+            for (int32 Z = MinZ-1; Z <= MaxZ+1; ++Z)
+            {
+                FVector3d VoxelPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+                FVector3d RelativePosition = VoxelPosition - BrushPosition;
+                float DistanceXY = FVector2D(RelativePosition.X, RelativePosition.Y).Size();
+                float DistanceZ = RelativePosition.Z;
+
+                if (DistanceZ <= Height && DistanceXY <= (Height - DistanceZ) * FMath::Tan(FMath::DegreesToRadians(Angle)))
+                {
+                    float NormalizedDist = DistanceXY / RadiusAtBase;
+                    float SDFValue;
+
+                    if (NormalizedDist <= 1.2f)
+                    {
+                        SDFValue = bDig ? 1.0f : -1.0f;
+                    }
+                    else if (NormalizedDist <= 1.0f)
+                    {
+                        float T = (NormalizedDist - 1.0f) / 0.3f;
+                        T = FMath::SmoothStep(0.0f, 1.0f, T);
+                        SDFValue = bDig ? FMath::Lerp(1.0f, -1.0f, T) : FMath::Lerp(-1.0f, 1.0f, T);
+                    }
+                    else
+                    {
+                        SDFValue = bDig ? -1.0f : 1.0f;
+                    }
+
+                    SetVoxel(X, Y, Z, SDFValue);
+                }
+            }
+        }
+    }
+}
+
+
+
 
 
 void UVoxelChunk::BakeSingleBrushStroke(FBrushStroke StrokeToBake) {
@@ -353,19 +449,19 @@ bool UVoxelChunk::IsValidChunkLocalCoordinate(int32 LocalX, int32 LocalY, int32 
 }
 
 
+
 // Converts chunk-local voxel coordinates to world space
-FVector UVoxelChunk::VoxelToWorldCoordinates(const FIntVector& VoxelCoords) const
-{
+FVector UVoxelChunk::VoxelToWorldCoordinates(const FIntVector& VoxelCoords) const {
 	FVector ChunkWorldPos = DiggerManager->ChunkToWorldCoordinates(ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
 	return ChunkWorldPos + FVector(VoxelCoords) * VoxelSize;
 }
 
 // Converts world coordinates to chunk-local voxel coordinates
-FIntVector UVoxelChunk::WorldToVoxelCoordinates(const FVector& WorldCoords) const
-{
+FIntVector UVoxelChunk::WorldToVoxelCoordinates(const FVector& WorldCoords) const {
 	FVector ChunkWorldPos = DiggerManager->ChunkToWorldCoordinates(ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
 	return FIntVector((WorldCoords - ChunkWorldPos) / VoxelSize);
 }
+
 
 
 void UVoxelChunk::SetVoxel(int32 X, int32 Y, int32 Z, const float SDFValue) const
@@ -458,22 +554,4 @@ void UVoxelChunk::GenerateMesh() const
 		UE_LOG(LogTemp, Error, TEXT("MarchingCubesGenerator is null!"));
 	}
 
-}
-
-void UVoxelChunk::GenerateMeshAsync() const
-{
-	if (!SparseVoxelGrid)
-	{
-		UE_LOG(LogTemp, Error, TEXT("SparseVoxelGrid is null!"));
-		return;
-	}
-
-	if (MarchingCubesGenerator != nullptr)
-	{
-		MarchingCubesGenerator->GenerateMesh(this);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("MarchingCubesGenerator is null!"));
-	}
 }
