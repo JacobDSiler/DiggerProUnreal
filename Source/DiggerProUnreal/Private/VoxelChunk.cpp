@@ -44,7 +44,7 @@ void UVoxelChunk::SetUniqueSectionIndex() {
 	}
 
 	// Set the section index to the length of the ChunkMap plus one
-	SectionIndex = ChunkMapSize > 0 ? ChunkMapSize + 1 : 0; // Start from 0 if empty
+	SectionIndex = ChunkMapSize > 0 ? ChunkMapSize : 0; // Start from 0 if empty
 
 	UE_LOG(LogTemp, Warning, TEXT("SectionID Set to: %i for ChunkCoordinates X=%d Y=%d Z=%d"), SectionIndex, ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
 }
@@ -139,12 +139,8 @@ void UVoxelChunk::UpdateIfDirty()
 {
 	if (bIsDirty)
 	{
-		// Generate mesh in background
-		//AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this]()
-		//{
 			GenerateMesh();
 			bIsDirty = false; // Reset dirty flag
-		//});
 	}
 }
 
@@ -198,9 +194,14 @@ void UVoxelChunk::ForceUpdate()
 
 void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 {
-	UE_LOG(LogTemp, Warning, TEXT("BrushType: %d"), (int32)Stroke.BrushType);
+	/*UE_LOG(LogTemp, Warning, TEXT("BrushType: %d"), (int32)Stroke.BrushType);
 	UE_LOG(LogTemp, Warning, TEXT("BrushPosition: X=%f Y=%f Z=%f"), Stroke.BrushPosition.X, Stroke.BrushPosition.Y, Stroke.BrushPosition.Z);
-	UE_LOG(LogTemp, Warning, TEXT("BrushRadius: %f"), Stroke.BrushRadius);
+	UE_LOG(LogTemp, Warning, TEXT("BrushRadius: %f"), Stroke.BrushRadius);*/
+	if (!DiggerManager)
+	{
+		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in UVoxelChunk::ApplyBrushStroke"));
+		return;
+	}
 
 	switch (Stroke.BrushType)
 	{
@@ -534,7 +535,7 @@ void UVoxelChunk::GenerateMesh() const
 		return;
 	}
 
-	if (MarchingCubesGenerator != nullptr)
+	if (MarchingCubesGenerator)
 	{
 		MarchingCubesGenerator->GenerateMesh(this);
 	}

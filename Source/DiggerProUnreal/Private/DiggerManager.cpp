@@ -64,12 +64,12 @@ void ADiggerManager::BeginPlay() {
 
 	// Set ProceduralMesh material here
 	if (TerrainMaterial) {
-		if (ProceduralMesh->GetMaterial(0) != TerrainMaterial) {
-			ProceduralMesh->SetMaterial(0, TerrainMaterial); // Use index 0
-			UE_LOG(LogTemp, Warning, TEXT("Set Material M_ProcGrid at index 0"));
-		}
-	} else {
-		UE_LOG(LogTemp, Error, TEXT("Material M_ProcGrid required in /Content/Materials/ folder. Please ensure it is there."));
+		//if (ProceduralMesh->GetMaterial(0) != TerrainMaterial) {
+			//ProceduralMesh->SetMaterial(0, TerrainMaterial); // Use index 0
+			//UE_LOG(LogTemp, Warning, TEXT("Set Material M_ProcGrid at index 0"));
+		//}
+	//} else {
+	//	UE_LOG(LogTemp, Error, TEXT("Material M_ProcGrid required in /Content/Materials/ folder. Please ensure it is there."));
 	}
 }
 
@@ -113,16 +113,16 @@ void ADiggerManager::ApplyBrush()
 	BrushStroke.BrushRadius = BrushRadius;
 	BrushStroke.bDig = ActiveBrush->GetDig();
 	BrushStroke.BrushType = ActiveBrush->GetBrushType(); // Ensure it captures the correct type
-    BrushStrokeQueue.push(BrushStroke);
+    //BrushStrokeQueue.push(BrushStroke);
 
     // Use the helper function to get the target chunk if it isn't passed
     UVoxelChunk* TargetChunk = GetOrCreateChunkAt(BrushPosition);
 
     if (TargetChunk)
     {
-    	UE_LOG(LogTemp, Warning, TEXT("BrushPosition: X=%f Y=%f Z=%f BrushRadius: %f"), 
-    	BrushPosition.X, BrushPosition.Y,BrushPosition.Z, BrushRadius);
-    
+    	/*UE_LOG(LogTemp, Warning, TEXT("BrushPosition: X=%f Y=%f Z=%f BrushRadius: %f"), 
+    	BrushPosition.X, BrushPosition.Y,BrushPosition.Z, BrushRadius);*/
+    	
         TargetChunk->ApplyBrushStroke(BrushStroke);
 
         // Check if the queue exceeds the configured limit
@@ -460,7 +460,7 @@ void ADiggerManager::FillChunkWithPerlinNoiseVoxels(UVoxelChunk* Chunk) const
 				float SDFValue = FMath::Clamp(NoiseValue, -1.0f, 1.0f);
 
 				// Log the voxel position and SDF value for debugging
-				UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s with SDF: %f"), *LocalVoxelPosition.ToString(), SDFValue);
+				//UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s with SDF: %f"), *LocalVoxelPosition.ToString(), SDFValue);
 
 				// Set the voxel SDF value in the chunk
 				Chunk->SetVoxel(X, Y, Z, SDFValue);

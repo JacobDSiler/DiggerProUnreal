@@ -18,6 +18,7 @@ void USparseVoxelGrid::Initialize(UVoxelChunk* ParentChunkReference)
 {
     ParentChunk=ParentChunkReference;
     ParentChunkCoordinates = ParentChunk->GetChunkPosition();
+    DiggerManager = ParentChunk->GetDiggerManager();
 }
 
 void USparseVoxelGrid::InitializeDiggerManager()
@@ -52,7 +53,7 @@ bool USparseVoxelGrid::EnsureDiggerManager()
             UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in VoxelToWorldSpace"));
             return false;
         }
-        UE_LOG(LogTemp, Warning, TEXT("DiggerManager set correctly in an instance of SVG!"));
+        UE_LOG(LogTemp, Warning, TEXT("DiggerManager ensured correctly in an instance of SVG!"));
         LocalVoxelSize = DiggerManager->VoxelSize;
     }
     return true;
@@ -61,7 +62,8 @@ bool USparseVoxelGrid::EnsureDiggerManager()
 // Converts voxel-local coordinates to world space (using chunk world position)
 FVector USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelCoords)
 {
-    if (!EnsureDiggerManager()) return FVector::ZeroVector;
+    if (!DiggerManager) EnsureDiggerManager();
+    if (!DiggerManager) return FVector::ZeroVector;
 
     return ParentChunk->GetWorldPosition() + FVector(
         VoxelCoords.X * LocalVoxelSize,
@@ -105,7 +107,7 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float SDFValue) {
     } else {
         VoxelData.Add(FIntVector(X, Y, Z), FVoxelData(SDFValue));
     }
-    UE_LOG(LogTemp, Warning, TEXT("Set voxel at: X=%d Y=%d Z=%d with SDFValue=%f"), X, Y, Z, SDFValue);
+   // UE_LOG(LogTemp, Warning, TEXT("Set voxel at: X=%d Y=%d Z=%d with SDFValue=%f"), X, Y, Z, SDFValue);
 }
 
 
@@ -115,12 +117,12 @@ float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z) const
     const FVoxelData* Voxel = VoxelData.Find(FIntVector(X, Y, Z));
     if (Voxel)
     {
-        UE_LOG(LogTemp, Warning, TEXT("SVG: Voxel found at X=%d, Y=%d, Z=%d with SDF=%f"), X, Y, Z, Voxel->SDFValue);
+        //UE_LOG(LogTemp, Warning, TEXT("SVG: Voxel found at X=%d, Y=%d, Z=%d with SDF=%f"), X, Y, Z, Voxel->SDFValue);
         return Voxel->SDFValue;
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("No voxel found at X=%d, Y=%d, Z=%d, returning default SDF=1.0f"), X, Y, Z);
+        //UE_LOG(LogTemp, Warning, TEXT("No voxel found at X=%d, Y=%d, Z=%d, returning default SDF=1.0f"), X, Y, Z);
         return 1.0f; // Default to air if the voxel doesn't exist
     }
 }
@@ -131,7 +133,7 @@ TMap<FVector, float> USparseVoxelGrid::GetVoxels() const
     for (const auto& VoxelPair : VoxelData)
     {
         Voxels.Add(FVector(VoxelPair.Key), VoxelPair.Value.SDFValue);
-        UE_LOG(LogTemp, Warning, TEXT("Voxel at %s has SDF value: %f"), *VoxelPair.Key.ToString(), VoxelPair.Value.SDFValue);
+        //UE_LOG(LogTemp, Warning, TEXT("Voxel at %s has SDF value: %f"), *VoxelPair.Key.ToString(), VoxelPair.Value.SDFValue);
     }
 
     return Voxels;
@@ -170,10 +172,10 @@ void USparseVoxelGrid::RenderVoxels() {
     }
 
     if (VoxelData.IsEmpty()) {
-        UE_LOG(LogTemp, Warning, TEXT("VoxelData is empty, no voxels to render!"));
+       // UE_LOG(LogTemp, Warning, TEXT("VoxelData is empty, no voxels to render!"));
         return;
     } else {
-        UE_LOG(LogTemp, Warning, TEXT("VoxelData contains %d voxels."), VoxelData.Num());
+        //UE_LOG(LogTemp, Warning, TEXT("VoxelData contains %d voxels."), VoxelData.Num());
     }
 
     for (const auto& Voxel : VoxelData) {

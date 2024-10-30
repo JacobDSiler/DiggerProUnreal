@@ -350,70 +350,36 @@ void UMarchingCubes::Initialize(ADiggerManager* InDiggerManager)
 }
 
 
-void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutOutVertices, const TArray<int32>& OutTriangles, const TArray<FVector>& Normals) const
+void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 {
-    TArray<FVector2D> UVs;
-    TArray<FColor> VertexColors;
-    TArray<FProcMeshTangent> Tangents;
-
-	if (!DiggerManager || !DiggerManager->ProceduralMesh)
-	{
-		UE_LOG(LogTemp, Error, TEXT("DiggerManager or ProceduralMesh is null in ReconstructMeshSection"));
-		return;
-	}
-	
-    // Clear the mesh section if it exists
-    if (SectionIndex >= 0) 
-    {
-        DiggerManager->ProceduralMesh->ClearMeshSection(SectionIndex);
-    }
-    
-    // Create a new mesh section
-    DiggerManager->ProceduralMesh->CreateMeshSection(
-        SectionIndex, 
-        OutOutVertices, 
-        OutTriangles, 
-        Normals, 
-        UVs, 
-        VertexColors, 
-        Tangents, 
-        true  // Enable collision
-    );
-	// Ensure the material is set once
-	if (DiggerManager->ProceduralMesh->GetNumMaterials() == 0 || DiggerManager->ProceduralMesh->GetMaterial(0) != DiggerManager->GetTerrainMaterial()) {
-		DiggerManager->ProceduralMesh->SetMaterial(0, DiggerManager->GetTerrainMaterial());
-	}
-}
-
-
-// Generate the mesh from voxel grid data
-void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr) {
     if (!ChunkPtr) {
-        UE_LOG(LogTemp, Error, TEXT("ChunkPtr is null!"));
+        UE_LOG(LogTemp, Error, TEXT("ChunkPtr is null in UMarchingCubes::GenerateMesh()!"));
         return;
     }
+	
+	if (!DiggerManager) {
+		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in UMarchingCubes::GenerateMesh()!"));
+		DiggerManager = ChunkPtr->GetDiggerManager();
+		if (!DiggerManager) return;
+	}
 
-    // Ensure terrain and grid settings are valid
-    if (!DiggerManager) return;
 
-	int VoxelSize = 1;
     int32 SectionIndex = ChunkPtr->GetSectionIndex();
     UE_LOG(LogTemp, Error, TEXT("Generating Mesh for Section with Section ID: %i"), SectionIndex);
 
-	VoxelGrid = ChunkPtr->GetSparseVoxelGrid();
+    VoxelGrid = ChunkPtr->GetSparseVoxelGrid();
     if (!VoxelGrid || VoxelGrid->VoxelData.IsEmpty()) {
-        UE_LOG(LogTemp, Warning, TEXT("No voxel data to generate mesh! VoxelGrid: %s, VoxelData.Num(): %d"), VoxelGrid ? TEXT("Valid") : TEXT("Invalid"), VoxelGrid ? VoxelGrid->VoxelData.Num() : 0);
-        ChunkPtr->DebugPrintVoxelData();
+        UE_LOG(LogTemp, Warning, TEXT("No UVoxelGrid and/or data to generate mesh! VoxelGrid: %s, VoxelData.Num(): %d"), 
+               VoxelGrid ? TEXT("Valid") : TEXT("Invalid"), 
+               VoxelGrid ? VoxelGrid->VoxelData.Num() : 0);
         return;
     }
 
     TArray<FVector> OutVertices;
     TArray<int32> OutTriangles;
     TArray<FVector> Normals;
-
     FVector ChunkOrigin = FVector(ChunkPtr->GetChunkPosition());
-
-    // Iterate through each voxel in the grid
+	
     for (const auto& Voxel : VoxelGrid->VoxelData) {
         FIntVector VoxelCoords = Voxel.Key;
         FVoxelData VoxelValue = Voxel.Value;
@@ -423,7 +389,7 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr) {
 
         for (int32 i = 0; i < 8; i++) {
             FIntVector CornerCoords = VoxelCoords + GetCornerOffset(i);
-            CornerWSPositions[i] = ChunkOrigin + FVector(CornerCoords) * VoxelSize; // Ensure correct conversion
+            CornerWSPositions[i] = ChunkOrigin + FVector(CornerCoords);
             CornerSDFValues[i] = VoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
         }
 
@@ -436,13 +402,16 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr) {
         }
 
         TMap<FVector, int32> VertexCache;
-
         for (int32 i = 0; TriangleConnectionTable[CubeIndex][i] != -1; i += 3) {
             FVector Vertices[3];
 
             for (int32 j = 0; j < 3; ++j) {
                 int32 EdgeIndex = TriangleConnectionTable[CubeIndex][i + j];
-                FVector Vertex = InterpolateVertex(CornerWSPositions[EdgeConnection[EdgeIndex][0]], CornerWSPositions[EdgeConnection[EdgeIndex][1]], CornerSDFValues[EdgeConnection[EdgeIndex][0]], CornerSDFValues[EdgeConnection[EdgeIndex][1]]);
+                FVector Vertex = InterpolateVertex(
+                    CornerWSPositions[EdgeConnection[EdgeIndex][0]], 
+                    CornerWSPositions[EdgeConnection[EdgeIndex][1]], 
+                    CornerSDFValues[EdgeConnection[EdgeIndex][0]], 
+                    CornerSDFValues[EdgeConnection[EdgeIndex][1]]);
                 Vertices[j] = Vertex;
             }
 
@@ -457,27 +426,89 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr) {
                 }
             }
 
-            /*FVector Normal = FVector::CrossProduct(Vertices[1] - Vertices[0], Vertices[2] - Vertices[0]).GetSafeNormal();
+            FVector Normal = FVector::CrossProduct(Vertices[1] - Vertices[0], Vertices[2] - Vertices[0]).GetSafeNormal();
             for (int32 j = 0; j < 3; ++j) {
                 Normals.Add(Normal);
-            }*/
+            }
         }
     }
 
     UE_LOG(LogTemp, Log, TEXT("Mesh generated with %d OutVertices and %d OutTriangles."), OutVertices.Num(), OutTriangles.Num());
 
-	// Pass the generated data to be processed on the game thread
-	AsyncTask(ENamedThreads::GameThread, [this, SectionIndex, OutVertices, OutTriangles, Normals]()
-	{
-		ReconstructMeshSection(SectionIndex, OutVertices, OutTriangles, Normals);
-    });
+    if (OutVertices.Num() > 0 && OutTriangles.Num() > 0 && Normals.Num() > 0) {
+        // Pass data to be processed on the game thread
+        AsyncTask(ENamedThreads::GameThread, [this, SectionIndex, OutVertices, OutTriangles, Normals]()
+        {
+            ReconstructMeshSection(SectionIndex, OutVertices, OutTriangles, Normals);
+        });
+    } else {
+        UE_LOG(LogTemp, Warning, TEXT("Empty mesh data in GenerateMesh"));
+    }
 }
+
+void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutOutVertices, const TArray<int32>& OutTriangles, const TArray<FVector>& Normals) const {
+    // Validate pointers
+    if (!DiggerManager || !DiggerManager->ProceduralMesh) {
+        UE_LOG(LogTemp, Error, TEXT("DiggerManager or ProceduralMesh is null in ReconstructMeshSection"));
+        return;
+    }
+
+    // Validate SectionIndex
+    if (SectionIndex < 0) {
+        UE_LOG(LogTemp, Error, TEXT("Invalid SectionIndex in ReconstructMeshSection: %d"), SectionIndex);
+        return;
+    }
+
+    // Validate Mesh Data
+    if (OutOutVertices.Num() == 0 || OutTriangles.Num() == 0 || Normals.Num() == 0) {
+        UE_LOG(LogTemp, Error, TEXT("Empty mesh data in ReconstructMeshSection"));
+        return;
+    }
+
+    TArray<FVector2D> UVs;
+    TArray<FColor> VertexColors;
+    TArray<FProcMeshTangent> Tangents;
+
+    // Clear the mesh section if it exists
+    if (DiggerManager->ProceduralMesh->GetNumSections() > SectionIndex) {
+        DiggerManager->ProceduralMesh->ClearMeshSection(SectionIndex);
+    }
+
+    // Create a new mesh section
+    DiggerManager->ProceduralMesh->CreateMeshSection(
+        SectionIndex,
+        OutOutVertices,
+        OutTriangles,
+        Normals,
+        UVs,
+        VertexColors,
+        Tangents,
+        true  // Enable collision
+    );
+
+    // Ensure the material is set once
+   // if (DiggerManager->GetTerrainMaterial() && 
+       // (DiggerManager->ProceduralMesh->GetNumMaterials() == 0 || 
+         //DiggerManager->ProceduralMesh->GetMaterial(0) != DiggerManager->GetTerrainMaterial())) {
+        DiggerManager->ProceduralMesh->SetMaterial(SectionIndex, DiggerManager->GetTerrainMaterial());
+        //UE_LOG(LogTemp, Warning, TEXT("Setting Material on SectionIndex: %d"), SectionIndex);
+    //}
+}
+
+
 
 
 
 // Interpolates a vertex position on the edge between two points based on their SDF values
 FVector UMarchingCubes::InterpolateVertex(const FVector& P1, const FVector& P2, float SDF1, float SDF2)
 {
+	//Check if the grid has become null somehow to prevent the possibility of a crash.
+	if(!VoxelGrid)
+	{
+		UE_LOG(LogTemp,Error,TEXT("VoxelGrid returned null in UMarchingCubes::InterpolateVertex!"))
+		return FVector::ZeroVector;
+	}
+	
 	if (FMath::Abs(SDF1 - SDF2) < KINDA_SMALL_NUMBER)
 	{
 		FVector InterpolatedPoint = (P1 + P2) / 2.0f;
