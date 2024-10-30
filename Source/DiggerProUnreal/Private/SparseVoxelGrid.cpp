@@ -157,52 +157,41 @@ void USparseVoxelGrid::LogVoxelData() const
     }
 }
 
-void USparseVoxelGrid::RenderVoxels()
-{
+void USparseVoxelGrid::RenderVoxels() {
     UWorld* World = GetWorld();
-    if (!World)
-    {
+    if (!World) {
         UE_LOG(LogTemp, Error, TEXT("World is null within SparseVoxelGrid RenderVoxels()!!"));
         return;
     }
 
-    if(!EnsureDiggerManager()) return;
-
-    if (VoxelData.IsEmpty())
-    {
-        UE_LOG(LogTemp, Warning, TEXT("VoxelData is empty, no voxels to render!"));
+    if (!EnsureDiggerManager()) {
+        UE_LOG(LogTemp, Error, TEXT("DiggerManager is null or invalid in SparseVoxelGrid RenderVoxels()!!"));
+        return;
     }
-    else
-    {
+
+    if (VoxelData.IsEmpty()) {
+        UE_LOG(LogTemp, Warning, TEXT("VoxelData is empty, no voxels to render!"));
+        return;
+    } else {
         UE_LOG(LogTemp, Warning, TEXT("VoxelData contains %d voxels."), VoxelData.Num());
     }
 
-    for (const auto& Voxel : VoxelData)
-    {
+    for (const auto& Voxel : VoxelData) {
         FIntVector VoxelCoords = Voxel.Key;
         FVoxelData VoxelDataValue = Voxel.Value;
 
         // Convert voxel coordinates to world space
         FVector WorldPos = VoxelToWorldSpace(VoxelCoords);
+        FVector Center = WorldPos + FVector(LocalVoxelSize / 2); // Adjust to the center of the voxel
 
-        // Adjust to the center of the voxel
-        FVector Center = WorldPos + FVector(LocalVoxelSize / 2);
+        float SDFValue = VoxelDataValue.SDFValue; // Access the SDF value from the VoxelData
 
-        // Access the SDF value from the VoxelData
-        float SDFValue = VoxelDataValue.SDFValue;
-
-        // Determine color based on SDF value
         FColor VoxelColor;
-        if (SDFValue > 0)
-        {
+        if (SDFValue > 0) {
             VoxelColor = FColor::Green; // Air (SDF > 0)
-        }
-        else if (SDFValue < 0)
-        {
+        } else if (SDFValue < 0) {
             VoxelColor = FColor::Red; // Solid (SDF < 0)
-        }
-        else
-        {
+        } else {
             VoxelColor = FColor::Yellow; // Surface (SDF == 0)
         }
 
@@ -213,6 +202,7 @@ void USparseVoxelGrid::RenderVoxels()
         DrawDebugPoint(World, Center, 2.0f, VoxelColor, false, 15.f, 0);
     }
 }
+
 
 // Method to bake the current voxel data to BaseSDF
 void USparseVoxelGrid::BakeSdf()

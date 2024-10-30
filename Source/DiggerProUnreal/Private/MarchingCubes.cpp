@@ -363,7 +363,7 @@ void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVe
 	}
 	
     // Clear the mesh section if it exists
-    if (SectionIndex > 0) 
+    if (SectionIndex >= 0) 
     {
         DiggerManager->ProceduralMesh->ClearMeshSection(SectionIndex);
     }
@@ -379,6 +379,10 @@ void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVe
         Tangents, 
         true  // Enable collision
     );
+	// Ensure the material is set once
+	if (DiggerManager->ProceduralMesh->GetNumMaterials() == 0 || DiggerManager->ProceduralMesh->GetMaterial(0) != DiggerManager->GetTerrainMaterial()) {
+		DiggerManager->ProceduralMesh->SetMaterial(0, DiggerManager->GetTerrainMaterial());
+	}
 }
 
 

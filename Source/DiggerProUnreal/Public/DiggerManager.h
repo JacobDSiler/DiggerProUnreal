@@ -113,11 +113,6 @@ public:
 	
 	//The world map of the voxel chunks
 	TMap<FIntVector, UVoxelChunk*> ChunkMap;
-	//Aggregates Logs Dictionary Declaration
-	/*TMap<FString, int32> LogCounts; // Global or passed to functions
-
-	void LogVoxelOperation( FString& LogMessage);
-	void OutputAggregatedLogs();*/
 
 private:
 	std::mutex ChunkProcessingMutex;
@@ -134,7 +129,20 @@ private:
 	UPROPERTY()
 	UVoxelChunk* OneChunk;
 
+	UPROPERTY()
+	UMaterial* TerrainMaterial;
+
 public:
+	[[nodiscard]] UMaterial* GetTerrainMaterial() const
+	{
+		return TerrainMaterial;
+	}
+
+	void SetTerrainMaterial(UMaterial* SetTerrainMaterial)
+	{
+		this->TerrainMaterial = SetTerrainMaterial;
+	}
+
 	UPROPERTY()
 	UWorld* World;
 	

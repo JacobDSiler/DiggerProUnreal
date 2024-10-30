@@ -21,6 +21,15 @@ ADiggerManager::ADiggerManager()
 
 	// Initialize the brush component
 	ActiveBrush = CreateDefaultSubobject<UVoxelBrushShape>(TEXT("ActiveBrush"));
+
+	// Load the material in the constructor
+	static ConstructorHelpers::FObjectFinder<UMaterial> Material(TEXT("/Game/Materials/M_ProcGrid.M_ProcGrid"));
+	if (Material.Succeeded()) {
+		TerrainMaterial = Material.Object;
+	} else
+	{
+		UE_LOG(LogTemp, Error, TEXT("Material M_ProcGrid required in /Content/Materials/ folder. Please ensure it is there."));
+	}
 }
 
 bool ADiggerManager::EnsureWorldReference()
@@ -37,22 +46,31 @@ bool ADiggerManager::EnsureWorldReference()
 	return true;
 }
 
-void ADiggerManager::BeginPlay()
-{
+void ADiggerManager::BeginPlay() {
 	Super::BeginPlay();
-	
-	if(!EnsureWorldReference())
-	{ UE_LOG(LogTemp,Error,TEXT("World is null in DiggerManager BeginPlay() Continuing!"));}
-	
-	
+
+	if(!EnsureWorldReference()) {
+		UE_LOG(LogTemp, Error, TEXT("World is null in DiggerManager BeginPlay() Continuing!"));
+	}
+
 	UpdateVoxelSize();
-	
 	GenerateVoxelsTest();
 
 	// Start the timer to process dirty chunks
-	World=GetWorld();
-	if (World)
-	{	World->GetTimerManager().SetTimer(ChunkProcessTimerHandle, this, &ADiggerManager::ProcessDirtyChunks, 1.0f, true);}
+	World = GetWorld();
+	if (World) {
+		World->GetTimerManager().SetTimer(ChunkProcessTimerHandle, this, &ADiggerManager::ProcessDirtyChunks, 1.0f, true);
+	}
+
+	// Set ProceduralMesh material here
+	if (TerrainMaterial) {
+		if (ProceduralMesh->GetMaterial(0) != TerrainMaterial) {
+			ProceduralMesh->SetMaterial(0, TerrainMaterial); // Use index 0
+			UE_LOG(LogTemp, Warning, TEXT("Set Material M_ProcGrid at index 0"));
+		}
+	} else {
+		UE_LOG(LogTemp, Error, TEXT("Material M_ProcGrid required in /Content/Materials/ folder. Please ensure it is there."));
+	}
 }
 
 void ADiggerManager::UpdateVoxelSize()

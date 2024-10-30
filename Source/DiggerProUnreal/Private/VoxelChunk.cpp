@@ -30,33 +30,21 @@ FIntVector UVoxelChunk::WorldToChunkCoordinates(const FVector& WorldCoords) cons
 FVector UVoxelChunk::ChunkToWorldCoordinates(const FVector& ChunkCoords) const
 {    return FVector(ChunkCoords) * ChunkSize * VoxelSize;}
 
-void UVoxelChunk::SetUniqueSectionIndex()
-{
-	// Format coordinates as positive/negative strings
-	auto FormatCoordinate = [](int32 Coordinate) -> FString {
-		if (Coordinate < 0)
-		{
-			return "N" + FString::FromInt(FMath::Abs(Coordinate)); // Prefix with 'N' for negative
-		}
-		else
-		{
-			return "P" + FString::FromInt(Coordinate); // Prefix with 'P' for positive
-		}
-	};
+void UVoxelChunk::SetUniqueSectionIndex() {
+	if (!DiggerManager) {
+		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in SetUniqueSectionIndex"));
+		return;
+	}
 
-	// Turn the coordinates into unique strings
-	FString XString = FormatCoordinate(ChunkCoordinates.X);
-	FString YString = FormatCoordinate(ChunkCoordinates.Y);
-	FString ZString = FormatCoordinate(ChunkCoordinates.Z);
+	// Ensure the ChunkMap is valid
+	int32 ChunkMapSize = DiggerManager->ChunkMap.Num();
+	if (ChunkMapSize == 0) {
+		UE_LOG(LogTemp, Error, TEXT("ChunkMap is empty in SetUniqueSectionIndex"));
+		return;
+	}
 
-	// Concatenate the strings
-	FString ConcatenatedString = XString + YString + ZString;
-
-	// Convert the concatenated string to a number using CRC32, ensuring the result is positive
-	uint32 RawSectionIndex = FCrc::StrCrc32(*ConcatenatedString);
-
-	// Make sure the SectionIndex is within bounds
-	SectionIndex = RawSectionIndex % 16770;  // Bound the index to the array size
+	// Set the section index to the length of the ChunkMap plus one
+	SectionIndex = ChunkMapSize > 0 ? ChunkMapSize + 1 : 0; // Start from 0 if empty
 
 	UE_LOG(LogTemp, Warning, TEXT("SectionID Set to: %i for ChunkCoordinates X=%d Y=%d Z=%d"), SectionIndex, ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
 }
@@ -67,8 +55,6 @@ void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates)
 {
 	ChunkCoordinates = InChunkCoordinates;
 	UE_LOG(LogTemp, Error, TEXT("Chunk created at X: %i Y: %i Z: %i"), ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
-	SetUniqueSectionIndex();
-	
 
 
 	// Get the terrain and grid settings from the DiggerManager
@@ -86,6 +72,9 @@ void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates)
 		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null during chunk initialization!"));
 		return;
 	}
+
+	//Now that diggermanager is set we will set the unique section ID for this chunk.
+	SetUniqueSectionIndex();
 
 	MarchingCubesGenerator->SetDiggerManager(DiggerManager);
 	ChunkSize=DiggerManager->ChunkSize;
