@@ -34,9 +34,9 @@ struct FBrushStroke {
 	//TOptional<bool> FlipOrientation;  // Optional property for flipping the brush rotation 180 degrees
 	
 	FBrushStroke()
-	: BrushType(EVoxelBrushType::Sphere), // Initialize the enum with a default value
+	: BrushPosition(FVector::ZeroVector), // Initialize the enum with a default value
 	  BrushRadius(0.f),
-	  BrushPosition(FVector::ZeroVector),
+	  BrushType(EVoxelBrushType::Sphere),
 	  bDig(false)
 	{}
 };
@@ -65,7 +65,7 @@ public:
 	}
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
-	int32 ChunkSize = 4;  // Number of subdivisions per grid size
+	int32 ChunkSize = 32;  // Number of subdivisions per grid size
 	
 	// Chunk and grid settings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
@@ -112,6 +112,7 @@ public:
 	UProceduralMeshComponent* ProceduralMesh;
 	
 	//The world map of the voxel chunks
+	UPROPERTY()
 	TMap<FIntVector, UVoxelChunk*> ChunkMap;
 
 private:
@@ -165,9 +166,7 @@ private:
 	const int32 MaxUndoLength = 10; // Example limit
 	
 	FTimerHandle ChunkProcessTimerHandle;
-
-	void ProcessQueue();
-	void BakeSingleBrushStroke(UVoxelChunk* TargetChunk, const FBrushStroke& Stroke);
+	
     
 
 	//Space Conversion Helper Methods

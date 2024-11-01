@@ -287,13 +287,7 @@ void UVoxelBrushShape::DebugBrush()
         // Debug custom
             break;
     }
-
-   /* UWorld* TheWorld = World();
-    if (World)
-    {
-        // Start the timer to redraw the debug brush every 5 seconds
-        TheWorld->GetTimerManager().SetTimer(DebugBrushTimerHandle, this, FTimerDelegate::TMethodPtr<UVoxelBrushShape>(&UVoxelBrushShape::DebugBrush), 5.0f, true);
-    }*/
+    
 }
 
 

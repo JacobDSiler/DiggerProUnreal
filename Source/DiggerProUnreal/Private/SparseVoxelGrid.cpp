@@ -1,12 +1,10 @@
 #include "SparseVoxelGrid.h"
-#include "Engine/World.h"
-#include "DrawDebugHelpers.h"
 #include "DiggerManager.h"
-#include "EngineUtils.h"
-#include "SWarningOrErrorBox.h"
+#include "DrawDebugHelpers.h"
 #include "VoxelChunk.h"
+#include "Engine/World.h"
 
-USparseVoxelGrid::USparseVoxelGrid(): LocalVoxelSize(0), DiggerManager(nullptr), ParentChunk(nullptr),
+USparseVoxelGrid::USparseVoxelGrid(): LocalVoxelSize(0), DiggerManager(nullptr), ParentChunk(nullptr), World(nullptr),
                                       ParentChunkCoordinates(0, 0, 0),
                                       TerrainGridSize(0),
                                       Subdivisions(0)
@@ -62,8 +60,8 @@ bool USparseVoxelGrid::EnsureDiggerManager()
 // Converts voxel-local coordinates to world space (using chunk world position)
 FVector USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelCoords)
 {
-    if (!DiggerManager) EnsureDiggerManager();
-    if (!DiggerManager) return FVector::ZeroVector;
+    if (!EnsureDiggerManager())
+    { if (!DiggerManager) return FVector::ZeroVector; }
 
     return ParentChunk->GetWorldPosition() + FVector(
         VoxelCoords.X * LocalVoxelSize,
@@ -94,20 +92,55 @@ FIntVector USparseVoxelGrid::WorldToVoxelSpace(const FVector& WorldCoords)
 
 
 
+
+bool USparseVoxelGrid::IsPointAboveLandscape(const FVector& Point)
+{
+    if(!World) World = DiggerManager->GetWorldFromManager();
+    if (!World) 
+    {
+        UE_LOG(LogTemp, Error, TEXT("World is null in IsPointAboveLandscape"));
+        return false;
+    }
+
+    FVector Start = Point;
+    FVector End = Point + FVector(0, 0, -10000.0f); // Arbitrary large downward value
+
+    FHitResult HitResult;
+    FCollisionQueryParams CollisionParams;
+   // CollisionParams.AddIgnoredActor(); // Optional: Ignore the owning actor if needed
+
+    bool bHit = World->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, CollisionParams);
+
+    return bHit;
+}
+
+
+
 void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue)
 {
     SetVoxel(Position.X, Position.Y, Position.Z, SDFValue);
 }
 
 // In USparseVoxelGrid, update SetVoxel to use world coordinates comparison
-void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float SDFValue) {
-    FVoxelData* ExistingVoxel = VoxelData.Find(FIntVector(X, Y, Z));
-    if (ExistingVoxel) {
-        ExistingVoxel->SDFValue = FMath::Lerp(ExistingVoxel->SDFValue, SDFValue, 0.5f);
-    } else {
-        VoxelData.Add(FIntVector(X, Y, Z), FVoxelData(SDFValue));
+void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue) 
+{
+    FIntVector VoxelKey(X, Y, Z);
+    FVoxelData* ExistingVoxel = VoxelData.Find(VoxelKey);
+    
+    //UE_LOG(LogTemp, Warning, TEXT("Setting Voxel at (%d,%d,%d) to SDF Value: %f"), X, Y, Z, NewSDFValue);
+    
+    if (!ExistingVoxel) 
+    {
+        VoxelData.Add(VoxelKey, FVoxelData(NewSDFValue));
+        UE_LOG(LogTemp, Warning, TEXT("New Voxel Added"));
     }
-   // UE_LOG(LogTemp, Warning, TEXT("Set voxel at: X=%d Y=%d Z=%d with SDFValue=%f"), X, Y, Z, SDFValue);
+    else 
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated"));
+        ExistingVoxel->SDFValue = NewSDFValue;
+    }
+
+    ParentChunk->MarkDirty();
 }
 
 
@@ -122,8 +155,9 @@ float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z) const
     }
     else
     {
-        //UE_LOG(LogTemp, Warning, TEXT("No voxel found at X=%d, Y=%d, Z=%d, returning default SDF=1.0f"), X, Y, Z);
-        return 1.0f; // Default to air if the voxel doesn't exist
+        //return IsPointAboveLandscape(FVector(X,Y,Z))? -1.0f : 1.0f;
+        return 1.0f;
+        // Default to air if the voxel doesn't exist
     }
 }
 
@@ -160,14 +194,15 @@ void USparseVoxelGrid::LogVoxelData() const
 }
 
 void USparseVoxelGrid::RenderVoxels() {
-    UWorld* World = GetWorld();
-    if (!World) {
-        UE_LOG(LogTemp, Error, TEXT("World is null within SparseVoxelGrid RenderVoxels()!!"));
-        return;
-    }
 
     if (!EnsureDiggerManager()) {
         UE_LOG(LogTemp, Error, TEXT("DiggerManager is null or invalid in SparseVoxelGrid RenderVoxels()!!"));
+        return;
+    }
+
+    World = DiggerManager->GetWorldFromManager();
+    if (!World) {
+        UE_LOG(LogTemp, Error, TEXT("World is null within SparseVoxelGrid RenderVoxels()!!"));
         return;
     }
 

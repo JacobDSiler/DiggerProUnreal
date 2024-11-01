@@ -81,8 +81,8 @@ void ADiggerManager::UpdateVoxelSize()
 void ADiggerManager::ProcessDirtyChunks()
 {
 	// Process chunks on a background thread
-	AsyncTask(ENamedThreads::AnyNormalThreadNormalTask, [this]()
-	{
+	//AsyncTask(ENamedThreads::AnyNormalThreadNormalTask, [this]()
+	//{
 		for (auto& Elem : ChunkMap)
 		{
 			UVoxelChunk* Chunk = Elem.Value;
@@ -98,7 +98,7 @@ void ADiggerManager::ProcessDirtyChunks()
 			World->GetTimerManager().ClearTimer(ChunkProcessTimerHandle);
 			World->GetTimerManager().SetTimer(ChunkProcessTimerHandle, this, &ADiggerManager::ProcessDirtyChunks, 2.0f, true);
 		});
-	});
+	//});
 }
 
 
@@ -216,7 +216,7 @@ UVoxelChunk* ADiggerManager::GetOrCreateChunkAt(const FIntVector& ProposedChunkP
 	UVoxelChunk* NewChunk = NewObject<UVoxelChunk>(this);
 	if (NewChunk)
 	{
-		NewChunk->InitializeChunk(ChunkPosition); // Initialize the new chunk
+		NewChunk->InitializeChunk(ChunkPosition, this); // Initialize the new chunk
 		ChunkMap.Add(ChunkPosition, NewChunk); // Add the new chunk to the map
 		UE_LOG(LogTemp, Log, TEXT("Created a new chunk at position: %s"), *ChunkPosition.ToString());
 		return NewChunk; // Return the newly created chunk
@@ -240,6 +240,7 @@ void ADiggerManager::UpdateChunks()
 
 		if (Chunk && Chunk->IsDirty())  // Check if the chunk is valid and dirty
 		{
+			Chunk->InitializeDiggerManager(this);
 			Chunk->UpdateIfDirty();  // Regenerate the mesh if dirty
 		}
 	}
@@ -429,10 +430,6 @@ void ADiggerManager::GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk) const
 		//UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s in chunk at world position %s"), *VoxelPosition.ToString(), *WorldSpaceChunkPosition.ToString());
 		Chunk->SetVoxel(0, 0, Z, 1.0);  // Center X and Y
 	}
-
-	// Generate the mesh after setting all voxels
-	Chunk->MarkDirty();
-	Chunk->ForceUpdate();
 }
 
 
@@ -459,19 +456,11 @@ void ADiggerManager::FillChunkWithPerlinNoiseVoxels(UVoxelChunk* Chunk) const
 				// Map Perlin noise value (-1.0f to 1.0f)
 				float SDFValue = FMath::Clamp(NoiseValue, -1.0f, 1.0f);
 
-				// Log the voxel position and SDF value for debugging
-				//UE_LOG(LogTemp, Warning, TEXT("Placing voxel at: %s with SDF: %f"), *LocalVoxelPosition.ToString(), SDFValue);
-
 				// Set the voxel SDF value in the chunk
 				Chunk->SetVoxel(X, Y, Z, SDFValue);
 			}
 		}
 	}
-
-	//OutputAggregatedLogs();
-	// Generate the mesh after filling the voxels
-	//Chunk->MarkDirty();
-	//Chunk->ForceUpdate();
 }
 
 
@@ -483,13 +472,9 @@ void ADiggerManager::GenerateVoxelsTest()
 	if(!ZeroChunk) return;
 	//GenerateAxesAlignedVoxelsInChunk(ZeroChunk);
 	FillChunkWithPerlinNoiseVoxels(ZeroChunk);
-	//ZeroChunk->GetSparseVoxelGrid()->RenderVoxels();
 
 	FIntVector ChunkLocation = FIntVector(1, 1, 0);
 	OneChunk = GetOrCreateChunkAt(ChunkLocation);
 	if(!OneChunk) return;
 	GenerateAxesAlignedVoxelsInChunk(OneChunk);
-	//FillChunkWithPerlinNoiseVoxels(OneChunk);
-	OneChunk->GetSparseVoxelGrid()->RenderVoxels();
-		//CreateSphereVoxelGrid(OneChunk, FVector(0,0,0), 50.f);
 }

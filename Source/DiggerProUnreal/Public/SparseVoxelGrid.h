@@ -37,11 +37,15 @@ public:
 	void InitializeDiggerManager();
 	bool EnsureDiggerManager();
 	FIntVector WorldToVoxelSpace(const FVector& WorldCoords);
+	bool IsPointAboveLandscape(const FVector& Point);
 	FVector VoxelToWorldSpace(const FIntVector& VoxelCoords);
 
 	//Baked SDF Methods
 	void BakeSdf();
 	void BakeBrush(FBrushStroke);
+
+	//A public getter for VoxelData
+	const TMap<FIntVector, FVoxelData>& GetVoxelData() const { return VoxelData; }
 	
 	// Adds a voxel at the given coordinates with the provided SDF value
 	void SetVoxel(FIntVector Position, float SDFValue);
@@ -107,6 +111,9 @@ private:
 	// Declare but don't initialize here
 	UPROPERTY()
 	UVoxelChunk* ParentChunk;
+
+	UPROPERTY()
+	UWorld* World;
 
 public:
 	[[nodiscard]] ADiggerManager* GetDiggerManager() const

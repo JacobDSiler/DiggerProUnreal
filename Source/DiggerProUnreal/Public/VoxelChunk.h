@@ -1,5 +1,7 @@
 #pragma once
 
+#include "CoreMinimal.h"
+#include "UObject/NoExportTypes.h"
 #include "VoxelChunk.generated.h"
 
 struct FBrushStroke;
@@ -10,113 +12,84 @@ class UMarchingCubes;
 UCLASS()
 class DIGGERPROUNREAL_API UVoxelChunk : public UObject
 {
-	GENERATED_BODY()
+    GENERATED_BODY()
 
 public:
-	UVoxelChunk();
+    UVoxelChunk();
 
-	FIntVector WorldToChunkCoordinates(const FVector& WorldCoords) const;
-	FVector ChunkToWorldCoordinates(const FVector& ChunkCoords) const;
-	void SetUniqueSectionIndex();
+    // Initialization
+    void InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerManager* InDiggerManager);
+    void InitializeDiggerManager(ADiggerManager* InDiggerManager);
 
-	// Initializes the chunk
-	void InitializeChunk(const FIntVector& InChunkCoordinates);
+    // Debug functions
+    void DebugDrawChunk();
+    void DebugPrintVoxelData() const;
 
-	// Debug function to visualize chunk boundaries
-	void DebugDrawChunk() const;
-	void DebugPrintVoxelData() const;
+    // Brush application
+    void ApplyBrushStroke(FBrushStroke& Stroke);
 
-	//Strokes
-	void ApplyBrushStroke(FBrushStroke& Stroke);
+    // Update functions
+    void MarkDirty();
+    void UpdateIfDirty();
+    void ForceUpdate();
 
-	//SDF Baking
-	void BakeSDFValues();
-	
-	void MarkDirty();
-	void UpdateIfDirty();
-	void ForceUpdate();
+    // Voxel manipulation
+    void SetVoxel(int32 X, int32 Y, int32 Z, float SDFValue) const;
+    void SetVoxel(const FVector& Position, float SDFValue) const;
+    float GetVoxel(const FVector& Position) const;
+    float GetVoxel(int32 X, int32 Y, int32 Z) const;
 
-	bool IsValidChunkLocalCoordinate(FVector Position) const;
-	FVector GetWorldPosition(const FIntVector& VoxelCoordinates) const;
-	FVector GetWorldPosition() const;
-	bool IsValidChunkLocalCoordinate(int32 LocalX, int32 LocalY, int32 LocalZ) const;
-	FVector VoxelToWorldCoordinates(const FIntVector& VoxelCoords) const;
-	FIntVector WorldToVoxelCoordinates(const FVector& WorldCoords) const;
-	// Sets a voxel's SDF value in the chunk
-	void SetVoxel(int32 X, int32 Y, int32 Z, float SDFValue) const;
-	void SetVoxel(const FVector& Position, float SDFValue) const;
+    // Coordinate conversion
+    FIntVector WorldToChunkCoordinates(const FVector& WorldCoords) const;
+    FVector ChunkToWorldCoordinates(const FVector& ChunkCoords) const;
+    FIntVector WorldToVoxelCoordinates(const FVector& WorldCoords) const;
+    FVector VoxelToWorldCoordinates(const FIntVector& VoxelCoords) const;
+    bool IsValidChunkLocalCoordinate(FVector Position) const;
+    bool IsValidChunkLocalCoordinate(int32 LocalX, int32 LocalY, int32 LocalZ) const;
+    FVector GetWorldPosition(const FIntVector& VoxelCoordinates) const;
+    FVector GetWorldPosition() const;
 
-	// Retrieves voxel data from the sparse voxel grid
-	float GetVoxel(const FVector& Position) const;
-	float GetVoxel(int32 X, int32 Y, int32 Z) const;
-	USparseVoxelGrid* GetSparseVoxelGrid() const;
-	int16& GetVoxelSize();
+    // Mesh generation
+    void GenerateMesh() const;
 
-	//Retrieve information from SparseVoxelGrid
-	TMap<FVector, float> GetActiveVoxels() const;
+    // Getters
+    FIntVector GetChunkPosition() const { return ChunkCoordinates; }
+    int32 GetChunkSize() const { return ChunkSize; }
+    ADiggerManager* GetDiggerManager() const { return DiggerManager; }
+    int32 GetSectionIndex() const { return SectionIndex; }
+    USparseVoxelGrid* GetSparseVoxelGrid() const;
+    UMarchingCubes* GetMarchingCubesGenerator() const { return MarchingCubesGenerator; }
+    int16& GetVoxelSize();
+    TMap<FVector, float> GetActiveVoxels() const;
+    bool IsDirty() const { return bIsDirty; }
 
-	// Generates mesh data by delegating to the MarchingCubes class
-	void GenerateMesh() const;
-
-private:
-	FIntVector ChunkCoordinates;
-
-public:
-	[[nodiscard]] FIntVector GetChunkPosition() const
-	{
-		return ChunkCoordinates;
-	}
-
-	[[nodiscard]] int32 GetChunkSize() const
-	{
-		return ChunkSize;
-	}
-	
-	[[nodiscard]] ADiggerManager* GetDiggerManager() const
-	{
-		return DiggerManager;
-	}
-
-protected:
-	void ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig);
-	void ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig);
-	void ApplyConeBrush(FVector3d BrushPosition, float Height, float Angle, bool bDig);
-	void BakeSingleBrushStroke(FBrushStroke StrokeToBake);
+    // Setters
+    void SetMarchingCubesGenerator(UMarchingCubes* InMarchingCubesGenerator) { MarchingCubesGenerator = InMarchingCubesGenerator; }
 
 private:
-	int32 ChunkSize;
-	int16 TerrainGridSize;  // Default size of 1 meter
-	int8 Subdivisions;
-	int16 VoxelSize;
-	int16 SectionIndex;
+    void ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig);
+    void ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig);
+    void ApplyConeBrush(FVector3d BrushPosition, float Height, float Angle, bool bDig);
+    void BakeSingleBrushStroke(FBrushStroke StrokeToBake);
+    void SetUniqueSectionIndex();
+    
+    FIntVector ChunkCoordinates;
+    int32 ChunkSize;
+    int16 TerrainGridSize; // Default size of 1 meter
+    int8 Subdivisions;
+    int16 VoxelSize;
+    int16 SectionIndex;
+    bool bIsDirty;
+    
+    UPROPERTY()
+    UWorld* World;
 
-public:
-	[[nodiscard]] int32 GetSectionIndex() const
-	{
-		return SectionIndex;
-	}
+    UPROPERTY()
+    ADiggerManager* DiggerManager;
 
-private:
-	//DiggerManager Reference
-	UPROPERTY()
-	ADiggerManager* DiggerManager;
+    UPROPERTY()
+    USparseVoxelGrid* SparseVoxelGrid;
 
-	// Sparse voxel grid reference
-	UPROPERTY()
-	USparseVoxelGrid* SparseVoxelGrid;
-
-	// Marching Cubes generator instance
-	UPROPERTY()
-	UMarchingCubes* MarchingCubesGenerator;
-
-
-private:
-	//Dirty flag to update the chunk
-	bool bIsDirty;
-
-public:
-	[[nodiscard]] bool IsDirty() const
-	{
-		return bIsDirty;
-	}
+    UPROPERTY()
+    UMarchingCubes* MarchingCubesGenerator;
 };

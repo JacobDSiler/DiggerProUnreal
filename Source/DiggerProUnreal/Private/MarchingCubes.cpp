@@ -336,8 +336,6 @@ UMarchingCubes::UMarchingCubes()
 {
 }
 
-
-
 // Constructor with FObjectInitializer and UVoxelChunk
 UMarchingCubes::UMarchingCubes(const FObjectInitializer& ObjectInitializer, const UVoxelChunk* VoxelChunk)
 	: UObject(ObjectInitializer), MyVoxelChunk(VoxelChunk), DiggerManager(nullptr)
@@ -349,6 +347,32 @@ void UMarchingCubes::Initialize(ADiggerManager* InDiggerManager)
 	DiggerManager = InDiggerManager;
 }
 
+bool UMarchingCubes::IsValidVoxel(const FIntVector& Position) const {
+	return Position.X >= 0 && Position.X < DiggerManager->ChunkSize &&
+		   Position.Y >= 0 && Position.Y < DiggerManager->ChunkSize &&
+		   Position.Z >= 0 && Position.Z < DiggerManager->ChunkSize;
+}
+
+float UMarchingCubes::GetSafeSDFValue(const FIntVector& Position) const {
+	if (!IsValidVoxel(Position)) {
+		return 1.0f; // Default to solid outside bounds
+	}
+    
+	const float SDFValue = VoxelGrid->GetVoxel(Position.X, Position.Y, Position.Z);
+	return SDFValue;
+}
+
+void UMarchingCubes::ValidateAndResizeBuffers( FIntVector& Size, TArray<FVector>& Vertices, TArray<int32>& Triangles) {
+	if (!Vertices.IsValidIndex(0) || Vertices.Num() < Size.X * Size.Y * Size.Z * 12) {
+		Vertices.Empty();
+		Vertices.Reserve(Size.X * Size.Y * Size.Z * 12);
+	}
+    
+	if (!Triangles.IsValidIndex(0) || Triangles.Num() < Size.X * Size.Y * Size.Z * 15) {
+		Triangles.Empty();
+		Triangles.Reserve(Size.X * Size.Y * Size.Z * 15);
+	}
+}
 
 void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 {
@@ -367,8 +391,8 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
     int32 SectionIndex = ChunkPtr->GetSectionIndex();
     UE_LOG(LogTemp, Error, TEXT("Generating Mesh for Section with Section ID: %i"), SectionIndex);
 
-    VoxelGrid = ChunkPtr->GetSparseVoxelGrid();
-    if (!VoxelGrid || VoxelGrid->VoxelData.IsEmpty()) {
+	if(!VoxelGrid) VoxelGrid = ChunkPtr->GetSparseVoxelGrid();
+    if (!VoxelGrid || VoxelGrid->GetVoxelData().IsEmpty() || VoxelGrid->VoxelData.IsEmpty()) {
         UE_LOG(LogTemp, Warning, TEXT("No UVoxelGrid and/or data to generate mesh! VoxelGrid: %s, VoxelData.Num(): %d"), 
                VoxelGrid ? TEXT("Valid") : TEXT("Invalid"), 
                VoxelGrid ? VoxelGrid->VoxelData.Num() : 0);
@@ -380,6 +404,8 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
     TArray<FVector> Normals;
     FVector ChunkOrigin = FVector(ChunkPtr->GetChunkPosition());
 	
+	if(!VoxelGrid) VoxelGrid = ChunkPtr->GetSparseVoxelGrid();
+	if(!VoxelGrid) return;
     for (const auto& Voxel : VoxelGrid->VoxelData) {
         FIntVector VoxelCoords = Voxel.Key;
         FVoxelData VoxelValue = Voxel.Value;
@@ -473,7 +499,7 @@ void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVe
     if (DiggerManager->ProceduralMesh->GetNumSections() > SectionIndex) {
         DiggerManager->ProceduralMesh->ClearMeshSection(SectionIndex);
     }
-
+	UE_LOG(LogTemp, Warning, TEXT("Creating Mesh Section %d"), SectionIndex);
     // Create a new mesh section
     DiggerManager->ProceduralMesh->CreateMeshSection(
         SectionIndex,

@@ -3,21 +3,19 @@
 #include "EngineUtils.h"
 #include "MarchingCubes.h"
 #include "SparseVoxelGrid.h"
-#include "VoxelBrushShape.h"
 #include "VoxelBrushTypes.h"
 #include "Async/Async.h"
 #include "Net/Core/Connection/NetConnectionFaultRecoveryBase.h"
 
 
 UVoxelChunk::UVoxelChunk()
-	: ChunkCoordinates(FIntVector::ZeroValue), TerrainGridSize(100), Subdivisions(4), VoxelSize(100),SectionIndex(-1),
+	: ChunkCoordinates(FIntVector::ZeroValue), TerrainGridSize(100), Subdivisions(4), VoxelSize(100),SectionIndex(0),
 	  DiggerManager(nullptr),
 	  SparseVoxelGrid(CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid"))),
 bIsDirty(false)
 {
 	// Initialize the SparseVoxelGrid
 	SparseVoxelGrid->Initialize( this); 
-	SparseVoxelGrid->InitializeDiggerManager(); 
     
 	MarchingCubesGenerator = CreateDefaultSubobject<UMarchingCubes>(TEXT("MarchingCubesGenerator"));
 }
@@ -31,31 +29,28 @@ FVector UVoxelChunk::ChunkToWorldCoordinates(const FVector& ChunkCoords) const
 {    return FVector(ChunkCoords) * ChunkSize * VoxelSize;}
 
 void UVoxelChunk::SetUniqueSectionIndex() {
-	if (!DiggerManager) {
-		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in SetUniqueSectionIndex"));
-		return;
-	}
-
-	// Ensure the ChunkMap is valid
-	int32 ChunkMapSize = DiggerManager->ChunkMap.Num();
-	if (ChunkMapSize == 0) {
-		UE_LOG(LogTemp, Error, TEXT("ChunkMap is empty in SetUniqueSectionIndex"));
-		return;
-	}
+	// Ensure unique IDs are assigned correctly
+	static int32 GlobalChunkID = 0;
 
 	// Set the section index to the length of the ChunkMap plus one
-	SectionIndex = ChunkMapSize > 0 ? ChunkMapSize : 0; // Start from 0 if empty
-
+	SectionIndex = GlobalChunkID;
 	UE_LOG(LogTemp, Warning, TEXT("SectionID Set to: %i for ChunkCoordinates X=%d Y=%d Z=%d"), SectionIndex, ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
+
+	GlobalChunkID++;
+	UE_LOG(LogTemp, Warning, TEXT("Chunk Section ID set with GlobalChunkID#: %i"), GlobalChunkID);
 }
 
 
 
-void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates)
+void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerManager* InDiggerManager)
 {
 	ChunkCoordinates = InChunkCoordinates;
 	UE_LOG(LogTemp, Error, TEXT("Chunk created at X: %i Y: %i Z: %i"), ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
 
+	if(!DiggerManager)
+	{
+		DiggerManager = InDiggerManager;
+	}
 
 	// Get the terrain and grid settings from the DiggerManager
 	if (!DiggerManager)
@@ -72,6 +67,9 @@ void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates)
 		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null during chunk initialization!"));
 		return;
 	}
+	
+	//Set the diggermanager in my SparseVoxelGrid
+	SparseVoxelGrid->InitializeDiggerManager(); 
 
 	//Now that diggermanager is set we will set the unique section ID for this chunk.
 	SetUniqueSectionIndex();
@@ -81,6 +79,7 @@ void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates)
 	TerrainGridSize = DiggerManager->TerrainGridSize;
 	Subdivisions = DiggerManager->Subdivisions;
 	VoxelSize = TerrainGridSize/Subdivisions;
+	World = DiggerManager->GetWorldFromManager();
 
 	if (!SparseVoxelGrid)
 	{
@@ -98,10 +97,14 @@ void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates)
 
 }
 
-
-void UVoxelChunk::DebugDrawChunk() const
+void UVoxelChunk::InitializeDiggerManager(ADiggerManager* InDiggerManager)
 {
-	UWorld* World = GetWorld();
+	if(!DiggerManager) DiggerManager = InDiggerManager;
+}
+
+void UVoxelChunk::DebugDrawChunk()
+{
+	if (!World) World = DiggerManager->GetWorldFromManager();
 	if (!World) return;
 
 	FVector ChunkCenter = FVector(ChunkCoordinates) * ChunkSize * TerrainGridSize;
@@ -155,53 +158,17 @@ void UVoxelChunk::ForceUpdate()
 }
 
 
-/*void UVoxelChunk::CreateSphereVoxelGrid(float Radius) const
-{
-	// Calculate the size of the grid based on the radius and add 1 for all sides
-	int32 SphereDiameter = FMath::CeilToInt(Radius * 2.0f);
-	int32 GridSize = SphereDiameter / VoxelSize + 2; // Add 2 to encapsulate the sphere completely
-
-	FVector Center = FVector(0, 0, 0); // Center of the sphere (can be modified if needed)
-
-	// Iterate through the grid
-	for (int32 x = 0; x < GridSize; x++)
-	{
-		for (int32 y = 0; y < GridSize; y++)
-		{
-			for (int32 z = 0; z < GridSize; z++)
-			{
-				// Calculate the position of the voxel
-				FVector VoxelPosition = Center + FVector(
-					(x * VoxelSize) - Radius - VoxelSize, // Subtract an additional VoxelSize for proper centering
-					(y * VoxelSize) - Radius - VoxelSize, // Subtract an additional VoxelSize for proper centering
-					(z * VoxelSize) - Radius - VoxelSize  // Subtract an additional VoxelSize for proper centering
-				);
-
-				// Calculate the distance from the voxel center to the sphere center
-				float DistanceToCenter = FVector::Dist(VoxelPosition, Center);
-                
-				// Set the SDF value: Negative if inside the sphere, positive if outside
-				float SDFValue = DistanceToCenter - Radius;
-
-				// Set the voxel SDF value (assuming you have a method for this)
-				SparseVoxelGrid->SetVoxel(FIntVector(x, y, z), SDFValue);
-			}
-		}
-	}
-
-	
-}*/
 
 void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 {
-	/*UE_LOG(LogTemp, Warning, TEXT("BrushType: %d"), (int32)Stroke.BrushType);
-	UE_LOG(LogTemp, Warning, TEXT("BrushPosition: X=%f Y=%f Z=%f"), Stroke.BrushPosition.X, Stroke.BrushPosition.Y, Stroke.BrushPosition.Z);
-	UE_LOG(LogTemp, Warning, TEXT("BrushRadius: %f"), Stroke.BrushRadius);*/
+	
 	if (!DiggerManager)
 	{
 		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in UVoxelChunk::ApplyBrushStroke"));
 		return;
 	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("Applying Brush Stroke. Chunk ID: %d, Dirty: %d"), SectionIndex, bIsDirty);
 
 	switch (Stroke.BrushType)
 	{
@@ -220,7 +187,8 @@ void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 	}
 
 	MarkDirty();
-	UE_LOG(LogTemp, Warning, TEXT("BrushStroke applied successfully"));
+
+	UE_LOG(LogTemp, Warning, TEXT("BrushStroke applied successfully. Chunk ID: %d"), SectionIndex);
 }
 
 // Improved sphere brush with correct SDF gradients
@@ -229,7 +197,6 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
     FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
     float RadiusSquared = Radius * Radius;
 
-    // Set bounds with transition space
     int32 MinX = FMath::FloorToInt(VoxelCenter.X - Radius - 1);
     int32 MaxX = FMath::CeilToInt(VoxelCenter.X + Radius + 1);
     int32 MinY = FMath::FloorToInt(VoxelCenter.Y - Radius - 1);
@@ -237,7 +204,6 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
     int32 MinZ = FMath::FloorToInt(VoxelCenter.Z - Radius - 1);
     int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + Radius + 1);
 
-    // Iterate through voxels
     for (int32 X = MinX; X <= MaxX; ++X)
     {
         for (int32 Y = MinY; Y <= MaxY; ++Y)
@@ -250,16 +216,21 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
                 if (DistanceSquared <= RadiusSquared * 2.0f)
                 {
                     float Distance = FMath::Sqrt(DistanceSquared);
-                    float SignedDistance = Distance - Radius; // Distance from surface
+                    float NormalizedDist = Distance / Radius;
                     
-                    // For digging, we want:
-                    // Inside sphere: SignedDistance < 0 -> SDF = 1 (air)
-                    // Outside sphere: SignedDistance > 0 -> SDF = -1 (solid)
-                    // At surface: Smooth transition
-                    
-                    float SDFValue;
-                        // Keep your existing working code for add mode
-                        float NormalizedDist = Distance / Radius;
+                    if (bDig)
+                    {
+                        // Dig mode: completely clear voxels within the sphere
+                        if (NormalizedDist <= 1.0f)
+                        {
+                            SetVoxel(X, Y, Z, 1.0f); // Air
+                        }
+                    }
+                    else
+                    {
+                        // Additive mode: keep original logic
+                        float SDFValue = -10.0f;
+                        float MinRadius = RadiusSquared * 0.4f;
                         
                         if (NormalizedDist <= 1.0f)
                         {
@@ -267,70 +238,98 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
                         }
                         else if (NormalizedDist <= 1.3f)
                         {
-                            float T = (NormalizedDist - 1.0f) / 0.1f;
+                            float T = (NormalizedDist - 1.0f) / 0.3f;
                             T = FMath::SmoothStep(0.0f, 1.0f, T);
                             SDFValue = FMath::Lerp(-1.0f, 1.0f, T);
                         }
-                        else
+                        else if (NormalizedDist >= MinRadius)
                         {
                             SDFValue = 1.0f;
                         }
-                  //  }
 
-                    SetVoxel(X, Y, Z, SDFValue);
+                        if(SDFValue != -10)
+                        { 
+                            SetVoxel(X, Y, Z, SDFValue); 
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-
-
 void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig)
 {
-	FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
-	float HalfSize = Size / 2.0f;
-	int32 MinX = FMath::FloorToInt(VoxelCenter.X - HalfSize - 1);
-	int32 MaxX = FMath::CeilToInt(VoxelCenter.X + HalfSize + 1);
-	int32 MinY = FMath::FloorToInt(VoxelCenter.Y - HalfSize - 1);
-	int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + HalfSize + 1);
-	int32 MinZ = FMath::FloorToInt(VoxelCenter.Z - HalfSize - 1);
-	int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + HalfSize + 1);
+    float HalfSize = Size;
+    FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
 
-	for (int32 X = MinX; X <= MaxX; ++X)
-	{
-		for (int32 Y = MinY; Y <= MaxY; ++Y)
-		{
-			for (int32 Z = MinZ; Z <= MaxZ; ++Z)
-			{
-				FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
-				float DistanceX = FMath::Abs(WorldPosition.X - BrushPosition.X);
-				float DistanceY = FMath::Abs(WorldPosition.Y - BrushPosition.Y);
-				float DistanceZ = FMath::Abs(WorldPosition.Z - BrushPosition.Z);
-				float MaxDistance = FMath::Max3(DistanceX, DistanceY, DistanceZ);
-				float NormalizedDist = MaxDistance / HalfSize;
-				float SDFValue;
+    int32 VoxelRadius = FMath::CeilToInt(HalfSize / VoxelSize);
 
-				if (NormalizedDist <= 1.0f)
-				{
-					SDFValue = bDig ? 1.0f : -1.0f;
-				}
-				else if (NormalizedDist <= 1.3f)
-				{
-					float T = (NormalizedDist - 1.0f) / 0.3f;
-					T = FMath::SmoothStep(0.0f, 1.0f, T);
-					SDFValue = bDig ? FMath::Lerp(1.0f, -1.0f, T) : FMath::Lerp(-1.0f, 1.0f, T);
-				}
-				else
-				{
-					SDFValue = bDig ? -1.0f : 1.0f;
-				}
+    // Adjust bounds to ensure full enclosure
+    int32 MinX = VoxelCenter.X - VoxelRadius;
+    int32 MaxX = VoxelCenter.X + VoxelRadius;
+    int32 MinY = VoxelCenter.Y - VoxelRadius;
+    int32 MaxY = VoxelCenter.Y + VoxelRadius;
+    int32 MinZ = VoxelCenter.Z - VoxelRadius;
+    int32 MaxZ = VoxelCenter.Z + VoxelRadius;
 
-				SetVoxel(X, Y, Z, SDFValue);
-			}
-		}
-	}
+    // Include an offset to ensure boundaries are covered
+    MinX -= 2;
+    MinY -= 2;
+    MinZ -= 2;
+
+    for (int32 X = MinX; X <= MaxX; ++X)
+    {
+        for (int32 Y = MinY; Y <= MaxY; ++Y)
+        {
+            for (int32 Z = MinZ; Z <= MaxZ; ++Z)
+            {
+                FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+                float DistanceX = FMath::Abs(WorldPosition.X - BrushPosition.X);
+                float DistanceY = FMath::Abs(WorldPosition.Y - BrushPosition.Y);
+                float DistanceZ = FMath::Abs(WorldPosition.Z - BrushPosition.Z);
+                float MaxDistance = FMath::Max3(DistanceX, DistanceY, DistanceZ);
+                float NormalizedDist = MaxDistance / HalfSize;
+                float SDFValue;
+
+                if (bDig)
+                {
+                    // Dig mode: completely clear voxels within the brush
+                    if (NormalizedDist <= 1.0f)
+                    {
+                        SDFValue = 1.0f; // Air
+                    }
+                    else
+                    {
+                        // Skip setting voxel outside the brush
+                        continue;
+                    }
+                }
+                else
+                {
+                    // Additive mode: keep original logic
+                    if (NormalizedDist <= 1.0f)
+                    {
+                        SDFValue = -1.0f;
+                    }
+                    else if (NormalizedDist <= 1.3f)
+                    {
+                        float T = (NormalizedDist - 1.0f) / 0.3f;
+                        T = FMath::SmoothStep(0.0f, 1.0f, T);
+                        SDFValue = FMath::Lerp(-1.0f, 1.0f, T);
+                    }
+                    else
+                    {
+                        SDFValue = 1.0f;
+                    }
+                }
+
+                SetVoxel(X, Y, Z, SDFValue);
+            }
+        }
+    }
 }
+
 
 
 
@@ -535,13 +534,15 @@ void UVoxelChunk::GenerateMesh() const
 		return;
 	}
 
-	if (MarchingCubesGenerator)
+	if (MarchingCubesGenerator == nullptr)
+	{
+		UE_LOG(LogTemp, Error, TEXT("MarchingCubesGenerator is nullptr in UVoxelChunk::UpdateIfDirty"));
+		return;
+	}
+
+	if (MarchingCubesGenerator != nullptr)
 	{
 		MarchingCubesGenerator->GenerateMesh(this);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("MarchingCubesGenerator is null!"));
 	}
 
 }
