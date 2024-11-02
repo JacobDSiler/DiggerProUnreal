@@ -31,13 +31,16 @@ public:
     void ApplyBrushStroke(FBrushStroke& Stroke);
 
     // Update functions
+    UFUNCTION(BlueprintCallable, Category  =Custom)
     void MarkDirty();
+    UFUNCTION(BlueprintCallable, Category  =Custom)
     void UpdateIfDirty();
+    UFUNCTION(BlueprintCallable, Category  =Custom)
     void ForceUpdate();
 
     // Voxel manipulation
-    void SetVoxel(int32 X, int32 Y, int32 Z, float SDFValue) const;
-    void SetVoxel(const FVector& Position, float SDFValue) const;
+    void SetVoxel(int32 X, int32 Y, int32 Z, const float SDFValue, bool bDig) const;
+    void SetVoxel(const FVector& Position, const float SDFValue, const bool bDig) const;
     float GetVoxel(const FVector& Position) const;
     float GetVoxel(int32 X, int32 Y, int32 Z) const;
 
@@ -81,6 +84,8 @@ private:
     int8 Subdivisions;
     int16 VoxelSize;
     int16 SectionIndex;
+
+private:
     bool bIsDirty;
     
     UPROPERTY()

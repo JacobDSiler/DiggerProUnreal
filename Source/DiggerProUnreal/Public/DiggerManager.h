@@ -80,20 +80,29 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel System")
 	UVoxelBrushShape* ActiveBrush;
 
+	UFUNCTION(BlueprintCallable, Category = "Custom")
+	int32 GetHitSectionIndex(const FHitResult& HitResult);
+	
+	UFUNCTION(BlueprintCallable, Category = "Custom")
+	UVoxelChunk* GetChunkBySectionIndex(int32 SectionIndex);
+
+	UFUNCTION(BlueprintCallable, Category = "Custom")
+	void UpdateChunkFromSectionIndex(const FHitResult& HitResult);
+	void DebugDrawChunkSectionIDs();
 
 	// Apply the active brush to the terrain
 	UFUNCTION(BlueprintCallable, Category = "Brush System")
 	void ApplyBrush();
+	UVoxelChunk* FindOrCreateNearestChunk(const FVector& Position);
+	UVoxelChunk* FindNearestChunk(const FVector& Position);
+	void MarkNearbyChunksDirty(const FVector& CenterPosition, float Radius);
 
 	// Get the relevant voxel chunk based on position
 	UFUNCTION(BlueprintCallable, Category = "Chunk Management")
 	UVoxelChunk* GetOrCreateChunkAt(const FIntVector& ProposedChunkPosition);
-	void UpdateChunks();
 	
 	UFUNCTION(BlueprintCallable, Category = "Debug")
 	void DebugLogVoxelChunkGrid() const;
-	
-	void CreateSingleHole(FVector3d HoleCenter, int HoleSize);
 
 	//Helper functions
 	//Calculate a chunk position according to the chunk grid.
@@ -162,11 +171,6 @@ public:
 	}
 
 private:
-	void CreateSphereVoxelGrid(UVoxelChunk* Chunk, const FVector& Position, float Radius) const;
-	void GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk) const;
-	void FillChunkWithPerlinNoiseVoxels(UVoxelChunk* Chunk) const;
-	// Handle the generation of mesh using marching cubes
-	//void GenerateVoxelsTest();
 
 	std::queue<FBrushStroke> BrushStrokeQueue;
 	const int32 MaxUndoLength = 10; // Example limit

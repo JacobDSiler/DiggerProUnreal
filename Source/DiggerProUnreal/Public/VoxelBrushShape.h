@@ -108,11 +108,11 @@ protected:
 	FHitResult GetCameraHitLocation();
 
 	// Cube brush logic
-	void ApplyCubeBrush(FVector3d BrushPosition);
+	void ApplyCubeBrush(FBrushStroke* BrushStroke);
 	// Sphere brush logic
-	void ApplySphereBrush(FVector3d BrushPosition, float Radius);
+	void ApplySphereBrush(FBrushStroke* BrushStroke);
 	// Cone brush logic
-	void ApplyConeBrush(FVector3d BrushPosition);
+	void ApplyConeBrush(FBrushStroke* BrushStroke);
 	// Custom brush logic
 	void ApplyCustomBrush(FVector3d BrushPosition);
 

@@ -116,21 +116,30 @@ bool USparseVoxelGrid::IsPointAboveLandscape(const FVector& Point)
 
 
 
-void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue)
+void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue, bool bDig)
 {
-    SetVoxel(Position.X, Position.Y, Position.Z, SDFValue);
+    SetVoxel(Position.X, Position.Y, Position.Z, SDFValue, bDig);
 }
 
 // In USparseVoxelGrid, update SetVoxel to use world coordinates comparison
-void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue)
+void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig)
 {
     FIntVector VoxelKey(X, Y, Z);
     FVoxelData* ExistingVoxel = VoxelData.Find(VoxelKey);
 
     if (ExistingVoxel)
     {
-        ExistingVoxel->SDFValue = NewSDFValue;
-        UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated at (%d,%d,%d)"), X, Y, Z);
+        if (bDig)
+        {
+            // Ensure digging clears the voxel
+            ExistingVoxel->SDFValue = FMath::Max(ExistingVoxel->SDFValue, NewSDFValue);
+        }
+        else
+        {
+            // Blend the new SDF value with the existing one for smooth transitions
+            ExistingVoxel->SDFValue = FMath::Min(ExistingVoxel->SDFValue, NewSDFValue);
+        }
+        UE_LOG(LogTemp, Warning, TEXT("Voxel Updated at (%d,%d,%d)"), X, Y, Z);
     }
     else
     {
@@ -157,6 +166,8 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue)
 
     UE_LOG(LogTemp, Warning, TEXT("Setting Voxel at (%d,%d,%d) to SDF Value: %f"), X, Y, Z, NewSDFValue);
 }
+
+
 
 
 

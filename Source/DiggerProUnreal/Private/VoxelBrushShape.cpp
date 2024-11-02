@@ -69,17 +69,23 @@ void UVoxelBrushShape::ApplyBrushToChunk(UVoxelChunk* BrushChunk, FVector3d Brus
         // Log error or handle the case where no chunk is found
         return;
     }
+
+    FBrushStroke BrushStroke;
+    BrushStroke.BrushPosition = BrushPosition;
+    BrushStroke.BrushRadius = BrushRadius;
+    BrushStroke.bDig = DiggerManager->ActiveBrush->GetDig();
+    BrushStroke.BrushType = DiggerManager->ActiveBrush->GetBrushType();
     
     switch (BrushType)
     {
         case EVoxelBrushType::Cube:
-            ApplyCubeBrush(BrushPosition);
+            ApplyCubeBrush(&BrushStroke);
             break;
         case EVoxelBrushType::Sphere:
-            ApplySphereBrush(BrushPosition, BrushRadius);
+            ApplySphereBrush(&BrushStroke);
             break;
         case EVoxelBrushType::Cone:
-            ApplyConeBrush(BrushPosition);
+            ApplyConeBrush(&BrushStroke);
             break;
         case EVoxelBrushType::Custom:
             ApplyCustomBrush(BrushPosition);
@@ -116,12 +122,12 @@ FHitResult UVoxelBrushShape::GetCameraHitLocation()
 }
 
 
-void UVoxelBrushShape::ApplyCubeBrush(FVector3d BrushPosition)
+void UVoxelBrushShape::ApplyCubeBrush(FBrushStroke* BrushStroke)
 {
     // Use the helper function to get the target chunk if it isn't passed
     if (!TargetChunk)
     {
-        TargetChunk = GetTargetChunkFromBrushPosition(BrushPosition);
+        TargetChunk = GetTargetChunkFromBrushPosition(BrushStroke->BrushPosition);
     }
 
     if (!TargetChunk)
@@ -139,7 +145,7 @@ void UVoxelBrushShape::ApplyCubeBrush(FVector3d BrushPosition)
                 FVector VoxelPosition = FVector(X, Y, Z) * TargetChunk->GetVoxelSize();
                 if (FVector::Dist(BrushLocation, VoxelPosition) < BrushSize)
                 {
-                    TargetChunk->SetVoxel(X, Y, Z, -1.0f); // Adjust the SDF value to 'cut' into the chunk
+                    TargetChunk->SetVoxel(X, Y, Z, -1.0f, BrushStroke->bDig); // Adjust the SDF value to 'cut' into the chunk
                 }
             }
         }
@@ -166,16 +172,16 @@ bool UVoxelBrushShape::IsVoxelWithinSphere(const FVector3d& VoxelPosition, const
 
 
 
-void UVoxelBrushShape::ApplySphereBrush(FVector3d BrushPosition, float Radius)
+void UVoxelBrushShape::ApplySphereBrush(FBrushStroke* BrushStroke)
 {
-    FVector3d MinBounds = BrushPosition - FVector3d(Radius);
-    FVector3d MaxBounds = BrushPosition + FVector3d(Radius);
+    FVector3d MinBounds = BrushStroke->BrushPosition - FVector3d(BrushStroke->BrushRadius);
+    FVector3d MaxBounds = BrushStroke->BrushPosition + FVector3d(BrushStroke->BrushRadius);
 
 
     // Use the helper function to get the target chunk if it isn't passed
     if (!TargetChunk)
     {
-        TargetChunk = GetTargetChunkFromBrushPosition(BrushPosition);
+        TargetChunk = GetTargetChunkFromBrushPosition(BrushStroke->BrushPosition);
     }
 
     if (!TargetChunk)
@@ -192,12 +198,12 @@ void UVoxelBrushShape::ApplySphereBrush(FVector3d BrushPosition, float Radius)
         // Only affect voxels within the sphere's radius
         if (IsVoxelWithinBounds(VoxelPosition, MinBounds, MaxBounds))
         {
-            float Distance = FVector3d::Dist(VoxelPosition, BrushPosition);
+            float Distance = FVector3d::Dist(VoxelPosition, BrushStroke->BrushPosition);
 
-            if (Distance < Radius)
+            if (Distance < BrushStroke->BrushRadius)
             {
                 // Calculate the influence of the brush based on distance from the center
-                float BrushInfluence = (Radius - Distance) / Radius;
+                float BrushInfluence = (BrushStroke->BrushRadius - Distance) / BrushStroke->BrushRadius;
 
                 // Modify the SDF value of the voxel based on the brush's influence
                 float NewSDFValue = TargetChunk->GetVoxel(VoxelPosition);
@@ -212,7 +218,7 @@ void UVoxelBrushShape::ApplySphereBrush(FVector3d BrushPosition, float Radius)
                 }
 
                 // Update the voxel's SDF value
-                TargetChunk->SetVoxel(VoxelPosition, NewSDFValue);
+                TargetChunk->SetVoxel(VoxelPosition, NewSDFValue, bDig);
             }
         }
     }
@@ -222,12 +228,12 @@ void UVoxelBrushShape::ApplySphereBrush(FVector3d BrushPosition, float Radius)
 }
 
 
-void UVoxelBrushShape::ApplyConeBrush(FVector3d BrushPosition)
+void UVoxelBrushShape::ApplyConeBrush(FBrushStroke* BrushStroke)
 {
     // Use the helper function to get the target chunk if it isn't passed
     if (!TargetChunk)
     {
-        TargetChunk = GetTargetChunkFromBrushPosition(BrushPosition);
+        TargetChunk = GetTargetChunkFromBrushPosition(BrushStroke->BrushPosition);
     }
 
     if (!TargetChunk)
