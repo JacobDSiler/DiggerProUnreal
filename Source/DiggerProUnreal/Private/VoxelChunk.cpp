@@ -5,14 +5,13 @@
 #include "SparseVoxelGrid.h"
 #include "VoxelBrushTypes.h"
 #include "Async/Async.h"
-#include "Net/Core/Connection/NetConnectionFaultRecoveryBase.h"
 
 
 UVoxelChunk::UVoxelChunk()
 	: ChunkCoordinates(FIntVector::ZeroValue), TerrainGridSize(100), Subdivisions(4), VoxelSize(100),SectionIndex(0),
+	  bIsDirty(false),
 	  DiggerManager(nullptr),
-	  SparseVoxelGrid(CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid"))),
-bIsDirty(false)
+SparseVoxelGrid(CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid")))
 {
 	// Initialize the SparseVoxelGrid
 	SparseVoxelGrid->Initialize( this); 
@@ -96,6 +95,12 @@ void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerM
 	UE_LOG(LogTemp, Warning, TEXT("Chunk added to ChunkMap at position: X=%d Y=%d Z=%d"), ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
 
 }
+
+void UVoxelChunk::InitializeMeshComponent(UProceduralMeshComponent* MeshComponent)
+{
+	ProceduralMeshComponent = MeshComponent;
+}
+
 
 void UVoxelChunk::InitializeDiggerManager(ADiggerManager* InDiggerManager)
 {

@@ -8,6 +8,8 @@ public class DiggerProUnreal : ModuleRules
 	{
 		PrivateDependencyModuleNames.AddRange(new string[] { "GeometryFramework" });
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+		CppStandard = CppStandardVersion.Cpp20; // This sets the C++ standard to C++20
+
 
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "HeadMountedDisplay", "EnhancedInput", "ProceduralMeshComponent", "Landscape" });
 	}

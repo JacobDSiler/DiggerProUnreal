@@ -110,6 +110,9 @@ public:
 	// Procedural mesh component for visual representation
 	UPROPERTY(VisibleAnywhere)
 	UProceduralMeshComponent* ProceduralMesh;
+
+	void InitializeChunks();  // Initialize all chunks
+	void InitializeSingleChunk(UVoxelChunk* Chunk);  // Initialize a single chunk
 	
 	//The world map of the voxel chunks
 	UPROPERTY()
@@ -132,6 +135,9 @@ private:
 
 	UPROPERTY()
 	UMaterial* TerrainMaterial;
+
+	UPROPERTY()
+	TArray<UProceduralMeshComponent*> ProceduralMeshComponents;
 
 public:
 	[[nodiscard]] UMaterial* GetTerrainMaterial() const
@@ -160,7 +166,7 @@ private:
 	void GenerateAxesAlignedVoxelsInChunk(UVoxelChunk* Chunk) const;
 	void FillChunkWithPerlinNoiseVoxels(UVoxelChunk* Chunk) const;
 	// Handle the generation of mesh using marching cubes
-	void GenerateVoxelsTest();
+	//void GenerateVoxelsTest();
 
 	std::queue<FBrushStroke> BrushStrokeQueue;
 	const int32 MaxUndoLength = 10; // Example limit

@@ -122,26 +122,42 @@ void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue)
 }
 
 // In USparseVoxelGrid, update SetVoxel to use world coordinates comparison
-void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue) 
+void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue)
 {
     FIntVector VoxelKey(X, Y, Z);
     FVoxelData* ExistingVoxel = VoxelData.Find(VoxelKey);
-    
-    //UE_LOG(LogTemp, Warning, TEXT("Setting Voxel at (%d,%d,%d) to SDF Value: %f"), X, Y, Z, NewSDFValue);
-    
-    if (!ExistingVoxel) 
+
+    if (ExistingVoxel)
+    {
+        ExistingVoxel->SDFValue = NewSDFValue;
+        UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated at (%d,%d,%d)"), X, Y, Z);
+    }
+    else
     {
         VoxelData.Add(VoxelKey, FVoxelData(NewSDFValue));
-        UE_LOG(LogTemp, Warning, TEXT("New Voxel Added"));
-    }
-    else 
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated"));
-        ExistingVoxel->SDFValue = NewSDFValue;
+        UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d)"), X, Y, Z);
     }
 
-    ParentChunk->MarkDirty();
+    if (ParentChunk)
+    {
+        FIntVector ChunkCoords = ParentChunk->WorldToChunkCoordinates(FVector(X, Y, Z));
+        ADiggerManager* Manager = ParentChunk->GetDiggerManager();
+
+        if (Manager)
+        {
+            UVoxelChunk** FoundChunk = Manager->ChunkMap.Find(ChunkCoords);
+
+            if (FoundChunk && *FoundChunk)
+            {
+                (*FoundChunk)->MarkDirty();
+                UE_LOG(LogTemp, Warning, TEXT("Correct chunk marked dirty for voxel at (%d,%d,%d)"), X, Y, Z);
+            }
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("Setting Voxel at (%d,%d,%d) to SDF Value: %f"), X, Y, Z, NewSDFValue);
 }
+
 
 
 

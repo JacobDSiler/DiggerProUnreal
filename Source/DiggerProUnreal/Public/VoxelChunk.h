@@ -8,6 +8,7 @@ struct FBrushStroke;
 class ADiggerManager;
 class USparseVoxelGrid;
 class UMarchingCubes;
+class UProceduralMeshComponent;
 
 UCLASS()
 class DIGGERPROUNREAL_API UVoxelChunk : public UObject
@@ -19,8 +20,9 @@ public:
 
     // Initialization
     void InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerManager* InDiggerManager);
+    void InitializeMeshComponent(UProceduralMeshComponent* MeshComponent);
     void InitializeDiggerManager(ADiggerManager* InDiggerManager);
-
+    
     // Debug functions
     void DebugDrawChunk();
     void DebugPrintVoxelData() const;
@@ -92,4 +94,7 @@ private:
 
     UPROPERTY()
     UMarchingCubes* MarchingCubesGenerator;
+
+    UPROPERTY()
+    UProceduralMeshComponent* ProceduralMeshComponent;
 };
