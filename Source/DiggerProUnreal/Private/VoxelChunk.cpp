@@ -197,21 +197,26 @@ void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 }
 
 // Improved sphere brush with correct SDF gradients
+#include <cmath>
+
 void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig)
 {
-    float PaddedRadius = Radius + 2.0f;  // Add padding to the radius for smoother transitions
     FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
+    float RadiusSquared = Radius * Radius;
 
-    int32 VoxelRadius = FMath::CeilToInt(PaddedRadius / VoxelSize);
+    // Set bounds with transition space
+    int32 MinX = FMath::FloorToInt(VoxelCenter.X - Radius - 1);
+    int32 MaxX = FMath::CeilToInt(VoxelCenter.X + Radius + 1);
+    int32 MinY = FMath::FloorToInt(VoxelCenter.Y - Radius - 1);
+    int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + Radius + 1);
+    int32 MinZ = FMath::FloorToInt(VoxelCenter.Z - Radius - 1);
+    int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + Radius + 1);
 
-    // Adjust bounds to ensure full enclosure
-    int32 MinX = VoxelCenter.X - VoxelRadius;
-    int32 MaxX = VoxelCenter.X + VoxelRadius;
-    int32 MinY = VoxelCenter.Y - VoxelRadius;
-    int32 MaxY = VoxelCenter.Y + VoxelRadius;
-    int32 MinZ = VoxelCenter.Z - VoxelRadius;
-    int32 MaxZ = VoxelCenter.Z + VoxelRadius;
+    // Separate initialization for dig and add modes
+    float TransitionZone = (bDig) ? Radius * 0.3f : Radius * 0.2f;
+    float RadiusFactor = (bDig) ? 1.0f : 2.0f;
 
+    // Iterate through voxels
     for (int32 X = MinX; X <= MaxX; ++X)
     {
         for (int32 Y = MinY; Y <= MaxY; ++Y)
@@ -219,49 +224,54 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
             for (int32 Z = MinZ; Z <= MaxZ; ++Z)
             {
                 FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
-                float Distance = FVector3d::Dist(WorldPosition, BrushPosition);
-                float NormalizedDist = Distance / PaddedRadius;
-                float SDFValue;
+                float DistanceSquared = FVector3d::DistSquared(WorldPosition, BrushPosition);
 
-                if (bDig)
+                if (DistanceSquared <= RadiusSquared * RadiusFactor)
                 {
-                    // Dig mode: create air voxels with a smooth transition
-                    if (NormalizedDist <= 1.0f)
+                    float Distance = FMath::Sqrt(DistanceSquared);
+                    float SignedDistance = Distance - Radius; // Distance from surface
+
+                    float SDFValue;
+
+                    if (bDig)
                     {
-                        SDFValue = 1.0f; // Air
-                    }
-                    else if (NormalizedDist <= 1.5f) // Smooth transition band
-                    {
-                        float T = (NormalizedDist - 1.0f) / 0.2f;
-                        T = FMath::SmoothStep(0.0f, 1.0f, T);
-                        SDFValue = FMath::Lerp(1.0f, -1.0f, T);
+                        if (SignedDistance < -TransitionZone)
+                        {
+                            SDFValue = 1.0f;
+                        }
+                        else if (SignedDistance < TransitionZone)
+                        {
+                            float T = (SignedDistance + TransitionZone) / (2 * TransitionZone);
+                            T = FMath::SmoothStep(0.0f, 1.0f, T);
+                            SDFValue = FMath::Lerp(1.0f, -1.0f, T);
+                        }
+                        else
+                        {
+                            SDFValue = -1.0f;
+                        }
                     }
                     else
                     {
-                        // Skip setting voxel outside the brush
-                        continue;
+                        float NormalizedDist = Distance / Radius;
+                        
+                        if (NormalizedDist <= 1.0f)
+                        {
+                            SDFValue = -1.0f;
+                        }
+                        else if (NormalizedDist <= 1.1f)
+                        {
+                            float T = (NormalizedDist - 1.0f) / 0.1f;
+                            T = FMath::SmoothStep(0.0f, 1.0f, T);
+                            SDFValue = FMath::Lerp(-1.0f, 1.0f, T);
+                        }
+                        else
+                        {
+                            SDFValue = 1.0f;
+                        }
                     }
-                }
-                else
-                {
-                    // Additive mode: smoother transitions
-                    if (NormalizedDist <= 1.0f)
-                    {
-                        SDFValue = -1.0f;
-                    }
-                    else if (NormalizedDist <= 1.3f) // Smooth transition band
-                    {
-                        float T = (NormalizedDist - 1.0f) / 0.3f;
-                        T = FMath::SmoothStep(0.0f, 1.0f, T);
-                        SDFValue = FMath::Lerp(-1.0f, 1.0f, T);
-                    }
-                    else
-                    {
-                        SDFValue = 1.0f;
-                    }
-                }
 
-                SetVoxel(X, Y, Z, SDFValue, bDig);
+                    SetVoxel(X, Y, Z, SDFValue, bDig);
+                }
             }
         }
     }
