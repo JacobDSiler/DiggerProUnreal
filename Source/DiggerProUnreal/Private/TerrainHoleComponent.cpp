@@ -10,7 +10,7 @@ UTerrainHoleComponent::UTerrainHoleComponent()
     PrimaryComponentTick.bCanEverTick = false;
 }
 
-void UTerrainHoleComponent::CreateHoleFromMesh(ALandscape* TargetLandscape, UStaticMeshComponent* MeshComponent)
+void UTerrainHoleComponent::CreateHoleFromMesh(ALandscapeProxy* TargetLandscape, UStaticMeshComponent* MeshComponent)
 {
     if (!TargetLandscape || !MeshComponent)
     {
@@ -79,7 +79,7 @@ void UTerrainHoleComponent::CreateHoleFromMesh(ALandscape* TargetLandscape, USta
 
 
 
-void UTerrainHoleComponent::ProjectMeshOntoLandscape(ALandscape* Landscape, UStaticMeshComponent* MeshComponent, TArray<FVector>& OutProjectedPoints)
+void UTerrainHoleComponent::ProjectMeshOntoLandscape(ALandscapeProxy* Landscape, UStaticMeshComponent* MeshComponent, TArray<FVector>& OutProjectedPoints)
 {
     FBox MeshBounds = MeshComponent->Bounds.GetBox();
     

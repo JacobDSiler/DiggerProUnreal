@@ -4,12 +4,14 @@
 #include <queue>
 
 #include "CoreMinimal.h"
+#include "Landscape.h"
 #include "GameFramework/Actor.h"
 #include "ProceduralMeshComponent.h"
 #include "VoxelBrushShape.h"
 #include "VoxelBrushTypes.h"
 #include "DiggerManager.generated.h"
 
+class UTerrainHoleComponent;
 // Define the FBrushStroke struct
 USTRUCT(BlueprintType)
 struct FBrushStroke {
@@ -48,8 +50,12 @@ class DIGGERPROUNREAL_API ADiggerManager : public AActor
 	GENERATED_BODY()
 
 public:
+
 	ADiggerManager();
 	bool EnsureWorldReference();
+	
+	UFUNCTION(BlueprintCallable, Category = "Custom")
+	void DuplicateLandscape(ALandscapeProxy* Landscape);
 
 protected:
 	virtual void BeginPlay() override;
@@ -127,6 +133,9 @@ public:
 	UPROPERTY()
 	TMap<FIntVector, UVoxelChunk*> ChunkMap;
 
+	UFUNCTION(BlueprintCallable, Category = "Terrain")
+	void DigHole(ALandscapeProxy* TargetLandscape, UStaticMeshComponent* MeshComponent);
+
 private:
 	std::mutex ChunkProcessingMutex;
 	// Reference to the sparse voxel grid and marching cubes
@@ -177,7 +186,8 @@ private:
 	
 	FTimerHandle ChunkProcessTimerHandle;
 	
-    
+	UPROPERTY()
+	UTerrainHoleComponent* TerrainHoleComponent;
 
 	//Space Conversion Helper Methods
 	FIntVector WorldToChunkCoordinates(float x, float y, float z) const

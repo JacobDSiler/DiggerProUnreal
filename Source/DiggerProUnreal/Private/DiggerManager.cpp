@@ -3,6 +3,105 @@
 #include "MarchingCubes.h"
 #include "VoxelChunk.h"
 #include "ProceduralMeshComponent.h"
+#include "TerrainHoleComponent.h"
+#include "Landscape.h"
+#include "LandscapeInfo.h"
+#include "LandscapeComponent.h"
+#include "LandscapeDataAccess.h"
+#include "Kismet/KismetMathLibrary.h"
+#include "LandscapeEdit.h"
+
+void ADiggerManager::DuplicateLandscape(ALandscapeProxy* Landscape)
+{
+    if (!Landscape) return;
+
+    ULandscapeInfo* LandscapeInfo = Landscape->GetLandscapeInfo();
+    if (!LandscapeInfo) return;
+
+    // Get landscape extent
+    int32 LandscapeMinX, LandscapeMinY, LandscapeMaxX, LandscapeMaxY;
+    LandscapeInfo->GetLandscapeExtent(LandscapeMinX, LandscapeMinY, LandscapeMaxX, LandscapeMaxY);
+
+    // Create data access interface
+    FLandscapeEditDataInterface LandscapeData(LandscapeInfo);
+    
+    int32 ChunkVoxelCount = ChunkSize / VoxelSize;
+    
+    // Get landscape transform for proper world position calculation
+    FTransform LandscapeTransform = Landscape->GetActorTransform();
+    float LandscapeScale = LandscapeTransform.GetScale3D().Z;
+
+    // Iterate over the landscape extent in chunks
+    for (int32 Y = LandscapeMinY; Y <= LandscapeMaxY; Y += ChunkVoxelCount)
+    {
+        for (int32 X = LandscapeMinX; X <= LandscapeMaxX; X += ChunkVoxelCount)
+        {
+            FIntVector ChunkPosition(X, Y, 0);
+            UVoxelChunk* Chunk = GetOrCreateChunkAt(ChunkPosition);
+
+            if (Chunk)
+            {
+                // Calculate chunk boundaries in landscape space
+                int32 ChunkEndX = FMath::Min(X + ChunkVoxelCount, LandscapeMaxX);
+                int32 ChunkEndY = FMath::Min(Y + ChunkVoxelCount, LandscapeMaxY);
+                
+                // Get height data for the entire chunk area
+                TMap<FIntPoint, uint16> HeightData;
+                int32 StartX = X;
+                int32 StartY = Y;
+                int32 EndX = ChunkEndX;
+                int32 EndY = ChunkEndY;
+                LandscapeData.GetHeightData(StartX, StartY, EndX, EndY, HeightData);
+
+                for (int32 VoxelY = 0; VoxelY < ChunkVoxelCount; ++VoxelY)
+                {
+                    for (int32 VoxelX = 0; VoxelX < ChunkVoxelCount; ++VoxelX)
+                    {
+                        int32 LandscapeX = X + VoxelX;
+                        int32 LandscapeY = Y + VoxelY;
+
+                        // Skip if we're outside landscape bounds
+                        if (LandscapeX > LandscapeMaxX || LandscapeY > LandscapeMaxY)
+                            continue;
+
+                        // Get height value from the height data map
+                        FIntPoint Key(LandscapeX, LandscapeY);
+                        float Height = 0.0f;
+                        
+                        if (const uint16* HeightValue = HeightData.Find(Key))
+                        {
+                            // Convert from uint16 to world space height
+                            // LandscapeDataAccess.h: Landscape uses USHRT_MAX as "32768" = 0.0f world space
+                            const float ScaleFactor = LandscapeScale / 128.0f; // Landscape units to world units
+                            Height = ((float)*HeightValue - 32768.0f) * ScaleFactor;
+                            Height += LandscapeTransform.GetLocation().Z; // Add landscape base height
+                        }
+
+                        for (int32 VoxelZ = 0; VoxelZ < ChunkVoxelCount; ++VoxelZ)
+                        {
+                            // Convert voxel coordinates to world space
+                            FVector WorldPosition = Chunk->VoxelToWorldCoordinates(FIntVector(VoxelX, VoxelY, VoxelZ));
+                            
+                            // Calculate SDF value (distance from surface)
+                            // Positive values are above the surface, negative values are below
+                            float SDFValue = WorldPosition.Z - Height;
+
+                            // Optional: Normalize SDF value by voxel size
+                            SDFValue /= VoxelSize;
+
+                            // Set the voxel value
+                            Chunk->SetVoxel(VoxelX, VoxelY, VoxelZ, SDFValue, false);
+                        }
+                    }
+                }
+
+                // Mark the chunk for update
+                Chunk->MarkDirty();
+            }
+        }
+    }
+}
+
 
 ADiggerManager::ADiggerManager()
 {
@@ -16,6 +115,9 @@ ADiggerManager::ADiggerManager()
 
     // Initialize the brush component
     ActiveBrush = CreateDefaultSubobject<UVoxelBrushShape>(TEXT("ActiveBrush"));
+
+    // Initialize the TerrainHoleComponent
+    TerrainHoleComponent = CreateDefaultSubobject<UTerrainHoleComponent>(TEXT("TerrainHoleComponent"));
 
     // Load the material in the constructor
     static ConstructorHelpers::FObjectFinder<UMaterial> Material(TEXT("/Game/Materials/M_ProcGrid.M_ProcGrid"));
@@ -143,6 +245,8 @@ void ADiggerManager::InitializeSingleChunk(UVoxelChunk* Chunk)
     }
 }
 
+
+
 void ADiggerManager::DebugLogVoxelChunkGrid() const
 {
     UE_LOG(LogTemp, Warning, TEXT("Logging Voxel Chunk Grid:"));
@@ -224,6 +328,18 @@ void ADiggerManager::ProcessDirtyChunks()
         });
     }
 }
+
+
+
+
+void ADiggerManager::DigHole(ALandscapeProxy* TargetLandscape, UStaticMeshComponent* MeshComponent)
+{
+    if (TerrainHoleComponent && TargetLandscape && MeshComponent)
+    {
+        TerrainHoleComponent->CreateHoleFromMesh(TargetLandscape, MeshComponent);
+    }
+}
+
 
 int32 ADiggerManager::GetHitSectionIndex(const FHitResult& HitResult)
 {

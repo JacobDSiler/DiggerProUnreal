@@ -380,18 +380,17 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
         UE_LOG(LogTemp, Error, TEXT("ChunkPtr is null in UMarchingCubes::GenerateMesh()!"));
         return;
     }
-	
-	if (!DiggerManager) {
-		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in UMarchingCubes::GenerateMesh()!"));
-		DiggerManager = ChunkPtr->GetDiggerManager();
-		if (!DiggerManager) return;
-	}
-
+    
+    if (!DiggerManager) {
+        UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in UMarchingCubes::GenerateMesh()!"));
+        DiggerManager = ChunkPtr->GetDiggerManager();
+        if (!DiggerManager) return;
+    }
 
     int32 SectionIndex = ChunkPtr->GetSectionIndex();
     UE_LOG(LogTemp, Error, TEXT("Generating Mesh for Section with Section ID: %i"), SectionIndex);
 
-	if(!VoxelGrid) VoxelGrid = ChunkPtr->GetSparseVoxelGrid();
+    if(!VoxelGrid) VoxelGrid = ChunkPtr->GetSparseVoxelGrid();
     if (!VoxelGrid || VoxelGrid->GetVoxelData().IsEmpty() || VoxelGrid->VoxelData.IsEmpty()) {
         UE_LOG(LogTemp, Warning, TEXT("No UVoxelGrid and/or data to generate mesh! VoxelGrid: %s, VoxelData.Num(): %d"), 
                VoxelGrid ? TEXT("Valid") : TEXT("Invalid"), 
@@ -403,9 +402,8 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
     TArray<int32> OutTriangles;
     TArray<FVector> Normals;
     FVector ChunkOrigin = FVector(ChunkPtr->GetChunkPosition());
-	
-	if(!VoxelGrid) VoxelGrid = ChunkPtr->GetSparseVoxelGrid();
-	if(!VoxelGrid) return;
+
+    TMap<FVector, int32> VertexCache;
     for (const auto& Voxel : VoxelGrid->VoxelData) {
         FIntVector VoxelCoords = Voxel.Key;
         FVoxelData VoxelValue = Voxel.Value;
@@ -427,7 +425,6 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
             continue;
         }
 
-        TMap<FVector, int32> VertexCache;
         for (int32 i = 0; TriangleConnectionTable[CubeIndex][i] != -1; i += 3) {
             FVector Vertices[3];
 
@@ -451,26 +448,46 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
                     OutTriangles.Add(NewIndex);
                 }
             }
-
-            FVector Normal = FVector::CrossProduct(Vertices[1] - Vertices[0], Vertices[2] - Vertices[0]).GetSafeNormal();
-            for (int32 j = 0; j < 3; ++j) {
-                Normals.Add(Normal);
-            }
         }
+    }
+
+    // Calculate smooth normals
+    TArray<FVector> VertexNormals;
+    VertexNormals.SetNum(OutVertices.Num(), false);
+
+    // Initialize normals to zero
+    for (int32 i = 0; i < VertexNormals.Num(); ++i) {
+        VertexNormals[i] = FVector::ZeroVector;
+    }
+
+    // Calculate face normals and accumulate
+    for (int32 i = 0; i < OutTriangles.Num(); i += 3) {
+        FVector Normal = FVector::CrossProduct(OutVertices[OutTriangles[i+1]] - OutVertices[OutTriangles[i]], 
+                                                OutVertices[OutTriangles[i+2]] - OutVertices[OutTriangles[i]]).GetSafeNormal();
+    	Normal=-Normal;
+        VertexNormals[OutTriangles[i]] += Normal;
+        VertexNormals[OutTriangles[i+1]] += Normal;
+        VertexNormals[OutTriangles[i+2]] += Normal;
+    }
+
+    // Normalize vertex normals
+    for (int32 i = 0; i < VertexNormals.Num(); ++i) {
+        VertexNormals[i].Normalize();
     }
 
     UE_LOG(LogTemp, Log, TEXT("Mesh generated with %d OutVertices and %d OutTriangles."), OutVertices.Num(), OutTriangles.Num());
 
-    if (OutVertices.Num() > 0 && OutTriangles.Num() > 0 && Normals.Num() > 0) {
+    if (OutVertices.Num() > 0 && OutTriangles.Num() > 0 && VertexNormals.Num() > 0) {
         // Pass data to be processed on the game thread
-        AsyncTask(ENamedThreads::GameThread, [this, SectionIndex, OutVertices, OutTriangles, Normals]()
+        AsyncTask(ENamedThreads::GameThread, [this, SectionIndex, OutVertices, OutTriangles, VertexNormals]()
         {
-            ReconstructMeshSection(SectionIndex, OutVertices, OutTriangles, Normals);
+            ReconstructMeshSection(SectionIndex, OutVertices, OutTriangles, VertexNormals);
         });
     } else {
         UE_LOG(LogTemp, Warning, TEXT("Empty mesh data in GenerateMesh"));
     }
 }
+
 
 void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutOutVertices, const TArray<int32>& OutTriangles, const TArray<FVector>& Normals) const {
     // Validate pointers

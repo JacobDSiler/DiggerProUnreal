@@ -14,9 +14,9 @@ public:
 	UTerrainHoleComponent();
 
 	UFUNCTION(BlueprintCallable, Category = "Terrain")
-	void CreateHoleFromMesh(ALandscape* TargetLandscape, UStaticMeshComponent* MeshComponent);
+	void CreateHoleFromMesh(ALandscapeProxy* Landscape, UStaticMeshComponent* MeshComponent);
 
 private:
-	void ProjectMeshOntoLandscape(ALandscape* Landscape, UStaticMeshComponent* MeshComponent, TArray<FVector>& OutProjectedPoints);
+	void ProjectMeshOntoLandscape(ALandscapeProxy* Landscape, UStaticMeshComponent* MeshComponent, TArray<FVector>& OutProjectedPoints);
 	bool IsPointInsideMeshBounds(const FVector& Point, UStaticMeshComponent* MeshComponent);
 };
