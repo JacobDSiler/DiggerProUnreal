@@ -53,6 +53,13 @@ public:
 
 	ADiggerManager();
 	bool EnsureWorldReference();
+
+	// Reference to the terrain hole Blueprint
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Holes")
+	TSubclassOf<AActor> HoleBP;
+
+	UFUNCTION(BlueprintCallable, Category="Holes")
+	void SpawnTerrainHole(const FVector& Location);
 	
 	UFUNCTION(BlueprintCallable, Category = "Custom")
 	void DuplicateLandscape(ALandscapeProxy* Landscape);
@@ -133,8 +140,6 @@ public:
 	UPROPERTY()
 	TMap<FIntVector, UVoxelChunk*> ChunkMap;
 
-	UFUNCTION(BlueprintCallable, Category = "Terrain")
-	void DigHole(ALandscapeProxy* TargetLandscape, UStaticMeshComponent* MeshComponent);
 
 private:
 	std::mutex ChunkProcessingMutex;
@@ -185,9 +190,6 @@ private:
 	const int32 MaxUndoLength = 10; // Example limit
 	
 	FTimerHandle ChunkProcessTimerHandle;
-	
-	UPROPERTY()
-	UTerrainHoleComponent* TerrainHoleComponent;
 
 	//Space Conversion Helper Methods
 	FIntVector WorldToChunkCoordinates(float x, float y, float z) const

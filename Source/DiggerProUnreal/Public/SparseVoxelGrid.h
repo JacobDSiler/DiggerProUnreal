@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "DiggerManager.h"
-#include "UObject/NoExportTypes.h"
 #include "SparseVoxelGrid.generated.h"
 
 class ADiggerManager;
@@ -40,10 +39,6 @@ public:
 	bool IsPointAboveLandscape(const FVector& Point);
 	FVector VoxelToWorldSpace(const FIntVector& VoxelCoords);
 
-	//Baked SDF Methods
-	void BakeSdf();
-	void BakeBrush(FBrushStroke);
-
 	//A public getter for VoxelData
 	const TMap<FIntVector, FVoxelData>& GetVoxelData() const { return VoxelData; }
 	
@@ -63,12 +58,7 @@ public:
 	// Logs the current voxels and their SDF values
 	void LogVoxelData() const;
 	void RenderVoxels();
-
-/*	// Converts world-space coordinates to voxel-space coordinates
-	FIntVector WorldToVoxelSpace(const FVector& WorldPosition, float SubdividedVoxelSize) const;
-
-	// Converts voxel-space coordinates to world-space coordinates
-	FVector3d VoxelToWorldSpace(const FIntVector& VoxelPosition, float SubdividedVoxelSize) const;*/
+	
 
 	void SetParentChunkCoordinates(FIntVector& NewParentChunkPosition)
 	{

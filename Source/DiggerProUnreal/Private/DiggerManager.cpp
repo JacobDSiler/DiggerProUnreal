@@ -3,13 +3,22 @@
 #include "MarchingCubes.h"
 #include "VoxelChunk.h"
 #include "ProceduralMeshComponent.h"
-#include "TerrainHoleComponent.h"
-#include "Landscape.h"
 #include "LandscapeInfo.h"
-#include "LandscapeComponent.h"
-#include "LandscapeDataAccess.h"
-#include "Kismet/KismetMathLibrary.h"
 #include "LandscapeEdit.h"
+
+void ADiggerManager::SpawnTerrainHole(const FVector& Location)
+{
+    if (HoleBP)
+    {
+        FActorSpawnParameters SpawnParams;
+        GetWorld()->SpawnActor<AActor>(HoleBP, Location, FRotator::ZeroRotator, SpawnParams);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("HoleBP is not set in AMyClass!"));
+    }
+}
+
 
 void ADiggerManager::DuplicateLandscape(ALandscapeProxy* Landscape)
 {
@@ -115,9 +124,7 @@ ADiggerManager::ADiggerManager()
 
     // Initialize the brush component
     ActiveBrush = CreateDefaultSubobject<UVoxelBrushShape>(TEXT("ActiveBrush"));
-
-    // Initialize the TerrainHoleComponent
-    TerrainHoleComponent = CreateDefaultSubobject<UTerrainHoleComponent>(TEXT("TerrainHoleComponent"));
+    
 
     // Load the material in the constructor
     static ConstructorHelpers::FObjectFinder<UMaterial> Material(TEXT("/Game/Materials/M_ProcGrid.M_ProcGrid"));
@@ -157,6 +164,7 @@ void ADiggerManager::BeginPlay()
     }
 
     UpdateVoxelSize();
+    ActiveBrush->InitializeBrush(ActiveBrush->GetBrushType(),ActiveBrush->GetBrushSize(),ActiveBrush->GetBrushLocation(),this);
 
 
     // Start the timer to process dirty chunks
@@ -329,16 +337,6 @@ void ADiggerManager::ProcessDirtyChunks()
     }
 }
 
-
-
-
-void ADiggerManager::DigHole(ALandscapeProxy* TargetLandscape, UStaticMeshComponent* MeshComponent)
-{
-    if (TerrainHoleComponent && TargetLandscape && MeshComponent)
-    {
-        TerrainHoleComponent->CreateHoleFromMesh(TargetLandscape, MeshComponent);
-    }
-}
 
 
 int32 ADiggerManager::GetHitSectionIndex(const FHitResult& HitResult)

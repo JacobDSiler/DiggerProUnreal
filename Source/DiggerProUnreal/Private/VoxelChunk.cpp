@@ -197,8 +197,6 @@ void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 }
 
 // Improved sphere brush with correct SDF gradients
-#include <cmath>
-
 void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig)
 {
     FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
@@ -235,15 +233,9 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
 
                     if (bDig)
                     {
-                        if (SignedDistance < -TransitionZone)
+                        if (SignedDistance < 0)
                         {
-                            SDFValue = 1.0f;
-                        }
-                        else if (SignedDistance < TransitionZone)
-                        {
-                            float T = (SignedDistance + TransitionZone) / (2 * TransitionZone);
-                            T = FMath::SmoothStep(0.0f, 1.0f, T);
-                            SDFValue = FMath::Lerp(1.0f, -1.0f, T);
+                            SDFValue = 1.0f; // Digging inside the sphere
                         }
                         else
                         {
@@ -252,17 +244,9 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
                     }
                     else
                     {
-                        float NormalizedDist = Distance / Radius;
-                        
-                        if (NormalizedDist <= 1.0f)
+                        if (SignedDistance < 0)
                         {
-                            SDFValue = -1.0f;
-                        }
-                        else if (NormalizedDist <= 1.1f)
-                        {
-                            float T = (NormalizedDist - 1.0f) / 0.1f;
-                            T = FMath::SmoothStep(0.0f, 1.0f, T);
-                            SDFValue = FMath::Lerp(-1.0f, 1.0f, T);
+                            SDFValue = -1.0f; // Adding inside the sphere
                         }
                         else
                         {
@@ -272,10 +256,27 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
 
                     SetVoxel(X, Y, Z, SDFValue, bDig);
                 }
+                else
+                {
+                    // Determine default SDF value for voxels outside the brush radius
+                    FVector VoxelWorldLocation = FVector(X, Y, Z);
+                    if (SparseVoxelGrid && SparseVoxelGrid->IsPointAboveLandscape(VoxelWorldLocation))
+                    {
+                        // Set air (default) if above the landscape
+                        SetVoxel(X, Y, Z, 1.0f, bDig);
+                    }
+                    else
+                    {
+                        // Set solid (default) if below the landscape
+                        SetVoxel(X, Y, Z, -1.0f, bDig);
+                    }
+                }
             }
         }
     }
 }
+
+
 
 
 

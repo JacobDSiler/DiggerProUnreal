@@ -143,8 +143,25 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
     }
     else
     {
-        VoxelData.Add(VoxelKey, FVoxelData(NewSDFValue));
-        UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d)"), X, Y, Z);
+        // Determine if the point is above or below the landscape
+        FVector VoxelWorldLocation = FVector(X, Y, Z);
+        bool bIsAboveLandscape = IsPointAboveLandscape(VoxelWorldLocation);
+
+        float DefaultSDFValue = bIsAboveLandscape ? 1.0 : -1.0;
+
+        // Set the initial value for undeclared voxels
+        VoxelData.Add(VoxelKey, FVoxelData(DefaultSDFValue));
+        UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d) with default value: %f"), X, Y, Z, DefaultSDFValue);
+
+        // Apply the new SDF value
+        if (bDig)
+        {
+            VoxelData[VoxelKey].SDFValue = FMath::Max(VoxelData[VoxelKey].SDFValue, NewSDFValue);
+        }
+        else
+        {
+            VoxelData[VoxelKey].SDFValue = FMath::Min(VoxelData[VoxelKey].SDFValue, NewSDFValue);
+        }
     }
 
     if (ParentChunk)
@@ -166,9 +183,6 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
 
     UE_LOG(LogTemp, Warning, TEXT("Setting Voxel at (%d,%d,%d) to SDF Value: %f"), X, Y, Z, NewSDFValue);
 }
-
-
-
 
 
 
@@ -266,19 +280,3 @@ void USparseVoxelGrid::RenderVoxels() {
         DrawDebugPoint(World, Center, 2.0f, VoxelColor, false, 15.f, 0);
     }
 }
-
-
-// Method to bake the current voxel data to BaseSDF
-void USparseVoxelGrid::BakeSdf()
-{
-    BakedSDF = VoxelData;
-    UE_LOG(LogTemp, Warning, TEXT("Baked current voxel data to BakedSDF."));
-}
-
-// Method to apply the BaseSDF to VoxelData
-void USparseVoxelGrid::ApplyBakedSDF()
-{
-    VoxelData = BakedSDF;
-    UE_LOG(LogTemp, Warning, TEXT("Applied BakedSDF to current voxel data."));
-}
-

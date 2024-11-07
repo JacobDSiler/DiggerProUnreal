@@ -17,9 +17,10 @@ class DIGGERPROUNREAL_API UVoxelBrushShape : public UObject
 
 public:
 	UVoxelBrushShape();
+	bool EnsureDiggerManager();
 
 	// Initialize the brush
-	void InitializeBrush(EVoxelBrushType InBrushType, float InSize, FVector InLocation);
+	void InitializeBrush(EVoxelBrushType InBrushType, float InSize, FVector InLocation, ADiggerManager* DiggerManagerRef);
 	UVoxelChunk* GetTargetChunkFromBrushPosition(const FVector3d& BrushPosition);
 
 	// Apply the brush to the SDF in the chunk

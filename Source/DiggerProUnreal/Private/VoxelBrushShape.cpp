@@ -12,12 +12,8 @@ UVoxelBrushShape::UVoxelBrushShape()
 }
 
 
-void UVoxelBrushShape::InitializeBrush(EVoxelBrushType InBrushType, float InSize, FVector InLocation)
+bool UVoxelBrushShape::EnsureDiggerManager()
 {
-    BrushType = InBrushType;
-    BrushSize = InSize;
-    BrushLocation = InLocation;
-
     // Get the terrain and grid settings from the DiggerManager
     if (!DiggerManager)
     {
@@ -31,11 +27,19 @@ void UVoxelBrushShape::InitializeBrush(EVoxelBrushType InBrushType, float InSize
     if (!DiggerManager)
     {
         UE_LOG(LogTemp, Error, TEXT("DiggerManager is null!"));
-        return;
+        return true;
     }
-    //World
-    World = DiggerManager->GetWorldFromManager();
+    return false;
+}
+
+void UVoxelBrushShape::InitializeBrush(EVoxelBrushType InBrushType, float InSize, FVector InLocation, ADiggerManager* DiggerManagerRef)
+{
+    BrushType = InBrushType;
+    BrushSize = InSize;
+    BrushLocation = InLocation;
+
     if(!World) World = GetWorld();
+    DiggerManager = DiggerManagerRef;
 }
 
 
@@ -93,33 +97,61 @@ void UVoxelBrushShape::ApplyBrushToChunk(UVoxelChunk* BrushChunk, FVector3d Brus
     }
 }
 
-
 FHitResult UVoxelBrushShape::GetCameraHitLocation()
 {
-    if(!World)
-    { SetWorld( GetWorld());}
+    if (!World)
+    {
+        SetWorld(GetWorld());
+    }
     
     APlayerController* PlayerController = UGameplayStatics::GetPlayerController(World, 0);
     if (!PlayerController) return FHitResult();
 
     FVector WorldLocation, WorldDirection;
-    PlayerController->DeprojectMousePositionToWorld(WorldLocation, WorldDirection);  // Simplified for clarity
+    PlayerController->DeprojectMousePositionToWorld(WorldLocation, WorldDirection);
 
     FVector End = WorldLocation + (WorldDirection * 10000.0f);
     FHitResult HitResult;
     FCollisionQueryParams CollisionParams;
     CollisionParams.AddIgnoredActor(PlayerController->GetPawn());  // Ignore the player pawn
 
-    if (World->LineTraceSingleByChannel(HitResult, WorldLocation, End, ECC_Visibility, CollisionParams))
+    if (DiggerManager && DiggerManager->HoleBP)
     {
-        DrawDebugLine(World, WorldLocation, HitResult.Location, FColor::Red, false, 1.0f, 0, 1.0f);
-        BrushLocation = HitResult.Location;  // Update BrushLocation to where the raycast hit
-        DebugBrush();
-        return HitResult;  // Return the entire FHitResult
+        CollisionParams.AddIgnoredActor(DiggerManager->HoleBP->GetDefaultObject<AActor>());
     }
 
-    return FHitResult();  // Return an empty FHitResult if nothing is hit
+    bool bHit = World->LineTraceSingleByChannel(HitResult, WorldLocation, End, ECC_Visibility, CollisionParams);
+
+    // Check if the hit is within the bounds of the Blueprint
+    if (bHit && DiggerManager && DiggerManager->HoleBP)
+    {
+        FVector HitLocation = HitResult.Location;
+        AActor* HoleActor = DiggerManager->HoleBP->GetDefaultObject<AActor>();
+        if (HoleActor)
+        {
+            FVector HoleLocation = HoleActor->GetActorLocation();
+            FVector HoleExtent = HoleActor->GetComponentsBoundingBox().GetExtent();
+
+            if (HitLocation.X >= HoleLocation.X - HoleExtent.X && HitLocation.X <= HoleLocation.X + HoleExtent.X &&
+                HitLocation.Y >= HoleLocation.Y - HoleExtent.Y && HitLocation.Y <= HoleLocation.Y + HoleExtent.Y &&
+                HitLocation.Z >= HoleLocation.Z - HoleExtent.Z && HitLocation.Z <= HoleLocation.Z + HoleExtent.Z)
+            {
+                // Continue the raycast beyond the hit location
+                CollisionParams.AddIgnoredActor(HitResult.GetActor());
+                bHit = World->LineTraceSingleByChannel(HitResult, HitLocation + WorldDirection * 10.0f, End, ECC_Visibility, CollisionParams);
+            }
+        }
+    }
+
+    if (bHit)
+    {
+        DrawDebugLine(World, WorldLocation, HitResult.Location, FColor::Red, false, 1.0f, 0, 1.0f);
+        return HitResult;
+    }
+
+    return FHitResult();
 }
+
 
 
 void UVoxelBrushShape::ApplyCubeBrush(FBrushStroke* BrushStroke)
