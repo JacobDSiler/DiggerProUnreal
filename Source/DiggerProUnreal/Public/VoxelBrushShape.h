@@ -124,6 +124,11 @@ private:
 	//World
 	UPROPERTY()
 	UWorld* World;
+	
+	FHitResult PerformComplexTrace(const FVector& Start, const FVector& End, AActor* IgnoredActor);
+	bool IsHoleBPActor(AActor* Actor) const;
+	FHitResult TraceThroughHole(const FHitResult& HoleHit, const FVector& End, AActor* IgnoredActor);
+	FHitResult TraceBehindLandscape(const FHitResult& LandscapeHit, const FVector& End, AActor* IgnoredActor, AActor* HoleActor);
 
 public:
 	void SetWorld(UWorld* SetWorld)

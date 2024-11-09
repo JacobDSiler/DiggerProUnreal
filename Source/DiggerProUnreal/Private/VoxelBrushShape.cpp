@@ -104,52 +104,124 @@ FHitResult UVoxelBrushShape::GetCameraHitLocation()
         SetWorld(GetWorld());
     }
     
+    // Early exit if no player controller
     APlayerController* PlayerController = UGameplayStatics::GetPlayerController(World, 0);
     if (!PlayerController) return FHitResult();
 
+    // Get mouse ray
     FVector WorldLocation, WorldDirection;
     PlayerController->DeprojectMousePositionToWorld(WorldLocation, WorldDirection);
-
     FVector End = WorldLocation + (WorldDirection * 10000.0f);
-    FHitResult HitResult;
+
+    return PerformComplexTrace(WorldLocation, End, PlayerController->GetPawn());
+}
+
+FHitResult UVoxelBrushShape::PerformComplexTrace(const FVector& Start, const FVector& End, AActor* IgnoredActor)
+{
+    // Setup initial trace parameters
     FCollisionQueryParams CollisionParams;
-    CollisionParams.AddIgnoredActor(PlayerController->GetPawn());  // Ignore the player pawn
-
-    if (DiggerManager && DiggerManager->HoleBP)
+    CollisionParams.AddIgnoredActor(IgnoredActor);
+    
+    FHitResult InitialHit;
+    bool bHit = World->LineTraceSingleByChannel(InitialHit, Start, End, ECC_Visibility, CollisionParams);
+    
+    if (!bHit)
     {
-        CollisionParams.AddIgnoredActor(DiggerManager->HoleBP->GetDefaultObject<AActor>());
+        return InitialHit;
     }
 
-    bool bHit = World->LineTraceSingleByChannel(HitResult, WorldLocation, End, ECC_Visibility, CollisionParams);
-
-    // Check if the hit is within the bounds of the Blueprint
-    if (bHit && DiggerManager && DiggerManager->HoleBP)
+    // Log initial hit
+    AActor* HitActor = InitialHit.GetActor();
+    if (!HitActor)
     {
-        FVector HitLocation = HitResult.Location;
-        AActor* HoleActor = DiggerManager->HoleBP->GetDefaultObject<AActor>();
-        if (HoleActor)
-        {
-            FVector HoleLocation = HoleActor->GetActorLocation();
-            FVector HoleExtent = HoleActor->GetComponentsBoundingBox().GetExtent();
-
-            if (HitLocation.X >= HoleLocation.X - HoleExtent.X && HitLocation.X <= HoleLocation.X + HoleExtent.X &&
-                HitLocation.Y >= HoleLocation.Y - HoleExtent.Y && HitLocation.Y <= HoleLocation.Y + HoleExtent.Y &&
-                HitLocation.Z >= HoleLocation.Z - HoleExtent.Z && HitLocation.Z <= HoleLocation.Z + HoleExtent.Z)
-            {
-                // Continue the raycast beyond the hit location
-                CollisionParams.AddIgnoredActor(HitResult.GetActor());
-                bHit = World->LineTraceSingleByChannel(HitResult, HitLocation + WorldDirection * 10.0f, End, ECC_Visibility, CollisionParams);
-            }
-        }
+        return InitialHit;
     }
 
-    if (bHit)
+    UE_LOG(LogTemp, Warning, TEXT("Initial hit: %s"), *HitActor->GetName());
+
+    // Check if we hit a hole
+    if (!IsHoleBPActor(HitActor))
     {
-        DrawDebugLine(World, WorldLocation, HitResult.Location, FColor::Red, false, 1.0f, 0, 1.0f);
-        return HitResult;
+        return InitialHit;
     }
 
-    return FHitResult();
+    // We hit a hole, perform trace through it
+    return TraceThroughHole(InitialHit, End, IgnoredActor);
+}
+
+bool UVoxelBrushShape::IsHoleBPActor(AActor* Actor) const
+{
+    if (!DiggerManager || !DiggerManager->HoleBP)
+    {
+        return false;
+    }
+
+    // Check if the actor is of the HoleBP class
+    return Actor->GetClass() == DiggerManager->HoleBP;
+}
+
+FHitResult UVoxelBrushShape::TraceThroughHole(const FHitResult& HoleHit, const FVector& End, AActor* IgnoredActor)
+{
+    UE_LOG(LogTemp, Warning, TEXT("Tracing through hole..."));
+    
+    // Setup trace parameters for inside hole trace
+    FCollisionQueryParams HoleTraceParams;
+    HoleTraceParams.AddIgnoredActor(IgnoredActor);
+    HoleTraceParams.AddIgnoredActor(HoleHit.GetActor());
+
+    // Start slightly inside the hole
+    FVector TraceDirection = (End - HoleHit.Location).GetSafeNormal();
+    FVector HoleTraceStart = HoleHit.Location + (TraceDirection * 100.0f);
+    
+    FHitResult InsideHoleHit;
+    bool bHoleHit = World->LineTraceSingleByChannel(InsideHoleHit, HoleTraceStart, End, ECC_Visibility, HoleTraceParams);
+
+    if (!bHoleHit)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No hit inside hole"));
+        return InsideHoleHit;
+    }
+
+    AActor* InsideHitActor = InsideHoleHit.GetActor();
+    UE_LOG(LogTemp, Warning, TEXT("Hit inside hole: %s"), *InsideHitActor->GetName());
+
+    // If we didn't hit landscape, return this hit
+    if (!InsideHitActor->IsA(ALandscape::StaticClass()))
+    {
+        return InsideHoleHit;
+    }
+
+    // We hit landscape, perform final trace from behind it
+    return TraceBehindLandscape(InsideHoleHit, End, IgnoredActor, HoleHit.GetActor());
+}
+
+FHitResult UVoxelBrushShape::TraceBehindLandscape(const FHitResult& LandscapeHit, const FVector& End, AActor* IgnoredActor, AActor* HoleActor)
+{
+    UE_LOG(LogTemp, Warning, TEXT("Tracing behind landscape..."));
+    
+    // Setup final trace parameters
+    FCollisionQueryParams FinalTraceParams;
+    FinalTraceParams.AddIgnoredActor(IgnoredActor);
+    FinalTraceParams.AddIgnoredActor(HoleActor);
+    FinalTraceParams.AddIgnoredActor(LandscapeHit.GetActor());
+
+    // Start slightly behind the landscape
+    FVector TraceDirection = (End - LandscapeHit.Location).GetSafeNormal();
+    FVector FinalTraceStart = LandscapeHit.Location + (TraceDirection * 2.0f);
+    
+    FHitResult FinalHit;
+    bool bFinalHit = World->LineTraceSingleByChannel(FinalHit, FinalTraceStart, End, ECC_Visibility, FinalTraceParams);
+
+    if (bFinalHit)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Final hit: %s"), *FinalHit.GetActor()->GetName());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No final hit"));
+    }
+
+    return FinalHit;
 }
 
 
