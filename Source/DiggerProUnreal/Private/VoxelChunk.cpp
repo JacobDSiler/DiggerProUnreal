@@ -197,26 +197,19 @@ void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 }
 
 // Improved sphere brush with correct SDF gradients
-
-
 void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig)
 {
     FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
     float RadiusSquared = Radius * Radius;
 
     // Set bounds with transition space
-    int32 MinX = FMath::FloorToInt(VoxelCenter.X - Radius - 1);
-    int32 MaxX = FMath::CeilToInt(VoxelCenter.X + Radius + 1);
-    int32 MinY = FMath::FloorToInt(VoxelCenter.Y - Radius - 1);
-    int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + Radius + 1);
-    int32 MinZ = FMath::FloorToInt(VoxelCenter.Z - Radius - 1);
-    int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + Radius + 1);
+    int32 MinX = FMath::FloorToInt(VoxelCenter.X - Radius - 1)-2;
+    int32 MaxX = FMath::CeilToInt(VoxelCenter.X + Radius + 1)+2;
+    int32 MinY = FMath::FloorToInt(VoxelCenter.Y - Radius - 1)-2;
+    int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + Radius + 1)+2;
+    int32 MinZ = FMath::FloorToInt(VoxelCenter.Z - Radius - 1)-2;
+    int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + Radius + 1)+2;
 
-    // Separate initialization for dig and add modes
-    float TransitionZone = (bDig) ? Radius * 0.3f : Radius * 0.2f;
-    float RadiusFactor = (bDig) ? 1.0f : 2.0f;
-
-    // Iterate through voxels
     for (int32 X = MinX; X <= MaxX; ++X)
     {
         for (int32 Y = MinY; Y <= MaxY; ++Y)
@@ -226,7 +219,7 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
                 FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
                 float DistanceSquared = FVector3d::DistSquared(WorldPosition, BrushPosition);
 
-                if (DistanceSquared <= RadiusSquared * RadiusFactor)
+                if (DistanceSquared <= RadiusSquared)
                 {
                     float Distance = FMath::Sqrt(DistanceSquared);
                     float SignedDistance = Distance - Radius; // Distance from surface
@@ -235,25 +228,49 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
 
                     if (bDig)
                     {
-                        if (SignedDistance < -TransitionZone)
+                        bool bIsAboveLandscape = !SparseVoxelGrid->IsPointAboveLandscape(WorldPosition);
+
+                        if (bIsAboveLandscape)
                         {
-                            SDFValue = 1.0f;
-                        }
-                        else if (SignedDistance < TransitionZone)
-                        {
-                            float T = (SignedDistance + TransitionZone) / (2 * TransitionZone);
-                            T = FMath::SmoothStep(0.0f, 1.0f, T);
-                            SDFValue = FMath::Lerp(1.0f, -1.0f, T);
+                            // Original logic for above the landscape
+                            if (SignedDistance < -Radius * 0.3f)
+                            {
+                                SDFValue = 1.0f; // Solid
+                            }
+                            else if (SignedDistance < Radius * 0.3f)
+                            {
+                                float T = (SignedDistance + Radius * 0.3f) / (2 * Radius * 0.3f);
+                                T = FMath::SmoothStep(0.0f, 1.0f, T);
+                                SDFValue = FMath::Lerp(1.0f, -1.0f, T);
+                            }
+                            else
+                            {
+                                SDFValue = -1.0f; // Air
+                            }
                         }
                         else
                         {
-                            SDFValue = -1.0f;
+                            // New logic for under the landscape
+                            if (SignedDistance < -Radius * 0.3f)
+                            {
+                                SDFValue = -1.0f; // Air
+                            }
+                            else if (SignedDistance < Radius * 0.3f)
+                            {
+                                float T = (SignedDistance + Radius * 0.3f) / (2 * Radius * 0.3f);
+                                T = FMath::SmoothStep(0.0f, 1.0f, T);
+                                SDFValue = FMath::Lerp(-1.0f, 1.0f, T);
+                            }
+                            else
+                            {
+                                SDFValue = 1.0f; // Solid
+                            }
                         }
                     }
                     else
                     {
+                        // Additive mode logic
                         float NormalizedDist = Distance / Radius;
-                        
                         if (NormalizedDist <= 1.0f)
                         {
                             SDFValue = -1.0f;
@@ -276,7 +293,6 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
         }
     }
 }
-
 
 
 void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig)

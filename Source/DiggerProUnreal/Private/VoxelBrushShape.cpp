@@ -179,7 +179,8 @@ FHitResult UVoxelBrushShape::TraceThroughHole(const FHitResult& HoleHit, const F
     if (!bHoleHit)
     {
         UE_LOG(LogTemp, Warning, TEXT("No hit inside hole"));
-        return InsideHoleHit;
+
+        return bDig ? HoleHit : FHitResult();; // Return the original hit on the hole
     }
 
     AActor* InsideHitActor = InsideHoleHit.GetActor();
@@ -192,7 +193,15 @@ FHitResult UVoxelBrushShape::TraceThroughHole(const FHitResult& HoleHit, const F
     }
 
     // We hit landscape, perform final trace from behind it
-    return TraceBehindLandscape(InsideHoleHit, End, IgnoredActor, HoleHit.GetActor());
+    FHitResult FinalHit = TraceBehindLandscape(InsideHoleHit, End, IgnoredActor, HoleHit.GetActor());
+
+    // If the final trace didn't hit anything, return the original landscape hit
+    if (!FinalHit.bBlockingHit)
+    {
+        return HoleHit;
+    }
+
+    return FinalHit;
 }
 
 FHitResult UVoxelBrushShape::TraceBehindLandscape(const FHitResult& LandscapeHit, const FVector& End, AActor* IgnoredActor, AActor* HoleActor)

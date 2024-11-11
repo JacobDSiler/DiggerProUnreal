@@ -401,8 +401,18 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
     TArray<FVector> OutVertices;
     TArray<int32> OutTriangles;
     TArray<FVector> Normals;
-    FVector ChunkOrigin = FVector(ChunkPtr->GetChunkPosition());
+	// Match the conversion formula used in WorldToChunkCoordinates
+	FVector ChunkOrigin;
+	if (DiggerManager->TerrainGridSize != 0)
+	{
+		ChunkOrigin = FVector(ChunkPtr->GetChunkPosition());
+	}
+	else
+	{
+		ChunkOrigin = FVector(ChunkPtr->GetChunkPosition() * DiggerManager->ChunkSize);
+	}
 
+	
     TMap<FVector, int32> VertexCache;
     for (const auto& Voxel : VoxelGrid->VoxelData) {
         FIntVector VoxelCoords = Voxel.Key;

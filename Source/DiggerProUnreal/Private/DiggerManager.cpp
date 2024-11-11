@@ -402,6 +402,7 @@ void ADiggerManager::DebugDrawChunkSectionIDs()
         UVoxelChunk* Chunk = Entry.Value;
         if (Chunk)
         {
+            Chunk->GetSparseVoxelGrid()->RenderVoxels();
             const FVector ChunkPosition = Chunk->GetWorldPosition();
             const FString SectionIDText = FString::Printf(TEXT("ID: %d"), Chunk->GetSectionIndex());
             DrawDebugString(GetWorld(), ChunkPosition, SectionIDText, nullptr, FColor::Green, 5.0f, true);
