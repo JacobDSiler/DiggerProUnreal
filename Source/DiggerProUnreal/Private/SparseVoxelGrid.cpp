@@ -103,7 +103,7 @@ bool USparseVoxelGrid::IsPointAboveLandscape(const FVector& Point)
     }
 
     FVector Start = Point;
-    FVector End = Point + FVector(0, 0, -10000.0f); // Arbitrary large downward value
+    FVector End = Point + FVector(0, 0, 10000.0f); // Arbitrary large downward value
 
     FHitResult HitResult;
     FCollisionQueryParams CollisionParams;
@@ -115,53 +115,50 @@ bool USparseVoxelGrid::IsPointAboveLandscape(const FVector& Point)
 }
 
 
+float USparseVoxelGrid::GetLandscapeHeightAtPoint(FVector3d Position)
+{
+    // Define start and end points for the raycast
+    FVector Start = FVector(Position.X, Position.Y, Position.Z + 10000); // Start ray above the point
+    FVector End = FVector(Position.X, Position.Y, Position.Z - 10000); // End ray below the point
 
-void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue, bool bDig)
+    FHitResult HitResult;
+
+    // Perform the raycast
+    bool bHit = GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility);
+
+    if (bHit && HitResult.GetActor() && HitResult.GetActor()->IsA(ALandscape::StaticClass()))
+    {
+        // If hit landscape, return the Z position of the hit point
+        return HitResult.ImpactPoint.Z;
+    }
+
+    // If no hit or not a landscape, return a default value indicating no hit
+    return -999999.0f;
+}
+
+
+
+void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue, bool &bDig)
 {
     SetVoxel(Position.X, Position.Y, Position.Z, SDFValue, bDig);
 }
 
 // In USparseVoxelGrid, update SetVoxel to use world coordinates comparison
-void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig)
+// Enhanced SetVoxel for better blending and transitions
+void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool &bDig)
 {
     FIntVector VoxelKey(X, Y, Z);
     FVoxelData* ExistingVoxel = VoxelData.Find(VoxelKey);
 
     if (ExistingVoxel)
     {
-        if (bDig)
-        {
-            // Ensure digging clears the voxel
-            ExistingVoxel->SDFValue = FMath::Max(ExistingVoxel->SDFValue, NewSDFValue);
-        }
-        else
-        {
-            // Blend the new SDF value with the existing one for smooth transitions
-            ExistingVoxel->SDFValue = FMath::Min(ExistingVoxel->SDFValue, NewSDFValue);
-        }
-        UE_LOG(LogTemp, Warning, TEXT("Voxel Updated at (%d,%d,%d)"), X, Y, Z);
+        ExistingVoxel->SDFValue = NewSDFValue;
+        UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated at (%d,%d,%d)"), X, Y, Z);
     }
     else
     {
-        // Determine if the point is above or below the landscape
-        FVector VoxelWorldLocation = FVector(X, Y, Z);
-        bool bIsAboveLandscape = IsPointAboveLandscape(VoxelWorldLocation);
-
-        float DefaultSDFValue = bIsAboveLandscape ? 1.0 : -1.0;
-
-        // Set the initial value for undeclared voxels
-        VoxelData.Add(VoxelKey, FVoxelData(DefaultSDFValue));
-        UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d) with default value: %f"), X, Y, Z, DefaultSDFValue);
-
-        // Apply the new SDF value
-        if (bDig)
-        {
-            VoxelData[VoxelKey].SDFValue = FMath::Max(VoxelData[VoxelKey].SDFValue, NewSDFValue);
-        }
-        else
-        {
-            VoxelData[VoxelKey].SDFValue = FMath::Min(VoxelData[VoxelKey].SDFValue, NewSDFValue);
-        }
+        VoxelData.Add(VoxelKey, FVoxelData(NewSDFValue));
+        UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d)"), X, Y, Z);
     }
 
     if (ParentChunk)
@@ -180,10 +177,7 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
             }
         }
     }
-
-    UE_LOG(LogTemp, Warning, TEXT("Setting Voxel at (%d,%d,%d) to SDF Value: %f"), X, Y, Z, NewSDFValue);
 }
-
 
 
 float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z) const

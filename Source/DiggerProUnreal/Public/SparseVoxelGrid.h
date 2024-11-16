@@ -37,14 +37,15 @@ public:
 	bool EnsureDiggerManager();
 	FIntVector WorldToVoxelSpace(const FVector& WorldCoords);
 	bool IsPointAboveLandscape(const FVector& Point);
+	float GetLandscapeHeightAtPoint(FVector3d Position);
 	FVector VoxelToWorldSpace(const FIntVector& VoxelCoords);
 
 	//A public getter for VoxelData
 	const TMap<FIntVector, FVoxelData>& GetVoxelData() const { return VoxelData; }
 	
 	// Adds a voxel at the given coordinates with the provided SDF value
-	void SetVoxel(FIntVector Position, float SDFValue, bool bDig);
-	void SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig);
+	void SetVoxel(FIntVector Position, float SDFValue, bool& bDig);
+	void SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool& bDig);
 
 	// Retrieves the voxel's SDF value; returns true if the voxel exists
 	float GetVoxel(int32 X, int32 Y, int32 Z) const;

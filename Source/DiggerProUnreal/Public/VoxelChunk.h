@@ -39,8 +39,8 @@ public:
     void ForceUpdate();
 
     // Voxel manipulation
-    void SetVoxel(int32 X, int32 Y, int32 Z, const float SDFValue, bool bDig) const;
-    void SetVoxel(const FVector& Position, const float SDFValue, const bool bDig) const;
+    void SetVoxel(int32 X, int32 Y, int32 Z, const float SDFValue, bool& bDig) const;
+    void SetVoxel(const FVector& Position, const float SDFValue, bool& bDig) const;
     float GetVoxel(const FVector& Position) const;
     float GetVoxel(int32 X, int32 Y, int32 Z) const;
 

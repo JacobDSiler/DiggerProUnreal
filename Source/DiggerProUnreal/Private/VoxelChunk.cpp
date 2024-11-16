@@ -200,15 +200,22 @@ void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig)
 {
     FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
-    float RadiusSquared = Radius * Radius;
 
-    // Set bounds with transition space
-    int32 MinX = FMath::FloorToInt(VoxelCenter.X - Radius - 1)-2;
-    int32 MaxX = FMath::CeilToInt(VoxelCenter.X + Radius + 1)+2;
-    int32 MinY = FMath::FloorToInt(VoxelCenter.Y - Radius - 1)-2;
-    int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + Radius + 1)+2;
-    int32 MinZ = FMath::FloorToInt(VoxelCenter.Z - Radius - 1)-2;
-    int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + Radius + 1)+2;
+    // Define inner core, primary transition zone, and outer falloff zone
+    float InnerRadius = Radius * 0.7f;
+    float TransitionZone = Radius * 0.2f;
+    float OuterRadius = Radius * 1.2f;
+
+    float InnerRadiusSquared = InnerRadius * InnerRadius;
+    float RadiusSquared = Radius * Radius;
+    float OuterRadiusSquared = OuterRadius * OuterRadius;
+
+    int32 MinX = FMath::FloorToInt(VoxelCenter.X - OuterRadius);
+    int32 MaxX = FMath::CeilToInt(VoxelCenter.X + OuterRadius);
+    int32 MinY = FMath::FloorToInt(VoxelCenter.Y - OuterRadius);
+    int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + OuterRadius);
+    int32 MinZ = FMath::FloorToInt(VoxelCenter.Z - OuterRadius);
+    int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + OuterRadius);
 
     for (int32 X = MinX; X <= MaxX; ++X)
     {
@@ -219,71 +226,64 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
                 FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
                 float DistanceSquared = FVector3d::DistSquared(WorldPosition, BrushPosition);
 
-                if (DistanceSquared <= RadiusSquared)
+                if (DistanceSquared <= OuterRadiusSquared)
                 {
                     float Distance = FMath::Sqrt(DistanceSquared);
-                    float SignedDistance = Distance - Radius; // Distance from surface
-
-                    float SDFValue;
+                    float SDFValue = 1.0f;  // Default to air
 
                     if (bDig)
                     {
-                        bool bIsAboveLandscape = !SparseVoxelGrid->IsPointAboveLandscape(WorldPosition);
-
-                        if (bIsAboveLandscape)
+                        if (Distance <= InnerRadius)
                         {
-                            // Original logic for above the landscape
-                            if (SignedDistance < -Radius * 0.3f)
-                            {
-                                SDFValue = 1.0f; // Solid
-                            }
-                            else if (SignedDistance < Radius * 0.3f)
-                            {
-                                float T = (SignedDistance + Radius * 0.3f) / (2 * Radius * 0.3f);
-                                T = FMath::SmoothStep(0.0f, 1.0f, T);
-                                SDFValue = FMath::Lerp(1.0f, -1.0f, T);
-                            }
-                            else
-                            {
-                                SDFValue = -1.0f; // Air
-                            }
+                            // Core of the sphere - always air for digging
+                            SDFValue = 1.0f;
                         }
-                        else
+                        else if (Distance <= Radius)
                         {
-                            // New logic for under the landscape
-                            if (SignedDistance < -Radius * 0.3f)
-                            {
-                                SDFValue = -1.0f; // Air
-                            }
-                            else if (SignedDistance < Radius * 0.3f)
-                            {
-                                float T = (SignedDistance + Radius * 0.3f) / (2 * Radius * 0.3f);
-                                T = FMath::SmoothStep(0.0f, 1.0f, T);
-                                SDFValue = FMath::Lerp(-1.0f, 1.0f, T);
-                            }
-                            else
-                            {
-                                SDFValue = 1.0f; // Solid
-                            }
+                            // Primary transition zone
+                            float T = (Distance - InnerRadius) / (Radius - InnerRadius);
+                            T = FMath::SmoothStep(0.0f, 1.0f, T);
+                            SDFValue = FMath::Lerp(1.0f, -1.0f, T);
+                        }
+                        else if (Distance <= OuterRadius)
+                        {
+                            // Outer transition zone
+                            float T = (Distance - Radius) / TransitionZone;
+                            T = FMath::SmoothStep(0.0f, 1.0f, T);
+                            SDFValue = FMath::Lerp(1.0f, 1.0f, T);
+                        }
+
+                        // Ensure solid voxels extend out at the top rim
+                        if (WorldPosition.Z < BrushPosition.Z && Distance > Radius && Distance <= OuterRadius)
+                        {
+                            SDFValue = -1.0f;
+                        }
+                        // Ensure air column above hole for digging
+                        else if (WorldPosition.Z >= BrushPosition.Z && Distance <= Radius)
+                        {
+                            SDFValue = 1.0f;
                         }
                     }
                     else
                     {
-                        // Additive mode logic
-                        float NormalizedDist = Distance / Radius;
-                        if (NormalizedDist <= 1.0f)
+                        if (Distance <= InnerRadius)
                         {
+                            // Core of the sphere - always solid for adding
                             SDFValue = -1.0f;
                         }
-                        else if (NormalizedDist <= 1.1f)
+                        else if (Distance <= Radius)
                         {
-                            float T = (NormalizedDist - 1.0f) / 0.1f;
+                            // Primary transition zone
+                            float T = (Distance - InnerRadius) / (Radius - InnerRadius);
                             T = FMath::SmoothStep(0.0f, 1.0f, T);
                             SDFValue = FMath::Lerp(-1.0f, 1.0f, T);
                         }
-                        else
+                        else if (Distance <= OuterRadius)
                         {
-                            SDFValue = 1.0f;
+                            // Outer transition zone
+                            float T = (Distance - Radius) / TransitionZone;
+                            T = FMath::SmoothStep(0.0f, 1.0f, T);
+                            SDFValue = FMath::Lerp(1.0f, 1.0f, T);
                         }
                     }
 
@@ -311,9 +311,9 @@ void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig)
     int32 MaxZ = VoxelCenter.Z + VoxelRadius;
 
     // Include an offset to ensure boundaries are covered
-    MinX -= 3;
-    MinY -= 3;
-    MinZ -= 3;
+    MinX -= 2;
+    MinY -= 2;
+    MinZ -= 2;
 
     for (int32 X = MinX; X <= MaxX; ++X)
     {
@@ -344,7 +344,7 @@ void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig)
                 }
                 else
                 {
-                    // Additive mode: keep original logic with smoother transitions
+                    // Additive mode: keep original logic
                     if (NormalizedDist <= 1.0f)
                     {
                         SDFValue = -1.0f;
@@ -506,7 +506,7 @@ FIntVector UVoxelChunk::WorldToVoxelCoordinates(const FVector& WorldCoords) cons
 
 
 
-void UVoxelChunk::SetVoxel(int32 X, int32 Y, int32 Z, const float SDFValue,const bool bDig) const
+void UVoxelChunk::SetVoxel(int32 X, int32 Y, int32 Z, const float SDFValue, bool &bDig) const
 {
 	if (SparseVoxelGrid) //&& IsValidChunkLocalCoordinate(X, Y, Z))
 	{
@@ -514,7 +514,7 @@ void UVoxelChunk::SetVoxel(int32 X, int32 Y, int32 Z, const float SDFValue,const
 	}
 }
 
-void UVoxelChunk::SetVoxel(const FVector& Position, const float SDFValue,const bool bDig) const
+void UVoxelChunk::SetVoxel(const FVector& Position, const float SDFValue, bool &bDig) const
 {
 	int32 X = Position.X;
 	int32 Y = Position.Y;

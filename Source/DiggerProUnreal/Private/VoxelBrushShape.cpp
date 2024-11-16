@@ -258,7 +258,7 @@ void UVoxelBrushShape::ApplyCubeBrush(FBrushStroke* BrushStroke)
                 FVector VoxelPosition = FVector(X, Y, Z) * TargetChunk->GetVoxelSize();
                 if (FVector::Dist(BrushLocation, VoxelPosition) < BrushSize)
                 {
-                    TargetChunk->SetVoxel(X, Y, Z, -1.0f, BrushStroke->bDig); // Adjust the SDF value to 'cut' into the chunk
+                    TargetChunk->SetVoxel(X, Y, Z, -1.0f, bDig); // Adjust the SDF value to 'cut' into the chunk
                 }
             }
         }

@@ -99,7 +99,8 @@ void ADiggerManager::DuplicateLandscape(ALandscapeProxy* Landscape)
                             SDFValue /= VoxelSize;
 
                             // Set the voxel value
-                            Chunk->SetVoxel(VoxelX, VoxelY, VoxelZ, SDFValue, false);
+                            bool bDig=false;
+                            Chunk->SetVoxel(VoxelX, VoxelY, VoxelZ, SDFValue, bDig);
                         }
                     }
                 }
@@ -127,7 +128,7 @@ ADiggerManager::ADiggerManager()
     
 
     // Load the material in the constructor
-    static ConstructorHelpers::FObjectFinder<UMaterial> Material(TEXT("/Game/Materials/M_ProcGrid.M_ProcGrid"));
+    static ConstructorHelpers::FObjectFinder<UMaterial> Material(TEXT("/Game/Materials/M_VoxelMat.M_VoxelMat"));
     if (Material.Succeeded())
     {
         TerrainMaterial = Material.Object;
