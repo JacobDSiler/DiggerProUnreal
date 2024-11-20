@@ -152,13 +152,37 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
 
     if (ExistingVoxel)
     {
-        ExistingVoxel->SDFValue = NewSDFValue;
-        UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated at (%d,%d,%d)"), X, Y, Z);
+        float CurrentValue = ExistingVoxel->SDFValue;
+
+        if (bDig)
+        {
+            // Blend the new SDF value additively for digging
+            ExistingVoxel->SDFValue = FMath::Max(CurrentValue, NewSDFValue);
+        }
+        else
+        {
+            // Blend the new SDF value additively for adding
+            ExistingVoxel->SDFValue = FMath::Min(CurrentValue, NewSDFValue);
+        }
+
+        UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, ExistingVoxel->SDFValue);
     }
     else
     {
-        VoxelData.Add(VoxelKey, FVoxelData(NewSDFValue));
-        UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d)"), X, Y, Z);
+        float DefaultSDFValue = bDig ? 1.0f : -1.0f;  // Default to air for digging, solid for adding
+        VoxelData.Add(VoxelKey, FVoxelData(DefaultSDFValue));
+
+        // Set the new SDF value directly
+        if (bDig)
+        {
+            VoxelData[VoxelKey].SDFValue = FMath::Min(DefaultSDFValue, NewSDFValue);
+        }
+        else
+        {
+            VoxelData[VoxelKey].SDFValue = FMath::Max(DefaultSDFValue, NewSDFValue);
+        }
+
+        UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, NewSDFValue);
     }
 
     if (ParentChunk)
@@ -178,6 +202,9 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
         }
     }
 }
+
+
+
 
 
 float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z) const
