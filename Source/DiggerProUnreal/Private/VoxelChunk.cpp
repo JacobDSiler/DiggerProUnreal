@@ -230,40 +230,99 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
                 {
                     float Distance = FMath::Sqrt(DistanceSquared);
                     float SDFValue = 1.0f;  // Default to air
+                	float ExistingSDF = GetVoxel(FVector(X, Y, Z));
+                	bool isAboveLandscape = Z >= DiggerManager->GetLandscapeHeightAt(FVector(X, Y, Z));
 
                     if (bDig)
                     {
-                        if (Distance <= InnerRadius)
-                        {
-                            // Core of the sphere - always air for digging
-                            SDFValue = 1.0f;
-                        }
-                        else if (Distance <= Radius)
-                        {
-                            // Primary transition zone
-                            float T = (Distance - InnerRadius) / (Radius - InnerRadius);
-                            T = FMath::SmoothStep(0.0f, 1.0f, T);
-                            SDFValue = FMath::Lerp(1.0f, -1.0f, T);
-                        }
-                        else if (Distance <= OuterRadius)
-                        {
-                            // Outer transition zone
-                            float T = (Distance - Radius) / TransitionZone;
-                            T = FMath::SmoothStep(0.0f, 1.0f, T);
-                            SDFValue = FMath::Lerp(1.0f, 1.0f, T);
-                        }
+	                    // Core of the sphere - always air for digging (no solids above the landscape)
+	                    if (Distance <= InnerRadius)
+	                    {
+		                    if (ExistingSDF < 0.0f)
+		                    {
+			                    // We're in a solid area, so smooth the transition to air
+			                    float DistanceToBrushCenter = Distance;
+			                    // Calculate the blending factor based on the distance to the brush center
+			                    float BlendFactor = FMath::SmoothStep(0.8f, 1.0f, DistanceToBrushCenter / InnerRadius);  // SmoothStep for smooth transition
+            
+			                    // Blend the existing voxel with air based on the proximity to the center of the brush
+			                    SDFValue = FMath::Lerp(ExistingSDF, 1.0f, BlendFactor);
+		                    }
+		                    else
+		                    {
+			                    // Core of the sphere - always air for digging (no solids above the landscape)
+			                    SDFValue = 1.0f;
+		                    }
+	                    }
+	                    // Primary transition zone below the landscape - blend from air to solid
+	                    else if (Distance <= Radius)
+	                    {
+		                    if (isAboveLandscape)
+		                    {
+			                    // No digging above the landscape - keep air (don't touch existing air)
+			                    SDFValue = 1.0f;
+		                    }
+		                    else
+		                    {
+			                    // Blend from air to solid
+			                    float T = (Distance - InnerRadius) / (Radius - InnerRadius);
+			                    T = FMath::SmoothStep(0.0f, 1.0f, T);
+			                    SDFValue = FMath::Lerp(1.0f, -1.0f, T);
+		                    }
+	                    }
+	                    // Outer transition zone below the landscape - blending from air to solid
+	                    else if (Distance <= OuterRadius)
+	                    {
+		                    if (isAboveLandscape)
+		                    {
+			                    // No digging above the landscape - keep air (don't touch existing air)
+			                    SDFValue = 1.0f;
+		                    }
+		                    else
+		                    {
+			                    // Smooth outer rim transition
+			                    float T = (Distance - Radius) / TransitionZone;
+			                    T = FMath::SmoothStep(0.0f, 1.0f, T);
+			                    SDFValue = FMath::Lerp(1.0f, -1.0f, T);
+		                    }
+	                    }
 
-                        // Ensure solid voxels extend out at the top rim
-                        if (WorldPosition.Z < BrushPosition.Z && Distance > Radius && Distance <= OuterRadius)
-                        {
-                            SDFValue = -1.0f;
-                        }
-                        // Ensure air column above hole for digging
-                        else if (WorldPosition.Z >= BrushPosition.Z && Distance <= Radius)
-                        {
-                            SDFValue = 1.0f;
-                        }
+	                    // Ensure solid voxels extend out at the top rim (prevent tearing gaps under the landscape)
+	                    if (WorldPosition.Z < BrushPosition.Z && Distance > Radius && Distance <= OuterRadius)
+	                    {
+		                    if (isAboveLandscape)
+		                    {
+			                    // Smoothly transition to air (above the landscape)
+			                    float BlendFactor = FMath::SmoothStep(0.0f, 1.0f, (Distance - Radius) / TransitionZone); // Based on distance to the rim
+			                    // Apply smoothing to the existing voxel in this area
+			                    SDFValue = FMath::Lerp(ExistingSDF, 1.0f, BlendFactor);
+		                    }
+		                    else
+		                    {
+			                    // Below the landscape - solid voxel
+			                    SDFValue = -1.0f;
+		                    }
+	                    }
+
+	                    // Fix floating geometry at the intersection between holes (prevent air spheres under landscape)
+	                    if (Distance <= OuterRadius && ExistingSDF < 0.0f)
+	                    {
+		                    // Apply smoothing at the edge where the new hole meets the existing geometry
+		                    float EdgeBlend = FMath::SmoothStep(0.0f, 1.0f, (Distance - Radius) / TransitionZone);
+        
+		                    // Adjust the SDF value to eliminate floating geometry and the two-layer effect
+		                    SDFValue = FMath::Lerp(SDFValue, ExistingSDF, EdgeBlend);
+	                    }
+
+	                    // Handle the smoothness of voxels above the terrain
+	                    if (isAboveLandscape)
+	                    {
+		                    // Gradually transition the SDF values above the terrain to avoid chunky voxels
+		                    float SmoothFactor = FMath::SmoothStep(0.0f, 1.0f, (Distance - Radius) / TransitionZone);
+		                    SDFValue = FMath::Lerp(1.0f, ExistingSDF, SmoothFactor);  // Smooth transition to air above terrain
+	                    }
                     }
+
                     else
                     {
                         if (Distance <= InnerRadius)

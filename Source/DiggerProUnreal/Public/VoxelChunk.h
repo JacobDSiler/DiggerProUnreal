@@ -62,6 +62,7 @@ public:
     int32 GetChunkSize() const { return ChunkSize; }
     ADiggerManager* GetDiggerManager() const { return DiggerManager; }
     int32 GetSectionIndex() const { return SectionIndex; }
+    UFUNCTION(BluePrintCallable)
     USparseVoxelGrid* GetSparseVoxelGrid() const;
     UMarchingCubes* GetMarchingCubesGenerator() const { return MarchingCubesGenerator; }
     int16& GetVoxelSize();

@@ -5,6 +5,93 @@
 #include "ProceduralMeshComponent.h"
 #include "LandscapeInfo.h"
 #include "LandscapeEdit.h"
+#include "LandscapeProxy.h"
+#include "LandscapeComponent.h"
+#include "LandscapeDataAccess.h"
+#include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetMathLibrary.h"
+
+// LandscapeHeightCheck.h
+#pragma once
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "LandscapeProxy.h"
+#include "Kismet/GameplayStatics.h"
+float ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
+{
+    // Get all landscape actors in the level
+    TArray<AActor*> FoundLandscapes;
+    UGameplayStatics::GetAllActorsOfClass(GetWorld(), ALandscapeProxy::StaticClass(), FoundLandscapes);
+    
+    if (FoundLandscapes.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No landscape found in level"));
+        return 0.0f;
+    }
+    
+    // Cast the first found landscape to ALandscapeProxy
+    ALandscapeProxy* LandscapeProxy = Cast<ALandscapeProxy>(FoundLandscapes[0]);
+    if (!LandscapeProxy)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Failed to cast landscape actor"));
+        return 0.0f;
+    }
+    
+    // Try getting height using different sources in order of complexity
+    TOptional<float> HeightResult;
+    
+    // Try Simple first as it's most efficient
+    HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Simple);
+    
+    // If Simple fails, try Complex
+    if (!HeightResult.IsSet())
+    {
+        HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Complex);
+    }
+    
+    // If Complex fails and we're in editor, try Editor source
+    if (!HeightResult.IsSet() && GIsEditor)
+    {
+        HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Editor);
+    }
+    
+    if (!HeightResult.IsSet())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Failed to get height at location: %s"), *WorldPosition.ToString());
+        return 0.0f;
+    }
+    
+    return static_cast<float>(HeightResult.GetValue());
+}
+
+bool ADiggerManager::GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector& Location, float& OutHeight)
+{
+    if (!LandscapeProxy || !LandscapeProxy->GetLandscapeInfo())
+    {
+        return false;
+    }
+    
+    // Convert world location to landscape local space
+    FVector LocalPosition = LandscapeProxy->GetTransform().InverseTransformPosition(Location);
+    
+    // Try getting height using different sources
+    TOptional<float> HeightResult = LandscapeProxy->GetHeightAtLocation(LocalPosition, EHeightfieldSource::Simple);
+    
+    if (!HeightResult.IsSet())
+    {
+        HeightResult = LandscapeProxy->GetHeightAtLocation(LocalPosition, EHeightfieldSource::Complex);
+    }
+    
+    if (HeightResult.IsSet())
+    {
+        // Convert the height to world space
+        OutHeight = static_cast<float>(HeightResult.GetValue() * LandscapeProxy->GetActorScale3D().Z + 
+                                     LandscapeProxy->GetActorLocation().Z);
+        return true;
+    }
+    
+    return false;
+}
 
 void ADiggerManager::SpawnTerrainHole(const FVector& Location)
 {
@@ -253,7 +340,6 @@ void ADiggerManager::InitializeSingleChunk(UVoxelChunk* Chunk)
         UE_LOG(LogTemp, Error, TEXT("Failed to create a ProceduralMeshComponent for chunk at coordinates: %s"), *Coordinates.ToString());
     }
 }
-
 
 
 void ADiggerManager::DebugLogVoxelChunkGrid() const

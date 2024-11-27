@@ -37,7 +37,8 @@ public:
 	bool EnsureDiggerManager();
 	FIntVector WorldToVoxelSpace(const FVector& WorldCoords);
 	bool IsPointAboveLandscape(const FVector& Point);
-	float GetLandscapeHeightAtPoint(FVector3d Position);
+	UFUNCTION(BlueprintCallable)
+	float GetLandscapeHeightAtPoint(FVector Position);
 	FVector VoxelToWorldSpace(const FIntVector& VoxelCoords);
 
 	//A public getter for VoxelData

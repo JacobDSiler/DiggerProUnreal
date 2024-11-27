@@ -115,10 +115,10 @@ bool USparseVoxelGrid::IsPointAboveLandscape(const FVector& Point)
 }
 
 
-float USparseVoxelGrid::GetLandscapeHeightAtPoint(FVector3d Position)
+float USparseVoxelGrid::GetLandscapeHeightAtPoint(FVector Position)
 {
     // Define start and end points for the raycast
-    FVector Start = FVector(Position.X, Position.Y, Position.Z + 10000); // Start ray above the point
+    /*FVector Start = FVector(Position.X, Position.Y, Position.Z + 10000); // Start ray above the point
     FVector End = FVector(Position.X, Position.Y, Position.Z - 10000); // End ray below the point
 
     FHitResult HitResult;
@@ -133,7 +133,8 @@ float USparseVoxelGrid::GetLandscapeHeightAtPoint(FVector3d Position)
     }
 
     // If no hit or not a landscape, return a default value indicating no hit
-    return -999999.0f;
+    return -999999.0f;*/
+    return DiggerManager->GetLandscapeHeightAt(Position);
 }
 
 
@@ -149,6 +150,7 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
 {
     FIntVector VoxelKey(X, Y, Z);
     FVoxelData* ExistingVoxel = VoxelData.Find(VoxelKey);
+    float LandscapeHeight = GetLandscapeHeightAtPoint(FVector(VoxelKey));
 
     if (ExistingVoxel)
     {
@@ -156,8 +158,16 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
 
         if (bDig)
         {
-            // Blend the new SDF value additively for digging
-            ExistingVoxel->SDFValue = FMath::Max(CurrentValue, NewSDFValue);
+            if(Z>=LandscapeHeight)
+            {
+                // Blend the new SDF value for digging above the landscape
+                ExistingVoxel->SDFValue = FMath::Max(CurrentValue, NewSDFValue);
+            }
+            else
+            {
+                // Blend the new SDF value for digging beneath the Landscape
+                ExistingVoxel->SDFValue = FMath::Max(CurrentValue, NewSDFValue);
+            }
         }
         else
         {
@@ -165,7 +175,7 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
             ExistingVoxel->SDFValue = FMath::Min(CurrentValue, NewSDFValue);
         }
 
-        UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, ExistingVoxel->SDFValue);
+       // UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, ExistingVoxel->SDFValue);
     }
     else
     {
@@ -175,14 +185,23 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
         // Set the new SDF value directly
         if (bDig)
         {
-            VoxelData[VoxelKey].SDFValue = FMath::Min(DefaultSDFValue, NewSDFValue);
+            if(Z>=LandscapeHeight)
+            {
+                // Blend the new SDF value for digging above the landscape
+                VoxelData[VoxelKey].SDFValue = FMath::Min(DefaultSDFValue, NewSDFValue);
+            }
+            else
+            {
+                // Blend the new SDF value for digging beneath the Landscape
+                VoxelData[VoxelKey].SDFValue = FMath::Min(DefaultSDFValue, NewSDFValue);
+            }
         }
         else
         {
             VoxelData[VoxelKey].SDFValue = FMath::Max(DefaultSDFValue, NewSDFValue);
         }
 
-        UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, NewSDFValue);
+        //UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, NewSDFValue);
     }
 
     if (ParentChunk)
@@ -197,7 +216,7 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
             if (FoundChunk && *FoundChunk)
             {
                 (*FoundChunk)->MarkDirty();
-                UE_LOG(LogTemp, Warning, TEXT("Correct chunk marked dirty for voxel at (%d,%d,%d)"), X, Y, Z);
+               // UE_LOG(LogTemp, Warning, TEXT("Correct chunk marked dirty for voxel at (%d,%d,%d)"), X, Y, Z);
             }
         }
     }

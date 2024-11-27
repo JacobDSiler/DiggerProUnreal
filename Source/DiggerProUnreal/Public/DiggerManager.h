@@ -183,6 +183,9 @@ public:
 		else
 			return nullptr;
 	}
+	UFUNCTION(BlueprintCallable, Category = "Landscape Tools")
+	float GetLandscapeHeightAt(FVector WorldPosition);
+	bool GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector& Location, float& OutHeight);
 
 private:
 
