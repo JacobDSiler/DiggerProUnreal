@@ -93,7 +93,7 @@ FIntVector USparseVoxelGrid::WorldToVoxelSpace(const FVector& WorldCoords)
 
 
 
-bool USparseVoxelGrid::IsPointAboveLandscape(const FVector& Point)
+bool USparseVoxelGrid::IsPointAboveLandscape(FVector& Point)
 {
     if(!World) World = DiggerManager->GetWorldFromManager();
     if (!World) 
@@ -236,7 +236,8 @@ float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z) const
     }
     else
     {
-        //return IsPointAboveLandscape(FVector(X,Y,Z))? -1.0f : 1.0f;
+    //If Z is below the landscape, return solid, otherwise return air.
+        //return Z <= GetLandscapeHeightAtPoint(FVector(X, Y, Z))? -1.0f :1.0f;
         return 1.0f;
         // Default to air if the voxel doesn't exist
     }

@@ -376,41 +376,42 @@ void UMarchingCubes::ValidateAndResizeBuffers( FIntVector& Size, TArray<FVector>
 
 void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 {
-    if (!ChunkPtr) {
-        UE_LOG(LogTemp, Error, TEXT("ChunkPtr is null in UMarchingCubes::GenerateMesh()!"));
-        return;
-    }
-    
-    if (!DiggerManager) {
-        UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in UMarchingCubes::GenerateMesh()!"));
-        DiggerManager = ChunkPtr->GetDiggerManager();
-        if (!DiggerManager) return;
-    }
-
-    int32 SectionIndex = ChunkPtr->GetSectionIndex();
-    UE_LOG(LogTemp, Error, TEXT("Generating Mesh for Section with Section ID: %i"), SectionIndex);
-
-    if(!VoxelGrid) VoxelGrid = ChunkPtr->GetSparseVoxelGrid();
-    if (!VoxelGrid || VoxelGrid->GetVoxelData().IsEmpty() || VoxelGrid->VoxelData.IsEmpty()) {
-        UE_LOG(LogTemp, Warning, TEXT("No UVoxelGrid and/or data to generate mesh! VoxelGrid: %s, VoxelData.Num(): %d"), 
-               VoxelGrid ? TEXT("Valid") : TEXT("Invalid"), 
-               VoxelGrid ? VoxelGrid->VoxelData.Num() : 0);
-        return;
-    }
-
-    TArray<FVector> OutVertices;
-    TArray<int32> OutTriangles;
-    TArray<FVector> Normals;
-	// Match the conversion formula used in WorldToChunkCoordinates
-	FVector ChunkOrigin;
-	if (DiggerManager->TerrainGridSize != 0)
-	{
-		ChunkOrigin = FVector(ChunkPtr->GetChunkPosition());
+	if (!ChunkPtr) {
+		UE_LOG(LogTemp, Error, TEXT("ChunkPtr is null in UMarchingCubes::GenerateMesh()!"));
+		return;
 	}
+    
+	if (!DiggerManager) {
+		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in UMarchingCubes::GenerateMesh()!"));
+		DiggerManager = ChunkPtr->GetDiggerManager();
+		if (!DiggerManager) return;
+	}
+
+	int32 SectionIndex = ChunkPtr->GetSectionIndex();
+	UE_LOG(LogTemp, Error, TEXT("Generating Mesh for Section with Section ID: %i"), SectionIndex);
+
+	if(!VoxelGrid) VoxelGrid = ChunkPtr->GetSparseVoxelGrid();
+	if (!VoxelGrid || VoxelGrid->GetVoxelData().IsEmpty() || VoxelGrid->VoxelData.IsEmpty()) {
+		UE_LOG(LogTemp, Warning, TEXT("No UVoxelGrid and/or data to generate mesh! VoxelGrid: %s, VoxelData.Num(): %d"), 
+			   VoxelGrid ? TEXT("Valid") : TEXT("Invalid"), 
+			   VoxelGrid ? VoxelGrid->VoxelData.Num() : 0);
+		return;
+	}
+
+	TArray<FVector> OutVertices;
+	TArray<int32> OutTriangles;
+	TArray<FVector> Normals;
+	// Sort the conversion formula used so it works and aligns properly in worldspace. Is this looking for voxel, chunk, or worldspace coordinates?
+	FVector ChunkOrigin;
+	//if (DiggerManager->TerrainGridSize == 0)
+	//{
+	FVector  UnderSurfaceOffset(0,0,-0.1);
+		ChunkOrigin = FVector(ChunkPtr->GetChunkPosition());
+	/*}
 	else
 	{
-		ChunkOrigin = FVector(ChunkPtr->GetChunkPosition() * DiggerManager->ChunkSize);
-	}
+		ChunkOrigin = FVector(ChunkPtr->GetChunkPosition());
+	}*/
 
 	
     TMap<FVector, int32> VertexCache;
@@ -445,7 +446,10 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
                     CornerWSPositions[EdgeConnection[EdgeIndex][1]], 
                     CornerSDFValues[EdgeConnection[EdgeIndex][0]], 
                     CornerSDFValues[EdgeConnection[EdgeIndex][1]]);
-                Vertices[j] = Vertex;
+            	// UnderSurfaceOffset is a tiny negative vector that offsets the
+            	// mesh down slightly such that it sits under the landscape just enough
+            	// to avoid flickering between the hole mesh and the landscape surface above it.
+                Vertices[j] = Vertex + UnderSurfaceOffset; 
             }
 
             for (int32 j = 0; j < 3; ++j) {
@@ -481,7 +485,7 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
     }
 
     // Normalize vertex normals
-    for (int32 i = 0; i < VertexNormals.Num(); ++i) {
+	for (int32 i = 0; i < VertexNormals.Num(); ++i) {
         VertexNormals[i].Normalize();
     }
 

@@ -73,7 +73,7 @@ public:
 
 	FVector ChunkToWorldCoordinates(int32 XInd, int32 YInd, int32 ZInd) const
 	{
-		// UE_LOG(LogTemp, Warning, TEXT("ChunkToWorldSpace: XInd=1 YInd=1 ZInd=0"));
+		//UE_LOG(LogTemp, Warning, TEXT("ChunkToWorldSpace called"));
 		/* Calculate world space coordinates*/ return FVector(XInd * ChunkSize * TerrainGridSize, YInd * ChunkSize * TerrainGridSize, ZInd * ChunkSize * TerrainGridSize);
 	}
 
@@ -175,6 +175,21 @@ public:
 
 	UPROPERTY()
 	UWorld* World;
+
+	/*UPROPERTY(VisibleAnywhere)
+	bool landscapeHolesDirty;
+
+	UFUNCTION(BlueprintCallable)
+	void MarkDirty()
+	{
+		landscapeHolesDirty = true; // Set the dirty flag
+	}
+
+	UFUNCTION(BlueprintCallable)
+	void UpdatedHoles()
+	{
+		landscapeHolesDirty = false; // Set the dirty flag
+	}*/
 	
 	[[nodiscard]] UWorld* GetWorldFromManager()
 	{

@@ -1,22 +1,17 @@
-#include "DiggerManager.h"
-#include "SparseVoxelGrid.h"
-#include "MarchingCubes.h"
-#include "VoxelChunk.h"
-#include "ProceduralMeshComponent.h"
-#include "LandscapeInfo.h"
-#include "LandscapeEdit.h"
-#include "LandscapeProxy.h"
-#include "LandscapeComponent.h"
-#include "LandscapeDataAccess.h"
-#include "Kismet/GameplayStatics.h"
-#include "Kismet/KismetMathLibrary.h"
-
-// LandscapeHeightCheck.h
 #pragma once
+#include "DiggerManager.h"
+#include "LandscapeEdit.h"
+#include "LandscapeInfo.h"
+#include "LandscapeProxy.h"
+#include "MarchingCubes.h"
+#include "ProceduralMeshComponent.h"
+#include "SparseVoxelGrid.h"
+#include "VoxelChunk.h"
+#include "Kismet/GameplayStatics.h"
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "LandscapeProxy.h"
-#include "Kismet/GameplayStatics.h"
+
+
 float ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
 {
     // Get all landscape actors in the level
@@ -537,6 +532,7 @@ UVoxelChunk* ADiggerManager::FindOrCreateNearestChunk(const FVector& Position)
     UVoxelChunk** ExistingChunk = ChunkMap.Find(ChunkCoords);
     if (ExistingChunk && *ExistingChunk)
     {
+        UE_LOG(LogTemp, Warning, TEXT("Chunk found at %s"), *ChunkCoords.ToString());
         return *ExistingChunk;
     }
 
@@ -626,14 +622,16 @@ FIntVector ADiggerManager::CalculateChunkPosition(const FIntVector& ProposedChun
     return ProposedChunkPosition;
 }
 
-FIntVector ADiggerManager::CalculateChunkPosition(const FVector3d& WorldPosition) const
+FIntVector ADiggerManager::CalculateChunkPosition(const FVector& WorldPosition) const
 {
     int32 ChunkWorldSize = ChunkSize * TerrainGridSize;
-    int32 ChunkIndexX = FMath::FloorToInt(WorldPosition.X / ChunkWorldSize);
-    int32 ChunkIndexY = FMath::FloorToInt(WorldPosition.Y / ChunkWorldSize);
-    int32 ChunkIndexZ = FMath::FloorToInt(WorldPosition.Z / ChunkWorldSize);
-    return FIntVector(ChunkIndexX, ChunkIndexY, ChunkIndexZ);
+    return FIntVector(
+        FMath::FloorToInt(WorldPosition.X / ChunkWorldSize),
+        FMath::FloorToInt(WorldPosition.Y / ChunkWorldSize),
+        FMath::FloorToInt(WorldPosition.Z / ChunkWorldSize)
+    );
 }
+
 
 UVoxelChunk* ADiggerManager::GetOrCreateChunkAt(const FVector3d& ProposedChunkPosition)
 {
