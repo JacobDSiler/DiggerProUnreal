@@ -1,31 +1,36 @@
 #include "VoxelChunk.h"
 #include "DiggerManager.h"
-#include "EngineUtils.h"
 #include "MarchingCubes.h"
 #include "SparseVoxelGrid.h"
 #include "VoxelBrushTypes.h"
 #include "Async/Async.h"
 
 
+// UVoxelChunk class implementation with precision fixes
+
 UVoxelChunk::UVoxelChunk()
-	: ChunkCoordinates(FIntVector::ZeroValue), TerrainGridSize(100), Subdivisions(4), VoxelSize(100),SectionIndex(0),
-	  bIsDirty(false),
-	  DiggerManager(nullptr),
-SparseVoxelGrid(CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid")))
+: ChunkCoordinates(FIntVector::ZeroValue), TerrainGridSize(100.0), Subdivisions(4), VoxelSize(100.0), SectionIndex(0),
+  bIsDirty(false),
+  DiggerManager(nullptr),
+  SparseVoxelGrid(CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid")))
 {
 	// Initialize the SparseVoxelGrid
-	SparseVoxelGrid->Initialize( this); 
+	SparseVoxelGrid->Initialize(this); 
     
 	MarchingCubesGenerator = CreateDefaultSubobject<UMarchingCubes>(TEXT("MarchingCubesGenerator"));
 }
 
-//Change a world space coordinate into chunk space
-FIntVector UVoxelChunk::WorldToChunkCoordinates(const FVector& WorldCoords) const
-{return FIntVector(WorldCoords / (ChunkSize * VoxelSize));}
+// Change to use FVector3d for world coordinates
+FIntVector UVoxelChunk::WorldToChunkCoordinates(const FVector3d& WorldCoords) const
+{
+	return FIntVector(WorldCoords / (ChunkSize * VoxelSize));
+}
 
-//Change Chunk Coordinates to world space.
-FVector UVoxelChunk::ChunkToWorldCoordinates(const FVector& ChunkCoords) const
-{    return FVector(ChunkCoords) * ChunkSize * VoxelSize;}
+// Change to use FVector3d for chunk coordinates
+FVector3d UVoxelChunk::ChunkToWorldCoordinates(const FVector3d& ChunkCoords) const
+{    
+	return FVector3d(ChunkCoords) * ChunkSize * VoxelSize;
+}
 
 void UVoxelChunk::SetUniqueSectionIndex() {
 	// Ensure unique IDs are assigned correctly
@@ -49,16 +54,6 @@ void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerM
 	if(!DiggerManager)
 	{
 		DiggerManager = InDiggerManager;
-	}
-
-	// Get the terrain and grid settings from the DiggerManager
-	if (!DiggerManager)
-	{
-		for (TActorIterator<ADiggerManager> It(GetWorld()); It; ++It)
-		{
-			DiggerManager = *It;
-			break;
-		}
 	}
 
 	if (!DiggerManager)
@@ -112,13 +107,15 @@ void UVoxelChunk::DebugDrawChunk()
 	if (!World) World = DiggerManager->GetWorldFromManager();
 	if (!World) return;
 
-	FVector ChunkCenter = FVector(ChunkCoordinates) * ChunkSize * TerrainGridSize;
-	FVector ChunkExtent = FVector(ChunkSize * TerrainGridSize / 2.0f);
+	// Use double precision for chunk position calculation
+	FVector3d ChunkCenter = FVector3d(ChunkCoordinates) * ChunkSize * TerrainGridSize;
+	FVector3d ChunkExtent = FVector3d(ChunkSize * TerrainGridSize / 2.0);
 
 	UE_LOG(LogTemp, Warning, TEXT("DebugDrawChunk: World is valid, continuing to render the chunk bounds. ChunkCenter: %s, ChunkExtent: %s"),
 	   *ChunkCenter.ToString(), *ChunkExtent.ToString());
-	
-	DrawDebugBox(World, ChunkCenter, ChunkExtent, FColor::Red, false, 15.0f);
+
+	// Convert back to FVector for DrawDebugBox which likely requires FVector
+	DrawDebugBox(World, FVector(ChunkCenter), FVector(ChunkExtent), FColor::Red, false, 15.0f);
 }
 
 void UVoxelChunk::DebugPrintVoxelData() const
@@ -190,25 +187,80 @@ void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 		UE_LOG(LogTemp, Warning, TEXT("Invalid BrushType: %d"), (int32)Stroke.BrushType);
 		break;
 	}
+	
 
 	MarkDirty();
 
 	UE_LOG(LogTemp, Warning, TEXT("BrushStroke applied successfully. Chunk ID: %d"), SectionIndex);
 }
 
+
 // Improved sphere brush with correct SDF gradients
+// UVoxelChunk class implementation with precision fixes
+
+UVoxelChunk::UVoxelChunk()
+: ChunkCoordinates(FIntVector::ZeroValue), TerrainGridSize(100.0), Subdivisions(4), VoxelSize(100.0), SectionIndex(0),
+  bIsDirty(false),
+  DiggerManager(nullptr),
+  SparseVoxelGrid(CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid")))
+{
+    // Initialize the SparseVoxelGrid
+    SparseVoxelGrid->Initialize(this); 
+    
+    MarchingCubesGenerator = CreateDefaultSubobject<UMarchingCubes>(TEXT("MarchingCubesGenerator"));
+}
+
+// Change to use FVector3d for world coordinates
+FIntVector UVoxelChunk::WorldToChunkCoordinates(const FVector3d& WorldCoords) const
+{
+    return FIntVector(WorldCoords / (ChunkSize * VoxelSize));
+}
+
+// Change to use FVector3d for chunk coordinates
+FVector3d UVoxelChunk::ChunkToWorldCoordinates(const FVector3d& ChunkCoords) const
+{    
+    return FVector3d(ChunkCoords) * ChunkSize * VoxelSize;
+}
+
+void UVoxelChunk::DebugDrawChunk()
+{
+    if (!World) World = DiggerManager->GetWorldFromManager();
+    if (!World) return;
+
+    // Use double precision for chunk position calculation
+    FVector3d ChunkCenter = FVector3d(ChunkCoordinates) * ChunkSize * TerrainGridSize;
+    FVector3d ChunkExtent = FVector3d(ChunkSize * TerrainGridSize / 2.0);
+
+    UE_LOG(LogTemp, Warning, TEXT("DebugDrawChunk: World is valid, continuing to render the chunk bounds. ChunkCenter: %s, ChunkExtent: %s"),
+       *ChunkCenter.ToString(), *ChunkExtent.ToString());
+
+    // Convert back to FVector for DrawDebugBox which likely requires FVector
+    DrawDebugBox(World, FVector(ChunkCenter), FVector(ChunkExtent), FColor::Red, false, 15.0f);
+}
+
+// Change to use FVector3d for world coordinates
+FVector3d UVoxelChunk::VoxelToWorldCoordinates(const FIntVector& VoxelCoords) const {
+    FVector3d ChunkWorldPos = DiggerManager->ChunkToWorldCoordinates(ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
+    return ChunkWorldPos + FVector3d(VoxelCoords) * VoxelSize;
+}
+
+// Change to use FVector3d for world coordinates
+FIntVector UVoxelChunk::WorldToVoxelCoordinates(const FVector3d& WorldCoords) const {
+    FVector3d ChunkWorldPos = DiggerManager->ChunkToWorldCoordinates(ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
+    return FIntVector((WorldCoords - ChunkWorldPos) / VoxelSize);
+}
+
+// Update brush functions to use double precision
 void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig)
 {
     FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
 
     // Define inner core, primary transition zone, and outer falloff zone
-    float InnerRadius = Radius * 0.7f;
-    float TransitionZone = Radius * 0.3f;
-    float OuterRadius = Radius * 1.5f;
+    double InnerRadius = Radius * 0.7;
+    double TransitionZone = Radius * 0.3;
+    double OuterRadius = Radius * 1.5;
 
-    float InnerRadiusSquared = InnerRadius * InnerRadius;
-    float RadiusSquared = Radius * Radius;
-    float OuterRadiusSquared = OuterRadius * OuterRadius;
+    double OuterRadiusSquared = OuterRadius * OuterRadius;
 
     int32 MinX = FMath::FloorToInt(VoxelCenter.X - OuterRadius);
     int32 MaxX = FMath::CeilToInt(VoxelCenter.X + OuterRadius);
@@ -224,17 +276,18 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
             for (int32 Z = MinZ; Z <= MaxZ; ++Z)
             {
                 FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
-                float DistanceSquared = FVector3d::DistSquared(WorldPosition, BrushPosition);
+                double DistanceSquared = FVector3d::DistSquared(WorldPosition, BrushPosition);
 
-            	if (DistanceSquared > OuterRadiusSquared)
-            		continue;
+                if (DistanceSquared > OuterRadiusSquared)
+                    continue;
 
                 if (DistanceSquared <= OuterRadiusSquared)
                 {
-                    float Distance = FMath::Sqrt(DistanceSquared);
+                    double Distance = FMath::Sqrt(DistanceSquared);
                     float SDFValue = 1.0f;  // Default to air
-                	float ExistingSDF = GetVoxel(FVector(X, Y, Z));
-                	bool isAboveLandscape = Z >= DiggerManager->GetLandscapeHeightAt(FVector(X, Y, Z));
+                    float ExistingSDF = GetVoxel(FVector(X, Y, Z));
+                    bool isAboveLandscape = Z >= DiggerManager->GetLandscapeHeightAt(FVector3d(X, Y, Z));
+
 
                     if (bDig)
                     {
@@ -246,19 +299,24 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
 	                    // Primary transition zone - blending from air to solid
 	                    else if (Distance <= Radius)
 	                    {
-		                    if (isAboveLandscape)
-		                    {
-			                    // Above the landscape: Maintain air
-			                    SDFValue = 1.0f;
-		                    }
-		                    else
-		                    {
-			                    // Below the landscape: Blend smoothly from air to solid
-			                    float T = (Distance - InnerRadius) / (Radius - InnerRadius);
-			                    T = FMath::SmoothStep(0.0f, 1.0f, T);
-			                    SDFValue = FMath::Lerp(1.0f, -1.0f, T);
-		                    }
+	                    	if (isAboveLandscape)
+	                    	{
+	                    		// Maintain air above the landscape
+	                    		SDFValue = FMath::Min(SDFValue, 1.0f);
+	                    	}
+	                    	else
+	                    	{
+	                    		// Below the landscape: Blend smoothly without over-expanding
+	                    		float T = (Distance - InnerRadius) / FMath::Max(Radius - InnerRadius, KINDA_SMALL_NUMBER);
+	                    		T = FMath::SmoothStep(0.0f, 1.0f, T);
+	                    		float NewSDFValue = FMath::Lerp(1.0f, -1.0f, T);
+
+	                    		// Clamp to prevent over-expansion
+	                    		SDFValue = FMath::Min(SDFValue, NewSDFValue);
+	                    	}
 	                    }
+
+
 	                    // Outer transition zone - blending for edge smoothing
 	                    else if (Distance <= OuterRadius)
 	                    {
@@ -355,39 +413,39 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
 }
 
 
-void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig)
+void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, double Size, bool bDig)
 {
-    float HalfSize = Size;
-    FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
+	double HalfSize = Size;
+	FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
 
-    int32 VoxelRadius = FMath::CeilToInt(HalfSize / VoxelSize);
+	int32 VoxelRadius = FMath::CeilToInt(HalfSize / VoxelSize);
 
-    // Adjust bounds to ensure full enclosure
-    int32 MinX = VoxelCenter.X - VoxelRadius;
-    int32 MaxX = VoxelCenter.X + VoxelRadius;
-    int32 MinY = VoxelCenter.Y - VoxelRadius;
-    int32 MaxY = VoxelCenter.Y + VoxelRadius;
-    int32 MinZ = VoxelCenter.Z - VoxelRadius;
-    int32 MaxZ = VoxelCenter.Z + VoxelRadius;
+	// Adjust bounds to ensure full enclosure
+	int32 MinX = VoxelCenter.X - VoxelRadius;
+	int32 MaxX = VoxelCenter.X + VoxelRadius;
+	int32 MinY = VoxelCenter.Y - VoxelRadius;
+	int32 MaxY = VoxelCenter.Y + VoxelRadius;
+	int32 MinZ = VoxelCenter.Z - VoxelRadius;
+	int32 MaxZ = VoxelCenter.Z + VoxelRadius;
 
-    // Include an offset to ensure boundaries are covered
-    MinX -= 2;
-    MinY -= 2;
-    MinZ -= 2;
+	// Include an offset to ensure boundaries are covered
+	MinX -= 2;
+	MinY -= 2;
+	MinZ -= 2;
 
-    for (int32 X = MinX; X <= MaxX; ++X)
-    {
-        for (int32 Y = MinY; Y <= MaxY; ++Y)
-        {
-            for (int32 Z = MinZ; Z <= MaxZ; ++Z)
-            {
-                FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
-                float DistanceX = FMath::Abs(WorldPosition.X - BrushPosition.X);
-                float DistanceY = FMath::Abs(WorldPosition.Y - BrushPosition.Y);
-                float DistanceZ = FMath::Abs(WorldPosition.Z - BrushPosition.Z);
-                float MaxDistance = FMath::Max3(DistanceX, DistanceY, DistanceZ);
-                float NormalizedDist = MaxDistance / HalfSize;
-                float SDFValue;
+	for (int32 X = MinX; X <= MaxX; ++X)
+	{
+		for (int32 Y = MinY; Y <= MaxY; ++Y)
+		{
+			for (int32 Z = MinZ; Z <= MaxZ; ++Z)
+			{
+				FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+				double DistanceX = FMath::Abs(WorldPosition.X - BrushPosition.X);
+				double DistanceY = FMath::Abs(WorldPosition.Y - BrushPosition.Y);
+				double DistanceZ = FMath::Abs(WorldPosition.Z - BrushPosition.Z);
+				double MaxDistance = FMath::Max3(DistanceX, DistanceY, DistanceZ);
+				double NormalizedDist = MaxDistance / HalfSize;
+				float SDFValue;
 
                 if (bDig)
                 {
@@ -428,30 +486,30 @@ void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig)
 }
 
 
-void UVoxelChunk::ApplyConeBrush(FVector3d BrushPosition, float Height, float Angle, bool bDig)
+void UVoxelChunk::ApplyConeBrush(FVector3d BrushPosition, double Height, float Angle, bool bDig)
 {
-    FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
-    float RadiusAtBase = Height * FMath::Tan(FMath::DegreesToRadians(Angle));
+	FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
+	double RadiusAtBase = Height * FMath::Tan(FMath::DegreesToRadians(Angle));
     
-    // Set bounds with additional transition space
-    int32 MinX = FMath::FloorToInt(VoxelCenter.X - RadiusAtBase - 2);
-    int32 MaxX = FMath::CeilToInt(VoxelCenter.X + RadiusAtBase + 2);
-    int32 MinY = FMath::FloorToInt(VoxelCenter.Y - RadiusAtBase - 2);
-    int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + RadiusAtBase + 2);
-    int32 MinZ = VoxelCenter.Z - 1;
-    int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + Height + 2);
+	// Set bounds with additional transition space
+	int32 MinX = FMath::FloorToInt(VoxelCenter.X - RadiusAtBase - 2);
+	int32 MaxX = FMath::CeilToInt(VoxelCenter.X + RadiusAtBase + 2);
+	int32 MinY = FMath::FloorToInt(VoxelCenter.Y - RadiusAtBase - 2);
+	int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + RadiusAtBase + 2);
+	int32 MinZ = VoxelCenter.Z - 1;
+	int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + Height + 2);
 
-    for (int32 X = MinX-1; X <= MaxX+1; ++X)
-    {
-        for (int32 Y = MinY-1; Y <= MaxY+1; ++Y)
-        {
-            for (int32 Z = MinZ-1; Z <= MaxZ+1; ++Z)
-            {
-                FVector3d VoxelPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
-                FVector3d RelativePosition = VoxelPosition - BrushPosition;
-                float DistanceXY = FVector2D(RelativePosition.X, RelativePosition.Y).Size();
-                float DistanceZ = RelativePosition.Z;
-
+	for (int32 X = MinX-1; X <= MaxX+1; ++X)
+	{
+		for (int32 Y = MinY-1; Y <= MaxY+1; ++Y)
+		{
+			for (int32 Z = MinZ-1; Z <= MaxZ+1; ++Z)
+			{
+				FVector3d VoxelPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+				FVector3d RelativePosition = VoxelPosition - BrushPosition;
+				double DistanceXY = FVector2D(RelativePosition.X, RelativePosition.Y).Size();
+				double DistanceZ = RelativePosition.Z;
+				
                 if (DistanceZ <= Height && DistanceXY <= (Height - DistanceZ) * FMath::Tan(FMath::DegreesToRadians(Angle)))
                 {
                     float NormalizedDist = DistanceXY / RadiusAtBase;
@@ -519,52 +577,51 @@ bool UVoxelChunk::IsValidChunkLocalCoordinate(FVector Position) const
 	return IsValidChunkLocalCoordinate(LocalX, LocalY, LocalZ);
 }
 
-FVector UVoxelChunk::GetWorldPosition(const FIntVector& VoxelCoordinates) const
+// Update GetWorldPosition to use double precision
+FVector3d UVoxelChunk::GetWorldPosition(const FIntVector& VoxelCoordinates) const
 {
-	// Assuming ChunkPosition is the position of this chunk in the world (in chunk coordinates)
-	// and VoxelSize is the size of each voxel in world units.
 	UE_LOG(LogTemp, Warning, TEXT("GetWorldPosition 0 called"));
-	
-	FVector ChunkWorldPosition = DiggerManager->ChunkToWorldCoordinates(ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z); // Get chunk world position
+
+	FVector3d ChunkWorldPosition = DiggerManager->ChunkToWorldCoordinates(ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
 
 	// Calculate the world position by converting the voxel coordinates relative to this chunk
-	FVector VoxelWorldPosition = FVector(VoxelCoordinates) * VoxelSize;
+	FVector3d VoxelWorldPosition = FVector3d(VoxelCoordinates) * VoxelSize;
 
 	// Add the chunk's world position to the voxel's local position to get the final world position
 	return ChunkWorldPosition + VoxelWorldPosition;
 }
 
-FVector UVoxelChunk::GetWorldPosition() const
+FVector3d UVoxelChunk::GetWorldPosition() const
 {
 	UE_LOG(LogTemp, Warning, TEXT("GetWorldPosition called"));
-	FVector ChunkWorldPosition = DiggerManager->ChunkToWorldCoordinates(ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z); // Get chunk world position
+	FVector3d ChunkWorldPosition = DiggerManager->ChunkToWorldCoordinates(ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
 	return ChunkWorldPosition;
 }
 
-// Check if the coordinates are within valid bounds
+// Update IsValidChunkLocalCoordinate to use double precision
 bool UVoxelChunk::IsValidChunkLocalCoordinate(int32 LocalX, int32 LocalY, int32 LocalZ) const
 {
-	int32 HalfChunkExtent = (ChunkSize * TerrainGridSize / Subdivisions) / 2;
-	FVector ChunkPosition = FVector(GetChunkPosition()) * ChunkSize;
+    int32 HalfChunkExtent = (ChunkSize * TerrainGridSize / Subdivisions) / 2;
+    FVector3d ChunkPosition = FVector3d(GetChunkPosition()) * ChunkSize;
 
-	return (LocalX >= ChunkPosition.X - HalfChunkExtent && LocalX < ChunkPosition.X + HalfChunkExtent) &&
-		   (LocalY >= ChunkPosition.Y - HalfChunkExtent && LocalY < ChunkPosition.Y + HalfChunkExtent) &&
-		   (LocalZ >= ChunkPosition.Z - HalfChunkExtent && LocalZ < ChunkPosition.Z + HalfChunkExtent);
+    return (LocalX >= ChunkPosition.X - HalfChunkExtent && LocalX < ChunkPosition.X + HalfChunkExtent) &&
+       (LocalY >= ChunkPosition.Y - HalfChunkExtent && LocalY < ChunkPosition.Y + HalfChunkExtent) &&
+       (LocalZ >= ChunkPosition.Z - HalfChunkExtent && LocalZ < ChunkPosition.Z + HalfChunkExtent);
 }
 
 
 
 // Converts chunk-local voxel coordinates to world space
-FVector UVoxelChunk::VoxelToWorldCoordinates(const FIntVector& VoxelCoords) const {
-	//UE_LOG(LogTemp, Warning, TEXT("VC VoxelToWorldCoordinates called"));
-	FVector ChunkWorldPos = DiggerManager->ChunkToWorldCoordinates(ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
-	return ChunkWorldPos + FVector(VoxelCoords) * VoxelSize;
+// Change to use FVector3d for world coordinates
+FVector3d UVoxelChunk::VoxelToWorldCoordinates(const FIntVector& VoxelCoords) const {
+	FVector3d ChunkWorldPos = DiggerManager->ChunkToWorldCoordinates(ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
+	return ChunkWorldPos + FVector3d(VoxelCoords) * VoxelSize;
 }
 
 // Converts world coordinates to chunk-local voxel coordinates
-FIntVector UVoxelChunk::WorldToVoxelCoordinates(const FVector& WorldCoords) const {
-	//UE_LOG(LogTemp, Warning, TEXT("VC WorldToVoxelCoordinates called"));
-	FVector ChunkWorldPos = DiggerManager->ChunkToWorldCoordinates(ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
+// Change to use FVector3d for world coordinates
+FIntVector UVoxelChunk::WorldToVoxelCoordinates(const FVector3d& WorldCoords) const {
+	FVector3d ChunkWorldPos = DiggerManager->ChunkToWorldCoordinates(ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
 	return FIntVector((WorldCoords - ChunkWorldPos) / VoxelSize);
 }
 
@@ -630,7 +687,8 @@ USparseVoxelGrid* UVoxelChunk::GetSparseVoxelGrid() const
 		return SparseVoxelGrid;
 }
 
-int16& UVoxelChunk::GetVoxelSize()
+// Update class member variables
+int16 UVoxelChunk::GetVoxelSize() const
 {
 	return VoxelSize;
 }

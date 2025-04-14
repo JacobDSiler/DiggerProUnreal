@@ -71,10 +71,10 @@ protected:
 
 public:
 
-	FVector ChunkToWorldCoordinates(int32 XInd, int32 YInd, int32 ZInd) const
+	FVector3d ADiggerManager::ChunkToWorldCoordinates(const double& X, const double& Y, const double& Z) const
 	{
-		//UE_LOG(LogTemp, Warning, TEXT("ChunkToWorldSpace called"));
-		/* Calculate world space coordinates*/ return FVector(XInd * ChunkSize * TerrainGridSize, YInd * ChunkSize * TerrainGridSize, ZInd * ChunkSize * TerrainGridSize);
+		double ChunkWorldSize = ChunkSize * TerrainGridSize;
+		return FVector3d(X * ChunkWorldSize, Y * ChunkWorldSize, Z * ChunkWorldSize);
 	}
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
@@ -102,6 +102,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Custom")
 	void UpdateChunkFromSectionIndex(const FHitResult& HitResult);
 	void DebugDrawChunkSectionIDs();
+	UFUNCTION(BlueprintCallable)
+	void GenerateChunks(int32 NumIterations, FVector Offset);
 
 	// Apply the active brush to the terrain
 	UFUNCTION(BlueprintCallable, Category = "Brush System")
@@ -200,7 +202,7 @@ public:
 	}
 	UFUNCTION(BlueprintCallable, Category = "Landscape Tools")
 	float GetLandscapeHeightAt(FVector WorldPosition);
-	bool GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector& Location, float& OutHeight);
+	bool GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector3d& Location, double& OutHeight);
 
 private:
 
@@ -210,6 +212,14 @@ private:
 	FTimerHandle ChunkProcessTimerHandle;
 
 	//Space Conversion Helper Methods
-	FIntVector WorldToChunkCoordinates(float x, float y, float z) const
-	    {/* Calculate chunk space coordinates*/ return FIntVector(x, y, z) / (ChunkSize * TerrainGridSize);}
+	// Update coordinate conversion functions
+	FIntVector ADiggerManager::WorldToChunkCoordinates(const double& X, const double& Y, const double& Z) const
+	{
+	    int32 ChunkWorldSize = ChunkSize * TerrainGridSize;
+	    return FIntVector(
+	        FMath::FloorToInt(X / ChunkWorldSize),
+	        FMath::FloorToInt(Y / ChunkWorldSize),
+	        FMath::FloorToInt(Z / ChunkWorldSize)
+	    );
+	}
 };

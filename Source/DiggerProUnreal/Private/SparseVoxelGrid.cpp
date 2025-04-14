@@ -52,12 +52,13 @@ bool USparseVoxelGrid::EnsureDiggerManager()
             return false;
         }
         UE_LOG(LogTemp, Warning, TEXT("DiggerManager ensured correctly in an instance of SVG!"));
-        LocalVoxelSize = DiggerManager->VoxelSize;
+        
     }
+    LocalVoxelSize = DiggerManager->VoxelSize;
     return true;
 }
 
-// Converts voxel-local coordinates to world space (using chunk world position)
+// Converts voxel-local coordinates to world spaTerrainmce (using chunk world position)
 FVector USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelCoords)
 {
     if (!EnsureDiggerManager())
@@ -115,25 +116,8 @@ bool USparseVoxelGrid::IsPointAboveLandscape(FVector& Point)
 }
 
 
-float USparseVoxelGrid::GetLandscapeHeightAtPoint(FVector Position)
+double USparseVoxelGrid::GetLandscapeHeightAtPoint(FVector3d Position)
 {
-    // Define start and end points for the raycast
-    /*FVector Start = FVector(Position.X, Position.Y, Position.Z + 10000); // Start ray above the point
-    FVector End = FVector(Position.X, Position.Y, Position.Z - 10000); // End ray below the point
-
-    FHitResult HitResult;
-
-    // Perform the raycast
-    bool bHit = GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility);
-
-    if (bHit && HitResult.GetActor() && HitResult.GetActor()->IsA(ALandscape::StaticClass()))
-    {
-        // If hit landscape, return the Z position of the hit point
-        return HitResult.ImpactPoint.Z;
-    }
-
-    // If no hit or not a landscape, return a default value indicating no hit
-    return -999999.0f;*/
     return DiggerManager->GetLandscapeHeightAt(Position);
 }
 

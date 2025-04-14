@@ -12,7 +12,8 @@
 #include "GameFramework/Actor.h"
 
 
-float ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
+// Update GetLandscapeHeightAt to use FVector3d
+double ADiggerManager::GetLandscapeHeightAt(FVector3d WorldPosition)
 {
     // Get all landscape actors in the level
     TArray<AActor*> FoundLandscapes;
@@ -21,7 +22,7 @@ float ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
     if (FoundLandscapes.Num() == 0)
     {
         UE_LOG(LogTemp, Warning, TEXT("No landscape found in level"));
-        return 0.0f;
+        return 0.0;
     }
     
     // Cast the first found landscape to ALandscapeProxy
@@ -29,11 +30,11 @@ float ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
     if (!LandscapeProxy)
     {
         UE_LOG(LogTemp, Warning, TEXT("Failed to cast landscape actor"));
-        return 0.0f;
+        return 0.0;
     }
     
     // Try getting height using different sources in order of complexity
-    TOptional<float> HeightResult;
+    TOptional<double> HeightResult;
     
     // Try Simple first as it's most efficient
     HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Simple);
@@ -53,13 +54,14 @@ float ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
     if (!HeightResult.IsSet())
     {
         UE_LOG(LogTemp, Warning, TEXT("Failed to get height at location: %s"), *WorldPosition.ToString());
-        return 0.0f;
+        return 0.0;
     }
     
-    return static_cast<float>(HeightResult.GetValue());
+    return HeightResult.GetValue();
 }
 
-bool ADiggerManager::GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector& Location, float& OutHeight)
+// Update GetHeightAtLocation to use FVector3d and double
+bool ADiggerManager::GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector3d& Location, double& OutHeight)
 {
     if (!LandscapeProxy || !LandscapeProxy->GetLandscapeInfo())
     {
@@ -67,10 +69,10 @@ bool ADiggerManager::GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const 
     }
     
     // Convert world location to landscape local space
-    FVector LocalPosition = LandscapeProxy->GetTransform().InverseTransformPosition(Location);
+    FVector3d LocalPosition = LandscapeProxy->GetTransform().InverseTransformPosition(Location);
     
     // Try getting height using different sources
-    TOptional<float> HeightResult = LandscapeProxy->GetHeightAtLocation(LocalPosition, EHeightfieldSource::Simple);
+    TOptional<double> HeightResult = LandscapeProxy->GetHeightAtLocation(LocalPosition, EHeightfieldSource::Simple);
     
     if (!HeightResult.IsSet())
     {
@@ -80,20 +82,21 @@ bool ADiggerManager::GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const 
     if (HeightResult.IsSet())
     {
         // Convert the height to world space
-        OutHeight = static_cast<float>(HeightResult.GetValue() * LandscapeProxy->GetActorScale3D().Z + 
-                                     LandscapeProxy->GetActorLocation().Z);
+        OutHeight = HeightResult.GetValue() * LandscapeProxy->GetActorScale3D().Z + 
+                    LandscapeProxy->GetActorLocation().Z;
         return true;
     }
     
     return false;
 }
 
-void ADiggerManager::SpawnTerrainHole(const FVector& Location)
+// Update SpawnTerrainHole to use FVector3d
+void ADiggerManager::SpawnTerrainHole(const FVector3d& Location)
 {
     if (HoleBP)
     {
         FActorSpawnParameters SpawnParams;
-        GetWorld()->SpawnActor<AActor>(HoleBP, Location, FRotator::ZeroRotator, SpawnParams);
+        GetWorld()->SpawnActor<AActor>(HoleBP, FVector(Location), FRotator::ZeroRotator, SpawnParams);
     }
     else
     {
@@ -101,7 +104,7 @@ void ADiggerManager::SpawnTerrainHole(const FVector& Location)
     }
 }
 
-
+// Update DuplicateLandscape to use double precision
 void ADiggerManager::DuplicateLandscape(ALandscapeProxy* Landscape)
 {
     if (!Landscape) return;
@@ -120,7 +123,7 @@ void ADiggerManager::DuplicateLandscape(ALandscapeProxy* Landscape)
     
     // Get landscape transform for proper world position calculation
     FTransform LandscapeTransform = Landscape->GetActorTransform();
-    float LandscapeScale = LandscapeTransform.GetScale3D().Z;
+    double LandscapeScale = LandscapeTransform.GetScale3D().Z;
 
     // Iterate over the landscape extent in chunks
     for (int32 Y = LandscapeMinY; Y <= LandscapeMaxY; Y += ChunkVoxelCount)
@@ -157,25 +160,25 @@ void ADiggerManager::DuplicateLandscape(ALandscapeProxy* Landscape)
 
                         // Get height value from the height data map
                         FIntPoint Key(LandscapeX, LandscapeY);
-                        float Height = 0.0f;
+                        double Height = 0.0;
                         
                         if (const uint16* HeightValue = HeightData.Find(Key))
                         {
                             // Convert from uint16 to world space height
                             // LandscapeDataAccess.h: Landscape uses USHRT_MAX as "32768" = 0.0f world space
-                            const float ScaleFactor = LandscapeScale / 128.0f; // Landscape units to world units
-                            Height = ((float)*HeightValue - 32768.0f) * ScaleFactor;
+                            const double ScaleFactor = LandscapeScale / 128.0; // Landscape units to world units
+                            Height = ((double)*HeightValue - 32768.0) * ScaleFactor;
                             Height += LandscapeTransform.GetLocation().Z; // Add landscape base height
                         }
 
                         for (int32 VoxelZ = 0; VoxelZ < ChunkVoxelCount; ++VoxelZ)
                         {
                             // Convert voxel coordinates to world space
-                            FVector WorldPosition = Chunk->VoxelToWorldCoordinates(FIntVector(VoxelX, VoxelY, VoxelZ));
+                            FVector3d WorldPosition = Chunk->VoxelToWorldCoordinates(FIntVector(VoxelX, VoxelY, VoxelZ));
                             
                             // Calculate SDF value (distance from surface)
                             // Positive values are above the surface, negative values are below
-                            float SDFValue = WorldPosition.Z - Height;
+                            double SDFValue = WorldPosition.Z - Height;
 
                             // Optional: Normalize SDF value by voxel size
                             SDFValue /= VoxelSize;
@@ -200,6 +203,9 @@ ADiggerManager::ADiggerManager()
     // Initialize the ProceduralMeshComponent
     ProceduralMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("GeneratedMesh"));
     RootComponent = ProceduralMesh;
+    //Collision Properties for the dynamic mesh component
+    ProceduralMesh->SetCollisionObjectType(ECC_WorldDynamic); // Set the collision to WorldDynamic
+    
 
     // Initialize the voxel grid and marching cubes
     SparseVoxelGrid = CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid"));
@@ -271,6 +277,7 @@ void ADiggerManager::BeginPlay()
     }
 }
 
+// Update UpdateVoxelSize to use double precision
 void ADiggerManager::UpdateVoxelSize()
 {
     if (Subdivisions != 0)
@@ -280,7 +287,7 @@ void ADiggerManager::UpdateVoxelSize()
     else
     {
         UE_LOG(LogTemp, Warning, TEXT("Subdivisions value is zero. VoxelSize will not be updated to avoid division by zero."));
-        VoxelSize = 1.0f; // Default fallback value
+        VoxelSize = 1.0; // Default fallback value
     }
 }
 
@@ -488,6 +495,23 @@ void ADiggerManager::DebugDrawChunkSectionIDs()
             const FVector ChunkPosition = Chunk->GetWorldPosition();
             const FString SectionIDText = FString::Printf(TEXT("ID: %d"), Chunk->GetSectionIndex());
             DrawDebugString(GetWorld(), ChunkPosition, SectionIDText, nullptr, FColor::Green, 5.0f, true);
+        }
+    }
+}
+
+void ADiggerManager::GenerateChunks(int32 NumIterations, FVector Offset)
+{
+    for (int32 i = 0; i < NumIterations; ++i)
+    {
+        // Calculate the chunk coordinates by multiplying the index with the offset
+        FIntVector ChunkCoords = FIntVector(i * Offset.X, i * Offset.Y, i * Offset.Z);
+        
+        // Create the chunk at the computed coordinates
+        UVoxelChunk* NewChunk = GetOrCreateChunkAt(ChunkCoords.X, ChunkCoords.Y, ChunkCoords.Z);
+        if (NewChunk)
+        {
+            NewChunk->InitializeChunk(ChunkCoords, this);
+            ChunkMap.Add(ChunkCoords, NewChunk);
         }
     }
 }

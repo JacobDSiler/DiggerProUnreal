@@ -48,6 +48,7 @@ public:
     FIntVector WorldToChunkCoordinates(const FVector& WorldCoords) const;
     FVector ChunkToWorldCoordinates(const FVector& ChunkCoords) const;
     FIntVector WorldToVoxelCoordinates(const FVector& WorldCoords) const;
+    void ApplySphereBrush(FVector3d BrushPosition, double Radius, bool bDig);
     FVector VoxelToWorldCoordinates(const FIntVector& VoxelCoords) const;
     bool IsValidChunkLocalCoordinate(FVector Position) const;
     bool IsValidChunkLocalCoordinate(int32 LocalX, int32 LocalY, int32 LocalZ) const;
@@ -62,10 +63,10 @@ public:
     int32 GetChunkSize() const { return ChunkSize; }
     ADiggerManager* GetDiggerManager() const { return DiggerManager; }
     int32 GetSectionIndex() const { return SectionIndex; }
-    UFUNCTION(BluePrintCallable)
+    UFUNCTION(BluePrintCallable, CallInEditor)
     USparseVoxelGrid* GetSparseVoxelGrid() const;
+    int16 GetVoxelSize() const;
     UMarchingCubes* GetMarchingCubesGenerator() const { return MarchingCubesGenerator; }
-    int16& GetVoxelSize();
     TMap<FVector, float> GetActiveVoxels() const;
     bool IsDirty() const { return bIsDirty; }
 
@@ -74,8 +75,8 @@ public:
 
 private:
     void ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig);
-    void ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig);
-    void ApplyConeBrush(FVector3d BrushPosition, float Height, float Angle, bool bDig);
+    void ApplyCubeBrush(FVector3d BrushPosition, double Size, bool bDig);
+    void ApplyConeBrush(FVector3d BrushPosition, double Height, float Angle, bool bDig);
     void BakeSingleBrushStroke(FBrushStroke StrokeToBake);
     void SetUniqueSectionIndex();
     

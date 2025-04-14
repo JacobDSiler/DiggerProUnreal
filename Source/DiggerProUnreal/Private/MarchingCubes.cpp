@@ -408,7 +408,7 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 	FVector  UnderSurfaceOffset(0,0,-0.1);
 		ChunkOrigin = FVector(ChunkPtr->GetChunkPosition());
 	/*}
-	else
+	else 
 	{
 		ChunkOrigin = FVector(ChunkPtr->GetChunkPosition());
 	}*/
@@ -474,20 +474,25 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
         VertexNormals[i] = FVector::ZeroVector;
     }
 
-    // Calculate face normals and accumulate
-    for (int32 i = 0; i < OutTriangles.Num(); i += 3) {
-        FVector Normal = FVector::CrossProduct(OutVertices[OutTriangles[i+1]] - OutVertices[OutTriangles[i]], 
-                                                OutVertices[OutTriangles[i+2]] - OutVertices[OutTriangles[i]]).GetSafeNormal();
-    	Normal=-Normal;
-        VertexNormals[OutTriangles[i]] += Normal;
-        VertexNormals[OutTriangles[i+1]] += Normal;
-        VertexNormals[OutTriangles[i+2]] += Normal;
-    }
+	// Calculate face normals and accumulate
+	for (int32 i = 0; i < OutTriangles.Num(); i += 3) {
+		const FVector& A = OutVertices[OutTriangles[i]];
+		const FVector& B = OutVertices[OutTriangles[i+1]];
+		const FVector& C = OutVertices[OutTriangles[i+2]];
 
-    // Normalize vertex normals
-	for (int32 i = 0; i < VertexNormals.Num(); ++i) {
-        VertexNormals[i].Normalize();
-    }
+		FVector FaceNormal = - FVector::CrossProduct(B - A, C - A).GetSafeNormal();
+
+		// Accumulate normals for each vertex of the triangle
+		VertexNormals[OutTriangles[i]] += FaceNormal;
+		VertexNormals[OutTriangles[i+1]] += FaceNormal;
+		VertexNormals[OutTriangles[i+2]] += FaceNormal;
+	}
+
+	// Normalize all vertex normals
+	for (FVector& VertexNormal : VertexNormals) {
+		VertexNormal = VertexNormal.GetSafeNormal();
+	}
+
 
     UE_LOG(LogTemp, Log, TEXT("Mesh generated with %d OutVertices and %d OutTriangles."), OutVertices.Num(), OutTriangles.Num());
 
@@ -542,14 +547,8 @@ void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVe
         Tangents,
         true  // Enable collision
     );
-
-    // Ensure the material is set once
-   // if (DiggerManager->GetTerrainMaterial() && 
-       // (DiggerManager->ProceduralMesh->GetNumMaterials() == 0 || 
-         //DiggerManager->ProceduralMesh->GetMaterial(0) != DiggerManager->GetTerrainMaterial())) {
+	
         DiggerManager->ProceduralMesh->SetMaterial(SectionIndex, DiggerManager->GetTerrainMaterial());
-        //UE_LOG(LogTemp, Warning, TEXT("Setting Material on SectionIndex: %d"), SectionIndex);
-    //}
 }
 
 
@@ -569,12 +568,12 @@ FVector UMarchingCubes::InterpolateVertex(const FVector& P1, const FVector& P2, 
 	if (FMath::Abs(SDF1 - SDF2) < KINDA_SMALL_NUMBER)
 	{
 		FVector InterpolatedPoint = (P1 + P2) / 2.0f;
-		return VoxelGrid->VoxelToWorldSpace(FIntVector(FMath::RoundToInt(InterpolatedPoint.X), FMath::RoundToInt(InterpolatedPoint.Y), FMath::RoundToInt(InterpolatedPoint.Z)));
+		return VoxelGrid->VoxelToWorldSpace(FIntVector(FMath::CeilToInt(InterpolatedPoint.X), FMath::CeilToInt(InterpolatedPoint.Y), FMath::CeilToInt(InterpolatedPoint.Z)));
 	}
 
 	float T = SDF1 / (SDF1 - SDF2);
 	FVector InterpolatedPoint = P1 + T * (P2 - P1);
-	return VoxelGrid->VoxelToWorldSpace(FIntVector(FMath::RoundToInt(InterpolatedPoint.X), FMath::RoundToInt(InterpolatedPoint.Y), FMath::RoundToInt(InterpolatedPoint.Z)));
+	return VoxelGrid->VoxelToWorldSpace(FIntVector(FMath::FloorToInt(InterpolatedPoint.X), FMath::FloorToInt(InterpolatedPoint.Y), FMath::FloorToInt(InterpolatedPoint.Z)));
 }
 
 
