@@ -5,6 +5,7 @@
 #include "EngineUtils.h"
 #include "StaticMeshOperations.h"
 #include "UDynamicMesh.h"
+#include "Async/Async.h"
 
 FIntVector UMarchingCubes::GetCornerOffset(int32 Index)
 {
@@ -374,6 +375,29 @@ void UMarchingCubes::ValidateAndResizeBuffers( FIntVector& Size, TArray<FVector>
 	}
 }
 
+// Blends a vertex Z toward the landscape surface if within the transition band
+FVector UMarchingCubes::ApplyLandscapeTransition(const FVector& VertexWS) const
+{
+    if (!DiggerManager) return VertexWS;
+
+    float LandscapeZ = DiggerManager->GetLandscapeHeightAt(VertexWS);
+    float DistanceToSurface = FMath::Abs(VertexWS.Z - LandscapeZ);
+
+    if (DistanceToSurface < TransitionHeight)
+    {
+        // Alpha: 0 at surface, 1 at bottom of transition band
+        float Alpha = DistanceToSurface / TransitionHeight;
+        // Sharpen/soften the blend with a power curve
+        float BlendAlpha = FMath::Pow(Alpha, TransitionSharpness);
+        float NewZ = FMath::Lerp(LandscapeZ, VertexWS.Z, BlendAlpha);
+        FVector Result = VertexWS;
+        Result.Z = NewZ;
+        return Result;
+    }
+    return VertexWS;
+}
+
+
 void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 {
 	if (!ChunkPtr) {
@@ -403,16 +427,10 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 	TArray<FVector> Normals;
 	// Sort the conversion formula used so it works and aligns properly in worldspace. Is this looking for voxel, chunk, or worldspace coordinates?
 	FVector ChunkOrigin;
-	//if (DiggerManager->TerrainGridSize == 0)
-	//{
-	FVector  UnderSurfaceOffset(0,0,-0.1);
-		ChunkOrigin = FVector(ChunkPtr->GetChunkPosition());
-	/*}
-	else
-	{
-		ChunkOrigin = FVector(ChunkPtr->GetChunkPosition());
-	}*/
+	FVector  UnderSurfaceOffset(0,0,0);
+		ChunkOrigin = FVector(ChunkPtr->GetWorldPosition());
 
+	float VoxelSize= DiggerManager->VoxelSize;
 	
     TMap<FVector, int32> VertexCache;
     for (const auto& Voxel : VoxelGrid->VoxelData) {
@@ -424,8 +442,13 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 
         for (int32 i = 0; i < 8; i++) {
             FIntVector CornerCoords = VoxelCoords + GetCornerOffset(i);
-            CornerWSPositions[i] = ChunkOrigin + FVector(CornerCoords);
-            CornerSDFValues[i] = VoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
+        	// IMPORTANT: Precise world position calculation
+        	CornerWSPositions[i] = ChunkOrigin + FVector(
+				CornerCoords.X * VoxelSize,
+				CornerCoords.Y * VoxelSize,
+				CornerCoords.Z * VoxelSize
+			);
+        	CornerSDFValues[i] = VoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
         }
 
         TArray<float> SDFValuesArray;
@@ -449,7 +472,9 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
             	// UnderSurfaceOffset is a tiny negative vector that offsets the
             	// mesh down slightly such that it sits under the landscape just enough
             	// to avoid flickering between the hole mesh and the landscape surface above it.
-                Vertices[j] = Vertex + UnderSurfaceOffset; 
+				FVector AdjustedVertex = ApplyLandscapeTransition(Vertex + UnderSurfaceOffset);
+				Vertices[j] = AdjustedVertex;
+
             }
 
             for (int32 j = 0; j < 3; ++j) {
@@ -543,6 +568,16 @@ void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVe
         true  // Enable collision
     );
 
+	UProceduralMeshComponent* Mesh = DiggerManager->ProceduralMesh;
+
+	Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	Mesh->SetCollisionObjectType(ECC_WorldDynamic);
+	Mesh->SetCollisionResponseToAllChannels(ECR_Block);
+	Mesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+	Mesh->bUseComplexAsSimpleCollision = true;
+	//Mesh->RecreatePhysicsState();
+
+
     // Ensure the material is set once
    // if (DiggerManager->GetTerrainMaterial() && 
        // (DiggerManager->ProceduralMesh->GetNumMaterials() == 0 || 
@@ -557,24 +592,17 @@ void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVe
 
 
 // Interpolates a vertex position on the edge between two points based on their SDF values
+
+// Modify InterpolateVertex to work directly in world space
 FVector UMarchingCubes::InterpolateVertex(const FVector& P1, const FVector& P2, float SDF1, float SDF2)
 {
-	//Check if the grid has become null somehow to prevent the possibility of a crash.
-	if(!VoxelGrid)
-	{
-		UE_LOG(LogTemp,Error,TEXT("VoxelGrid returned null in UMarchingCubes::InterpolateVertex!"))
-		return FVector::ZeroVector;
-	}
-	
 	if (FMath::Abs(SDF1 - SDF2) < KINDA_SMALL_NUMBER)
 	{
-		FVector InterpolatedPoint = (P1 + P2) / 2.0f;
-		return VoxelGrid->VoxelToWorldSpace(FIntVector(FMath::RoundToInt(InterpolatedPoint.X), FMath::RoundToInt(InterpolatedPoint.Y), FMath::RoundToInt(InterpolatedPoint.Z)));
+		return (P1 + P2) * 0.5f; // Direct world space interpolation
 	}
 
 	float T = SDF1 / (SDF1 - SDF2);
-	FVector InterpolatedPoint = P1 + T * (P2 - P1);
-	return VoxelGrid->VoxelToWorldSpace(FIntVector(FMath::RoundToInt(InterpolatedPoint.X), FMath::RoundToInt(InterpolatedPoint.Y), FMath::RoundToInt(InterpolatedPoint.Z)));
+	return FMath::Lerp(P1, P2, T); // Direct world space interpolation
 }
 
 

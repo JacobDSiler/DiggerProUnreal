@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "LandscapeProxy.h"
 #include "UObject/NoExportTypes.h"
 #include "VoxelChunk.generated.h"
 
@@ -54,6 +55,8 @@ public:
     FVector GetWorldPosition(const FIntVector& VoxelCoordinates) const;
     FVector GetWorldPosition() const;
 
+
+
     // Mesh generation
     void GenerateMesh() const;
 
@@ -68,12 +71,18 @@ public:
     int16& GetVoxelSize();
     TMap<FVector, float> GetActiveVoxels() const;
     bool IsDirty() const { return bIsDirty; }
+    
 
     // Setters
     void SetMarchingCubesGenerator(UMarchingCubes* InMarchingCubesGenerator) { MarchingCubesGenerator = InMarchingCubesGenerator; }
 
 private:
     void ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig);
+    float CalculateDiggingSDF(float Distance, float InnerRadius, float Radius, float OuterRadius, float TransitionZone,
+                              float ExistingSDF, bool bIsAboveTerrain, float HeightDifferenceFromTerrain);
+    float CalculateAdditiveSDF(float Distance, float InnerRadius, float Radius, float OuterRadius, float TransitionZone,
+                               float ExistingSDF, bool bIsAboveTerrain);
+    float GetTerrainHeightEfficient(ALandscapeProxy* Landscape, const FVector& WorldPosition);
     void ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig);
     void ApplyConeBrush(FVector3d BrushPosition, float Height, float Angle, bool bDig);
     void BakeSingleBrushStroke(FBrushStroke StrokeToBake);
@@ -81,6 +90,8 @@ private:
     
     FIntVector ChunkCoordinates;
     int32 ChunkSize;
+
+private:
     int16 TerrainGridSize; // Default size of 1 meter
     int8 Subdivisions;
     int16 VoxelSize;

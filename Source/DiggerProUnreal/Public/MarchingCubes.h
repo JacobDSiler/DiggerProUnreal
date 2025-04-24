@@ -33,6 +33,13 @@ public:
 	UPROPERTY()
 	const UVoxelChunk* MyVoxelChunk;
 
+	UPROPERTY(EditAnywhere, Category="Landscape Transition")
+	float TransitionHeight = 100.0f;
+
+	UPROPERTY(EditAnywhere, Category="Landscape Transition")
+	float TransitionSharpness = 2.0f;
+
+
 private:
 	// Helper functions for mesh generation
 	//FVector InterpolateVertex(float Value1, FVector V1, float Value2, FVector V2);
@@ -48,8 +55,8 @@ private:
 	bool IsValidVoxel(const FIntVector& Position) const;
 	float GetSafeSDFValue(const FIntVector& Position) const;
 	void ValidateAndResizeBuffers(FIntVector& Size, TArray<FVector>& Vertices, TArray<int32>& Triangles);
-    
-	
+	FVector ApplyLandscapeTransition(const FVector& VertexWS) const;
+
 public:
 	void SetDiggerManager(ADiggerManager* SetDiggerManager)
 	{

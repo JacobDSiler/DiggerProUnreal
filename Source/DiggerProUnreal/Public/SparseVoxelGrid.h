@@ -39,7 +39,7 @@ public:
 	bool IsPointAboveLandscape(FVector& Point);
 	UFUNCTION(BlueprintCallable)
 	float GetLandscapeHeightAtPoint(FVector Position);
-	FVector VoxelToWorldSpace(const FIntVector& VoxelCoords);
+	FVector VoxelToWorldSpace(const FIntVector& VoxelCoords) const;
 
 	//A public getter for VoxelData
 	const TMap<FIntVector, FVoxelData>& GetVoxelData() const { return VoxelData; }
@@ -89,10 +89,10 @@ private:
 	//Baked SDF for BaseSDF values for after the undo queue brush strokes fall out the end of the queue and get baked.
 	TMap<FIntVector, FVoxelData> BakedSDF;
 	
-	void ApplyBakedSDF();
-	
 	int32 ChunkSize = 32;  // Number of subdivisions per grid size
 
+
+private:
 	//The VoxelSize which will be set to the VoxelSize within DiggerManager during InitializeDiggerManager;
 	int LocalVoxelSize;
 	

@@ -58,17 +58,25 @@ bool USparseVoxelGrid::EnsureDiggerManager()
 }
 
 // Converts voxel-local coordinates to world space (using chunk world position)
-FVector USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelCoords)
+FVector USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelCoords) const
 {
-    if (!EnsureDiggerManager())
-    { if (!DiggerManager) return FVector::ZeroVector; }
-
-    return ParentChunk->GetWorldPosition() + FVector(
-        VoxelCoords.X * LocalVoxelSize,
-        VoxelCoords.Y * LocalVoxelSize,
-        VoxelCoords.Z * LocalVoxelSize
+    if (!ParentChunk) {
+        UE_LOG(LogTemp, Error, TEXT("ParentChunk is null in VoxelToWorldSpace"));
+        return FVector::ZeroVector;
+    }
+    
+    // Get the world origin of the chunk
+    FVector ChunkWorldOrigin = ParentChunk->GetWorldPosition();
+    float VoxelSize = ParentChunk->GetVoxelSize();
+    
+    // Convert voxel coordinates to world position
+    return ChunkWorldOrigin + FVector(
+        VoxelCoords.X * VoxelSize, 
+        VoxelCoords.Y * VoxelSize, 
+        VoxelCoords.Z * VoxelSize
     );
 }
+
 
 // Converts world space to voxel-local coordinates (for a specific chunk)
 FIntVector USparseVoxelGrid::WorldToVoxelSpace(const FVector& WorldCoords)
@@ -150,7 +158,6 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
 {
     FIntVector VoxelKey(X, Y, Z);
     FVoxelData* ExistingVoxel = VoxelData.Find(VoxelKey);
-    float LandscapeHeight = GetLandscapeHeightAtPoint(FVector(VoxelKey));
 
     if (ExistingVoxel)
     {
@@ -158,16 +165,8 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
 
         if (bDig)
         {
-            if(Z>=LandscapeHeight)
-            {
-                // Blend the new SDF value for digging above the landscape
-                ExistingVoxel->SDFValue = FMath::Max(CurrentValue, NewSDFValue);
-            }
-            else
-            {
-                // Blend the new SDF value for digging beneath the Landscape
-                ExistingVoxel->SDFValue = FMath::Max(CurrentValue, NewSDFValue);
-            }
+            // Blend the new SDF value additively for digging
+            ExistingVoxel->SDFValue = FMath::Max(CurrentValue, NewSDFValue);
         }
         else
         {
@@ -175,7 +174,7 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
             ExistingVoxel->SDFValue = FMath::Min(CurrentValue, NewSDFValue);
         }
 
-       // UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, ExistingVoxel->SDFValue);
+        UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, ExistingVoxel->SDFValue);
     }
     else
     {
@@ -185,23 +184,14 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
         // Set the new SDF value directly
         if (bDig)
         {
-            if(Z>=LandscapeHeight)
-            {
-                // Blend the new SDF value for digging above the landscape
-                VoxelData[VoxelKey].SDFValue = FMath::Min(DefaultSDFValue, NewSDFValue);
-            }
-            else
-            {
-                // Blend the new SDF value for digging beneath the Landscape
-                VoxelData[VoxelKey].SDFValue = FMath::Min(DefaultSDFValue, NewSDFValue);
-            }
+            VoxelData[VoxelKey].SDFValue = FMath::Min(DefaultSDFValue, NewSDFValue);
         }
         else
         {
             VoxelData[VoxelKey].SDFValue = FMath::Max(DefaultSDFValue, NewSDFValue);
         }
 
-        //UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, NewSDFValue);
+        UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, NewSDFValue);
     }
 
     if (ParentChunk)
@@ -216,11 +206,13 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
             if (FoundChunk && *FoundChunk)
             {
                 (*FoundChunk)->MarkDirty();
-               // UE_LOG(LogTemp, Warning, TEXT("Correct chunk marked dirty for voxel at (%d,%d,%d)"), X, Y, Z);
+                UE_LOG(LogTemp, Warning, TEXT("Correct chunk marked dirty for voxel at (%d,%d,%d)"), X, Y, Z);
             }
         }
     }
 }
+
+
 
 
 

@@ -10,6 +10,9 @@ public class DiggerProUnrealTarget : TargetRules
 		Type = TargetType.Game;
 		DefaultBuildSettings = BuildSettingsVersion.V2;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_1;
-		ExtraModuleNames.Add("DiggerProUnreal");
-	}
+        ExtraModuleNames.AddRange(new string[] {
+            "DiggerProUnreal", // Your main game module
+			"DiggerEditor"     // Your editor module
+		});
+    }
 }
