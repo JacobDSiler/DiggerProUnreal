@@ -1,0 +1,40 @@
+📝 Digger Editor Mode – Session Primer Template
+Project:
+Custom Voxel Terrain System for Unreal Engine 5
+
+Current Goals
+(e.g.) Implement WYSIWYG brush sculpting in custom editor mode
+(e.g.) Support static mesh custom brushes with thumbnail previews
+(e.g.) Add/export to static mesh with collision/Nanite options
+Key System Details
+Main Actor: ADiggerManager (handles chunk creation, brush application, mesh export)
+Editor Mode: Custom, with toolkit UI (Slate)
+Brush Types: Sphere, Cube, Cylinder, Custom Mesh
+Brush Settings: Radius (10–256), Strength, Falloff, Rotation (X/Y/Z, angle/mirror buttons), Add/Subtract
+Custom Brushes: Static Meshes from project, thumbnails shown in grid
+Build/Export: Roll-down menu for collision, Nanite, detail reduction, and “Bake to Static Mesh” button
+What’s Working
+UI is modular and functional
+Custom brush grid loads mesh thumbnails
+All brush settings are adjustable and stored as member variables
+Build/export settings are present and pass values to manager
+Bake button calls DiggerManager::BakeToStaticMesh (stubbed)
+What Needs Attention
+Wire up brush type and add/subtract logic to DiggerManager
+Debug/fix brush placement offset (align preview and sculpting)
+Implement static mesh baking/export logic
+(Optional) Add visual feedback for active brush/operation
+(Optional) Add preview for custom mesh brushes
+Recent Issues/Quirks
+Add/Subtract buttons update variable but not always passed to manager
+Brush preview offset (possibly chunk origin math)
+Lambdas in UI must use [this] and member variables (not statics)
+Next Steps
+Wire up brush type and add/subtract logic to manager
+Debug/fix brush placement offset
+Implement static mesh export
+(Optional) Add custom mesh preview
+Other Notes
+All UI state is stored as member variables in toolkit
+Helper functions are modular (e.g., MakeAngleButton, RebuildCustomBrushGrid)
+Use [this] in all Slate lambdas
