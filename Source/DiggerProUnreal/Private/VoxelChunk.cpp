@@ -175,6 +175,23 @@ void UVoxelChunk::ForceUpdate()
 	bIsDirty = false;
 }
 
+bool UVoxelChunk::SaveChunkData(const FString& FilePath)
+{
+	if (SparseVoxelGrid)
+	{
+		return SparseVoxelGrid->SaveVoxelDataToFile(FilePath);
+	}
+	return false;
+}
+
+bool UVoxelChunk::LoadChunkData(const FString& FilePath)
+{
+	if (SparseVoxelGrid)
+	{
+		return SparseVoxelGrid->LoadVoxelDataFromFile(FilePath);
+	}
+	return false;
+}
 
 
 void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
@@ -187,17 +204,25 @@ void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 	}
 	
 	UE_LOG(LogTemp, Warning, TEXT("Applying Brush Stroke. Chunk ID: %d, Dirty: %d"), SectionIndex, bIsDirty);
+	UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushStroke] BrushPosition (World): %s, Chunk SectionIndex: %d"), *Stroke.BrushPosition.ToString(), SectionIndex);
+
 
 	switch (Stroke.BrushType)
 	{
 	case EVoxelBrushType::Cube:
-		ApplyCubeBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig);
+		ApplyCubeBrush(Stroke.BrushPosition, Stroke.BrushRadius/2, Stroke.bDig, Stroke.BrushRotation);
 		break;
 	case EVoxelBrushType::Sphere:
 		ApplySphereBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig);
 		break;
+	case EVoxelBrushType::Cylinder:
+		ApplyCylinderBrush(Stroke.BrushPosition, Stroke.BrushLength, Stroke.BrushRadius * .5f, Stroke.bDig, Stroke.BrushRotation);
+		break;
 	case EVoxelBrushType::Cone:
-		ApplyConeBrush(Stroke.BrushPosition, Stroke.BrushRadius, 45.0f, Stroke.bDig);
+		ApplyConeBrush(Stroke.BrushPosition, Stroke.BrushLength, Stroke.BrushAngle, Stroke.bDig, Stroke.BrushRotation);
+		break;
+	case EVoxelBrushType::Smooth:
+		ApplySmoothBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig, 1);
 		break;
 	default:
 		UE_LOG(LogTemp, Warning, TEXT("Invalid BrushType: %d"), (int32)Stroke.BrushType);
@@ -207,6 +232,11 @@ void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 	MarkDirty();
 
 	UE_LOG(LogTemp, Warning, TEXT("BrushStroke applied successfully. Chunk ID: %d"), SectionIndex);
+}
+
+void UVoxelChunk::BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction,
+	const FString& String)
+{
 }
 
 // Improved sphere brush with correct SDF gradients and fixed maximal corner handling
@@ -495,151 +525,253 @@ float UVoxelChunk::GetTerrainHeightEfficient(ALandscapeProxy* Landscape, const F
 
 
 
-void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float Size, bool bDig)
+void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float HalfSize, bool bDig, const FRotator& Rotation)
 {
-    float HalfSize = Size;
+    FTransform BrushTransform(Rotation, BrushPosition);
+    FTransform InvBrushTransform = BrushTransform.Inverse();
+
+    // Compute bounds in world space (expand for transition)
     FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
-
-    int32 VoxelRadius = FMath::CeilToInt(HalfSize / VoxelSize);
-
-    // Adjust bounds to ensure full enclosure
-    int32 MinX = VoxelCenter.X - VoxelRadius;
-    int32 MaxX = VoxelCenter.X + VoxelRadius;
-    int32 MinY = VoxelCenter.Y - VoxelRadius;
-    int32 MaxY = VoxelCenter.Y + VoxelRadius;
-    int32 MinZ = VoxelCenter.Z - VoxelRadius;
-    int32 MaxZ = VoxelCenter.Z + VoxelRadius;
-
-    // Include an offset to ensure boundaries are covered
-    MinX -= 2;
-    MinY -= 2;
-    MinZ -= 2;
+    int32 MinX = VoxelCenter.X - HalfSize - 2;
+    int32 MaxX = VoxelCenter.X + HalfSize + 2;
+    int32 MinY = VoxelCenter.Y - HalfSize - 2;
+    int32 MaxY = VoxelCenter.Y + HalfSize + 2;
+    int32 MinZ = VoxelCenter.Z - HalfSize - 2;
+    int32 MaxZ = VoxelCenter.Z + HalfSize + 2;
 
     for (int32 X = MinX; X <= MaxX; ++X)
+    for (int32 Y = MinY; Y <= MaxY; ++Y)
+    for (int32 Z = MinZ; Z <= MaxZ; ++Z)
     {
-        for (int32 Y = MinY; Y <= MaxY; ++Y)
+        FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+        FVector3d LocalPos = InvBrushTransform.TransformPosition(WorldPosition);
+
+        float MaxDistance = FMath::Max3(FMath::Abs(LocalPos.X), FMath::Abs(LocalPos.Y), FMath::Abs(LocalPos.Z));
+        float NormalizedDist = MaxDistance / HalfSize;
+
+        float SDFValue = ComputeSDFValue(NormalizedDist, bDig, 1.0f, 1.5f);
+        SetVoxel(X, Y, Z, SDFValue, bDig);
+    }
+}
+
+
+void UVoxelChunk::ApplyCylinderBrush(
+    FVector3d BrushPosition,
+    float Height,
+    float Radius,
+    bool bDig,
+    const FRotator& Rotation)
+{
+    FTransform BrushTransform(Rotation, BrushPosition);
+    FTransform InvBrushTransform = BrushTransform.Inverse();
+
+    float TransitionEnd = 1.7f;
+    float HalfHeight = Height * 0.5f;
+
+    // Compute bounds in world space (expand for transition)
+    FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
+    int32 MinX = FMath::FloorToInt(VoxelCenter.X - Radius * TransitionEnd - 2);
+    int32 MaxX = FMath::CeilToInt(VoxelCenter.X + Radius * TransitionEnd + 2);
+    int32 MinY = FMath::FloorToInt(VoxelCenter.Y - Radius * TransitionEnd - 2);
+    int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + Radius * TransitionEnd + 2);
+    int32 MinZ = FMath::FloorToInt(VoxelCenter.Z - HalfHeight * TransitionEnd - 2);
+    int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + HalfHeight * TransitionEnd + 2);
+
+    for (int32 X = MinX; X <= MaxX; ++X)
+    for (int32 Y = MinY; Y <= MaxY; ++Y)
+    for (int32 Z = MinZ; Z <= MaxZ; ++Z)
+    {
+        FVector3d VoxelPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+        FVector3d LocalPos = InvBrushTransform.TransformPosition(VoxelPosition);
+
+        // Robust SDF for finite cylinder
+        float dXY = FVector2D(LocalPos.X, LocalPos.Y).Size() - Radius;
+        float dZ = FMath::Abs(LocalPos.Z) - HalfHeight;
+        float dist = FMath::Min(FMath::Max(dXY, dZ), 0.0f) + FVector2D(FMath::Max(dXY, 0.0f), FMath::Max(dZ, 0.0f)).Size();
+
+        // Always process voxels in the full transition zone
+        if (dist <= Radius * (TransitionEnd - 1.0f))
         {
-            for (int32 Z = MinZ; Z <= MaxZ; ++Z)
+            float SDFValue = ComputeSDFValue(dist / (Radius * (TransitionEnd - 1.0f)), bDig, 1.0f, TransitionEnd);
+            SetVoxel(X, Y, Z, SDFValue, bDig);
+        }
+    }
+
+    // Optional: Light smoothing pass for watertightness
+    ApplySmoothBrush(BrushPosition, FMath::Max(Radius, Height) * 1.1f, false, 3);
+}
+
+void UVoxelChunk::ApplyConeBrush(
+    FVector3d BrushPosition,
+    float Height,
+    float Angle, // in degrees
+    bool bDig,
+    const FRotator& Rotation)
+{
+    float AngleRad = FMath::DegreesToRadians(Angle);
+    float RadiusAtBase = Height * FMath::Tan(AngleRad);
+
+    FTransform BrushTransform(Rotation, BrushPosition);
+    FTransform InvBrushTransform = BrushTransform.Inverse();
+
+    float TransitionEnd = 1.7f;
+
+    FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
+    int32 MinX = FMath::FloorToInt(VoxelCenter.X - RadiusAtBase * TransitionEnd - 2);
+    int32 MaxX = FMath::CeilToInt(VoxelCenter.X + RadiusAtBase * TransitionEnd + 2);
+    int32 MinY = FMath::FloorToInt(VoxelCenter.Y - RadiusAtBase * TransitionEnd - 2);
+    int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + RadiusAtBase * TransitionEnd + 2);
+    int32 MinZ = VoxelCenter.Z - 2;
+    int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + Height * TransitionEnd + 2);
+
+    for (int32 X = MinX; X <= MaxX; ++X)
+    for (int32 Y = MinY; Y <= MaxY; ++Y)
+    for (int32 Z = MinZ; Z <= MaxZ; ++Z)
+    {
+        FVector3d VoxelPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+        FVector3d LocalPos = InvBrushTransform.TransformPosition(VoxelPosition);
+
+        // Only process voxels within the cone's height
+        if (LocalPos.Z >= 0 && LocalPos.Z <= Height)
+        {
+            float r = (Height - LocalPos.Z) * FMath::Tan(AngleRad); // radius at this height
+            // SDF for finite cone: distance to side, capped at base and tip
+            float dXY = FVector2D(LocalPos.X, LocalPos.Y).Size() - r;
+            float dZ = FMath::Max(-LocalPos.Z, LocalPos.Z - Height); // below base or above tip
+            float dist = FMath::Min(FMath::Max(dXY, dZ), 0.0f) + FVector2D(FMath::Max(dXY, 0.0f), FMath::Max(dZ, 0.0f)).Size();
+
+            // Always process voxels in the full transition zone
+            if (dist <= RadiusAtBase * (TransitionEnd - 1.0f))
             {
-                FVector3d WorldPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
-                float DistanceX = FMath::Abs(WorldPosition.X - BrushPosition.X);
-                float DistanceY = FMath::Abs(WorldPosition.Y - BrushPosition.Y);
-                float DistanceZ = FMath::Abs(WorldPosition.Z - BrushPosition.Z);
-                float MaxDistance = FMath::Max3(DistanceX, DistanceY, DistanceZ);
-                float NormalizedDist = MaxDistance / HalfSize;
-                float SDFValue;
-
-                if (bDig)
-                {
-                    // Dig mode: completely clear voxels within the brush
-                    if (NormalizedDist <= 1.0f)
-                    {
-                        SDFValue = 1.0f; // Air
-                    }
-                    else
-                    {
-                        // Skip setting voxel outside the brush
-                        continue;
-                    }
-                }
-                else
-                {
-                    // Additive mode: keep original logic
-                    if (NormalizedDist <= 1.0f)
-                    {
-                        SDFValue = -1.0f;
-                    }
-                    else if (NormalizedDist <= 1.3f)
-                    {
-                        float T = (NormalizedDist - 1.0f) / 0.3f;
-                        T = FMath::SmoothStep(0.0f, 1.0f, T);
-                        SDFValue = FMath::Lerp(-1.0f, 1.0f, T);
-                    }
-                    else
-                    {
-                        SDFValue = 1.0f;
-                    }
-                }
-
+                float SDFValue = ComputeSDFValue(dist / (RadiusAtBase * (TransitionEnd - 1.0f)), bDig, 1.0f, TransitionEnd);
                 SetVoxel(X, Y, Z, SDFValue, bDig);
             }
         }
     }
+
+    // Optional: Light smoothing pass for watertightness
+    ApplySmoothBrush(BrushPosition, FMath::Max(RadiusAtBase, Height) * 1.1f, false, 3);
 }
 
 
-void UVoxelChunk::ApplyConeBrush(FVector3d BrushPosition, float Height, float Angle, bool bDig)
+
+void UVoxelChunk::ApplySmoothBrush(const FVector& Center, float Radius, bool bDig, int NumIterations)
 {
-    FIntVector VoxelCenter = WorldToVoxelCoordinates(BrushPosition);
-    float RadiusAtBase = Height * FMath::Tan(FMath::DegreesToRadians(Angle));
-    
-    // Set bounds with additional transition space
-    int32 MinX = FMath::FloorToInt(VoxelCenter.X - RadiusAtBase - 2);
-    int32 MaxX = FMath::CeilToInt(VoxelCenter.X + RadiusAtBase + 2);
-    int32 MinY = FMath::FloorToInt(VoxelCenter.Y - RadiusAtBase - 2);
-    int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + RadiusAtBase + 2);
-    int32 MinZ = VoxelCenter.Z - 1;
-    int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + Height + 2);
+    // Collect affected voxels
+    TArray<FIntVector> VoxelsToSmooth;
+    FIntVector CenterVoxel = WorldToVoxelCoordinates(Center);
+    int32 VoxelRadius = FMath::CeilToInt(Radius / GetVoxelSize());
 
-    for (int32 X = MinX-1; X <= MaxX+1; ++X)
+    for (int32 X = CenterVoxel.X - VoxelRadius; X <= CenterVoxel.X + VoxelRadius; ++X)
+    for (int32 Y = CenterVoxel.Y - VoxelRadius; Y <= CenterVoxel.Y + VoxelRadius; ++Y)
+    for (int32 Z = CenterVoxel.Z - VoxelRadius; Z <= CenterVoxel.Z + VoxelRadius; ++Z)
     {
-        for (int32 Y = MinY-1; Y <= MaxY+1; ++Y)
+        FVector VoxelWorldPos = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
+        if (FVector::Dist(VoxelWorldPos, Center) <= Radius)
         {
-            for (int32 Z = MinZ-1; Z <= MaxZ+1; ++Z)
-            {
-                FVector3d VoxelPosition = VoxelToWorldCoordinates(FIntVector(X, Y, Z));
-                FVector3d RelativePosition = VoxelPosition - BrushPosition;
-                float DistanceXY = FVector2D(RelativePosition.X, RelativePosition.Y).Size();
-                float DistanceZ = RelativePosition.Z;
-
-                if (DistanceZ <= Height && DistanceXY <= (Height - DistanceZ) * FMath::Tan(FMath::DegreesToRadians(Angle)))
-                {
-                    float NormalizedDist = DistanceXY / RadiusAtBase;
-                    float SDFValue;
-
-                    if (bDig)
-                    {
-                        // Dig mode: create air voxels
-                        if (NormalizedDist <= 1.2f)
-                        {
-                            SDFValue = 1.0f; // Air
-                        }
-                        else if (NormalizedDist <= 1.0f)
-                        {
-                            float T = (NormalizedDist - 1.0f) / 0.3f;
-                            T = FMath::SmoothStep(0.0f, 1.0f, T);
-                            SDFValue = FMath::Lerp(1.0f, -1.0f, T);
-                        }
-                        else
-                        {
-                            SDFValue = -1.0f;
-                        }
-                    }
-                    else
-                    {
-                        // Additive mode: smooth transitions
-                        if (NormalizedDist <= 1.0f)
-                        {
-                            SDFValue = -1.0f;
-                        }
-                        else if (NormalizedDist <= 1.3f)
-                        {
-                            float T = (NormalizedDist - 1.0f) / 0.3f;
-                            T = FMath::SmoothStep(0.0f, 1.0f, T);
-                            SDFValue = FMath::Lerp(-1.0f, 1.0f, T);
-                        }
-                        else
-                        {
-                            SDFValue = 1.0f;
-                        }
-                    }
-
-                    SetVoxel(X, Y, Z, SDFValue, bDig);
-                }
-            }
+            VoxelsToSmooth.Add(FIntVector(X, Y, Z));
         }
     }
+
+    // We'll use a local copy of SDF values for iterative smoothing
+    TMap<FIntVector, float> CurrentSDFValues;
+    for (const FIntVector& Voxel : VoxelsToSmooth)
+    {
+        CurrentSDFValues.Add(Voxel, GetVoxel(Voxel.X, Voxel.Y, Voxel.Z));
+    }
+
+    for (int32 Iter = 0; Iter < NumIterations; ++Iter)
+    {
+        TMap<FIntVector, float> NewSDFValues;
+
+        for (const FIntVector& Voxel : VoxelsToSmooth)
+        {
+            float Sum = 0.f;
+            float CenterSDF = CurrentSDFValues[Voxel];
+            int32 Count = 0;
+
+            // 3x3x3 neighborhood
+            for (int32 dX = -1; dX <= 1; ++dX)
+            for (int32 dY = -1; dY <= 1; ++dY)
+            for (int32 dZ = -1; dZ <= 1; ++dZ)
+            {
+                FIntVector Neighbor = Voxel + FIntVector(dX, dY, dZ);
+                float NeighborSDF;
+                if (CurrentSDFValues.Contains(Neighbor))
+                {
+                    NeighborSDF = CurrentSDFValues[Neighbor];
+                }
+                else
+                {
+                    NeighborSDF = GetVoxel(Neighbor.X, Neighbor.Y, Neighbor.Z);
+                }
+                Sum += NeighborSDF;
+                ++Count;
+            }
+
+            float Avg = Sum / Count;
+
+            if (!bDig)
+            {
+                // Smooth: blend towards average
+                float Smoothed = FMath::Lerp(CenterSDF, Avg, 0.5f); // 0.5f = smoothing strength
+                NewSDFValues.Add(Voxel, Smoothed);
+            }
+            else
+            {
+                // Sharpen: exaggerate difference from average
+                float Sharpened = CenterSDF + (CenterSDF - Avg) * 0.5f; // 0.5f = sharpening strength
+                NewSDFValues.Add(Voxel, Sharpened);
+            }
+        }
+
+        // Prepare for next iteration
+        CurrentSDFValues = NewSDFValues;
+    }
+
+    // Apply new SDF values
+    for (const auto& Pair : CurrentSDFValues)
+    {
+        SetVoxel(Pair.Key.X, Pair.Key.Y, Pair.Key.Z, Pair.Value, bDig);
+    }
+
+    MarkDirty();
 }
+
+
+
+float UVoxelChunk::ComputeSDFValue(float NormalizedDist, bool bDig, float TransitionStart, float TransitionEnd)
+{
+    if (bDig)
+    {
+        if (NormalizedDist <= TransitionStart)
+            return 1.0f; // Air
+        else if (NormalizedDist <= TransitionEnd)
+        {
+            float T = (NormalizedDist - TransitionStart) / (TransitionEnd - TransitionStart);
+            T = FMath::SmoothStep(0.0f, 1.0f, T);
+            return FMath::Lerp(1.0f, -1.0f, T);
+        }
+        else
+            return -1.0f;
+    }
+    else
+    {
+        if (NormalizedDist <= TransitionStart)
+            return -1.0f;
+        else if (NormalizedDist <= TransitionEnd)
+        {
+            float T = (NormalizedDist - TransitionStart) / (TransitionEnd - TransitionStart);
+            T = FMath::SmoothStep(0.0f, 1.0f, T);
+            return FMath::Lerp(-1.0f, 1.0f, T);
+        }
+        else
+            return 1.0f;
+    }
+}
+
+
+
 
 
 void UVoxelChunk::BakeSingleBrushStroke(FBrushStroke StrokeToBake) {
@@ -828,6 +960,20 @@ void UVoxelChunk::GenerateMesh() const
 	{
 		UE_LOG(LogTemp, Error, TEXT("SparseVoxelGrid is null!"));
 		return;
+	}
+
+	
+	// --- Island Detection ---
+	TArray<FIsland> Islands = SparseVoxelGrid->DetectIslands(0.0f);
+	if (Islands.Num() > 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Island detection: %d islands found!"), Islands.Num());
+		// Optionally, log the size of each island
+		for (int32 i = 0; i < Islands.Num(); ++i)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("  Island %d: %d voxels"), i, Islands[i].Voxels.Num());
+		}
+
 	}
 
 	if (MarchingCubesGenerator == nullptr)

@@ -1,40 +1,75 @@
-📝 Digger Editor Mode – Session Primer Template
-Project:
-Custom Voxel Terrain System for Unreal Engine 5
-
-Current Goals
-(e.g.) Implement WYSIWYG brush sculpting in custom editor mode
-(e.g.) Support static mesh custom brushes with thumbnail previews
-(e.g.) Add/export to static mesh with collision/Nanite options
-Key System Details
-Main Actor: ADiggerManager (handles chunk creation, brush application, mesh export)
-Editor Mode: Custom, with toolkit UI (Slate)
-Brush Types: Sphere, Cube, Cylinder, Custom Mesh
-Brush Settings: Radius (10–256), Strength, Falloff, Rotation (X/Y/Z, angle/mirror buttons), Add/Subtract
-Custom Brushes: Static Meshes from project, thumbnails shown in grid
-Build/Export: Roll-down menu for collision, Nanite, detail reduction, and “Bake to Static Mesh” button
-What’s Working
-UI is modular and functional
-Custom brush grid loads mesh thumbnails
-All brush settings are adjustable and stored as member variables
-Build/export settings are present and pass values to manager
-Bake button calls DiggerManager::BakeToStaticMesh (stubbed)
-What Needs Attention
-Wire up brush type and add/subtract logic to DiggerManager
-Debug/fix brush placement offset (align preview and sculpting)
-Implement static mesh baking/export logic
-(Optional) Add visual feedback for active brush/operation
-(Optional) Add preview for custom mesh brushes
-Recent Issues/Quirks
-Add/Subtract buttons update variable but not always passed to manager
-Brush preview offset (possibly chunk origin math)
-Lambdas in UI must use [this] and member variables (not statics)
+📝 Voxel Terrain Editor – Project Summary & Next Steps
+Current State
+Core System
+Custom Voxel Terrain System for Unreal Engine 5, with real-time sculpting in a custom editor mode.
+Brush Types Implemented: Sphere, Cube (now rotatable), Cylinder, Cone, Smooth, and Custom.
+Brush Properties: Radius, Height/Length (for cone/cylinder), Rotation, Add/Subtract (dig/build), and (soon) Strength/Falloff.
+Brushes use robust SDF-based logic for watertight, smooth marching cubes integration.
+Smooth Brush: Blurs SDF in a region; in “add” mode, sharpens instead.
+UI: Modular Slate toolkit with radio-style (and optionally button-style) brush/operation selectors, sliders for radius and height, and numeric entry boxes.
+Recent Improvements
+Watertightness: Transition zones for SDFs widened and smoothed, with optional post-brush smoothing for cone/cylinder.
+Performance: Debug logs removed from voxel loops, resulting in much faster brush application.
+Rotation: All brushes (except sphere) now support arbitrary rotation.
+Height/Length: Cylinder and cone brushes now have a user-adjustable height property, with a max of 256, and the cone keeps its angle as height changes.
+Island Detection: Efficient, robust flood-fill island detection implemented for the sparse voxel grid, with logging of island count and size.
+Planned/Proposed Features
+Marching Cubes Integration: Further tuning to ensure SDF conventions and surface extraction are robust, especially near terrain.
+Island UI: “Islands” rollout in the editor panel, showing a grid of detected islands with per-island operations (Convert to Physics, Remove, Duplicate, Rotate, etc.).
+Island Operations: Ability to select an island and perform actions, including real-time detection and UI updates in the editor.
+Strength/Falloff: To be added for all brushes, allowing for more nuanced sculpting.
+What’s Working Well
+All brush types are functional, fast, and robust.
+SDF transitions are smooth and watertight for marching cubes.
+Smooth brush fixes holes and can sharpen when in “add” mode.
+UI is modular and extensible, with all key brush properties adjustable.
+Island detection is efficient and ready for UI integration.
+Outstanding Issues / To-Do
+Cone and Cylinder: Still benefit from a light smoothing pass after application for perfect watertightness.
+Marching Cubes: Needs a review to ensure SDF=0 is always the surface, and that terrain integration is robust.
+Island UI: Needs to be built in Slate, with a grid of icons, per-island selection, and operation buttons.
+Island Operations: Implement logic for converting to physics, removing, duplicating, and rotating islands.
+Strength/Falloff: Not yet implemented for brushes.
+Custom Brush Preview: (Optional) Add visual feedback for custom mesh brushes.
 Next Steps
-Wire up brush type and add/subtract logic to manager
-Debug/fix brush placement offset
-Implement static mesh export
-(Optional) Add custom mesh preview
-Other Notes
-All UI state is stored as member variables in toolkit
-Helper functions are modular (e.g., MakeAngleButton, RebuildCustomBrushGrid)
-Use [this] in all Slate lambdas
+Finalize Smoothing for Cone/Cylinder
+
+Tune transition zone and optional post-brush smoothing for watertight marching cubes output.
+Test and Polish Brush Height/Length
+
+Ensure height slider/entry box works for cone/cylinder and updates in real time.
+Test Brush Rotation
+
+Confirm all brush types (except sphere) rotate as expected; check UI feedback.
+Polish Smooth/Sharpen Brush
+
+Tune smoothing/sharpening strength; consider auto-smooth after cone/cylinder.
+Marching Cubes Integration
+
+Review SDF conventions, ensure SDF=0 is the surface, and fix any edge cases or terrain blending issues.
+Island UI/Operations
+
+Complete the “Islands” rollout: grid of islands, per-island selection, operation buttons (Convert, Remove, Duplicate, Rotate).
+Implement and test per-island actions and rotation controls.
+Strength/Falloff
+
+Add strength/falloff to brush SDF logic and UI, expose in toolkit.
+Custom Brush Preview (Optional)
+
+Add thumbnail or mesh preview for custom brushes in the UI.
+Test All Features
+
+Test all brush types and operations for edge cases and performance.
+Gather feedback on UI/UX and iterate.
+
+Summary Table
+Feature/Task	Status	Next Action
+Sphere/Cube/Cone/Cylinder	Working	Finalize smoothing, polish, test watertightness with marching cubes
+Brush Height/Length	Working	Test UI/logic, ensure cone/cylinder use height from slider, polish
+Brush Rotation	Working	Test all types, confirm correct orientation and UI feedback
+Smooth/Sharpen Brush	Working	Tune strength, polish, consider auto-smooth after cone/cylinder
+Marching Cubes Integration	Needs review	Tune SDF/terrain, fix edge cases, ensure watertightness
+Island Detection	Working	Build UI, add per-island operations, test detection performance
+Island UI/Operations	In Progress	Build rollout (collapsed by default), implement per-island actions, test selection and rotation controls
+Strength/Falloff	To do	Add to SDF logic and UI, expose in toolkit
+Custom Brush Preview	Optional	Add visual feedback for custom mesh brushes

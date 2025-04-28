@@ -3,6 +3,10 @@
 #include "DrawDebugHelpers.h"
 #include "VoxelChunk.h"
 #include "Engine/World.h"
+#include "Misc/FileHelper.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Serialization/BufferArchive.h"
+
 
 USparseVoxelGrid::USparseVoxelGrid(): LocalVoxelSize(0), DiggerManager(nullptr), ParentChunk(nullptr), World(nullptr),
                                       ParentChunkCoordinates(0, 0, 0),
@@ -23,11 +27,11 @@ void USparseVoxelGrid::InitializeDiggerManager()
 {
     if (!GetWorld())
     {
-        UE_LOG(LogTemp, Warning, TEXT("World is null in InitializeDiggerManager."));
+        //UE_LOG(LogTemp, Warning, TEXT("World is null in InitializeDiggerManager."));
         return; // Ensure we have a valid world context
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("World is not null in InitializeDiggerManager. Grabbing the DiggerManager."));
+    //UE_LOG(LogTemp, Warning, TEXT("World is not null in InitializeDiggerManager. Grabbing the DiggerManager."));
     // Find and assign DiggerManager if not already assigned and set the member variables from it
     EnsureDiggerManager();
         if (DiggerManager)
@@ -48,10 +52,10 @@ bool USparseVoxelGrid::EnsureDiggerManager()
         
         if (!DiggerManager)
         {
-            UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in VoxelToWorldSpace"));
+            //UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in VoxelToWorldSpace"));
             return false;
         }
-        UE_LOG(LogTemp, Warning, TEXT("DiggerManager ensured correctly in an instance of SVG!"));
+        //UE_LOG(LogTemp, Warning, TEXT("DiggerManager ensured correctly in an instance of SVG!"));
         LocalVoxelSize = DiggerManager->VoxelSize;
     }
     return true;
@@ -61,7 +65,7 @@ bool USparseVoxelGrid::EnsureDiggerManager()
 FVector USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelCoords) const
 {
     if (!ParentChunk) {
-        UE_LOG(LogTemp, Error, TEXT("ParentChunk is null in VoxelToWorldSpace"));
+        //UE_LOG(LogTemp, Error, TEXT("ParentChunk is null in VoxelToWorldSpace"));
         return FVector::ZeroVector;
     }
     
@@ -91,9 +95,9 @@ FIntVector USparseVoxelGrid::WorldToVoxelSpace(const FVector& WorldCoords)
            FMath::FloorToInt(LocalCoords.Z / LocalVoxelSize)
        );
 
-    UE_LOG(LogTemp, Log, TEXT("WorldToVoxelSpace: World(%f,%f,%f) -> Voxel(%d,%d,%d)"),
-        WorldCoords.X, WorldCoords.Y, WorldCoords.Z,
-        VoxelCoords.X, VoxelCoords.Y, VoxelCoords.Z);
+    //UE_LOG(LogTemp, Log, TEXT("WorldToVoxelSpace: World(%f,%f,%f) -> Voxel(%d,%d,%d)"),
+        //WorldCoords.X, WorldCoords.Y, WorldCoords.Z,
+        //VoxelCoords.X, VoxelCoords.Y, VoxelCoords.Z);
 
     return VoxelCoords;
 }
@@ -106,7 +110,7 @@ bool USparseVoxelGrid::IsPointAboveLandscape(FVector& Point)
     if(!World) World = DiggerManager->GetWorldFromManager();
     if (!World) 
     {
-        UE_LOG(LogTemp, Error, TEXT("World is null in IsPointAboveLandscape"));
+        //UE_LOG(LogTemp, Error, TEXT("World is null in IsPointAboveLandscape"));
         return false;
     }
 
@@ -174,7 +178,7 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
             ExistingVoxel->SDFValue = FMath::Min(CurrentValue, NewSDFValue);
         }
 
-        UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, ExistingVoxel->SDFValue);
+        //UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, ExistingVoxel->SDFValue);
     }
     else
     {
@@ -191,7 +195,7 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
             VoxelData[VoxelKey].SDFValue = FMath::Max(DefaultSDFValue, NewSDFValue);
         }
 
-        UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, NewSDFValue);
+        //UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, NewSDFValue);
     }
 
     if (ParentChunk)
@@ -206,15 +210,83 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
             if (FoundChunk && *FoundChunk)
             {
                 (*FoundChunk)->MarkDirty();
-                UE_LOG(LogTemp, Warning, TEXT("Correct chunk marked dirty for voxel at (%d,%d,%d)"), X, Y, Z);
+                //UE_LOG(LogTemp, Warning, TEXT("Correct chunk marked dirty for voxel at (%d,%d,%d)"), X, Y, Z);
             }
         }
     }
 }
 
 
+bool USparseVoxelGrid::SaveVoxelDataToFile(const FString& FilePath)
+{
+    FBufferArchive ToBinary;
+
+    // Serialize metadata
+    ToBinary << TerrainGridSize;
+    ToBinary << Subdivisions;
+    ToBinary << ChunkSize;
+
+    // Serialize the voxel data map
+    for (const auto& VoxelPair : VoxelData)
+    {
+        int32 X = VoxelPair.Key.X;
+        int32 Y = VoxelPair.Key.Y;
+        int32 Z = VoxelPair.Key.Z;
+        float SDFValue = VoxelPair.Value.SDFValue;
+
+        ToBinary << X;
+        ToBinary << Y;
+        ToBinary << Z;
+        ToBinary << SDFValue;
+    }
 
 
+    if (FFileHelper::SaveArrayToFile(ToBinary, *FilePath))
+    {
+        ToBinary.FlushCache();
+        return true;
+    }
+    return false;
+}
+
+bool USparseVoxelGrid::LoadVoxelDataFromFile(const FString& FilePath)
+{
+    TArray<uint8> BinaryArray;
+
+    if (FFileHelper::LoadFileToArray(BinaryArray, *FilePath))
+    {
+        FMemoryReader FromBinary = FMemoryReader(BinaryArray, true);
+        FromBinary.Seek(0);
+
+        FromBinary << TerrainGridSize;
+        FromBinary << Subdivisions;
+        FromBinary << ChunkSize;
+
+        VoxelData.Empty();
+
+        while (FromBinary.Tell() < FromBinary.TotalSize())
+        {
+            int32 X, Y, Z;
+            float SDFValue;
+
+            FromBinary << X;
+            FromBinary << Y;
+            FromBinary << Z;
+            FromBinary << SDFValue;
+
+            FIntVector VoxelCoords(X, Y, Z);
+            FVoxelData Voxel;
+            Voxel.SDFValue = SDFValue;
+            VoxelData.Add(VoxelCoords, Voxel);
+        }
+
+
+        FromBinary.FlushCache();
+        return true;
+    }
+
+    return false;
+}
 
 
 
@@ -255,28 +327,84 @@ bool USparseVoxelGrid::VoxelExists(int32 X, int32 Y, int32 Z) const
 void USparseVoxelGrid::LogVoxelData() const
 {
     if(!VoxelData.IsEmpty())
-    {    UE_LOG(LogTemp, Warning, TEXT("Voxel Data isn't empty!"));}
+    {
+        //UE_LOG(LogTemp, Warning, TEXT("Voxel Data isn't empty!"));
+    }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("Voxel Data is empty!"));
+        //UE_LOG(LogTemp, Error, TEXT("Voxel Data is empty!"));
     }
 
-    for (const auto& VoxelPair : VoxelData)
+    /*for (const auto& VoxelPair : VoxelData)
     {
         UE_LOG(LogTemp, Warning, TEXT("Voxel at [%s] has SDF value: %f"), *VoxelPair.Key.ToString(), VoxelPair.Value.SDFValue);
-    }
+    }*/
 }
+
+
+TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold /* usually 0.0f */) const
+{
+    TSet<FIntVector> Visited;
+    TArray<FIslandData> Islands;
+
+    // Lambda to check if a voxel is solid
+    auto IsSolid = [&](const FIntVector& Voxel) -> bool
+    {
+        const FVoxelData* Data = VoxelData.Find(Voxel);
+        return Data && Data->SDFValue < SDFThreshold;
+    };
+
+    for (const auto& Elem : VoxelData)
+    {
+        const FIntVector& Start = Elem.Key;
+        if (Visited.Contains(Start) || Elem.Value.SDFValue >= SDFThreshold)
+            continue;
+
+        // New island found
+        FIslandData Island;
+        TQueue<FIntVector> Queue;
+        Queue.Enqueue(Start);
+        Visited.Add(Start);
+
+        while (!Queue.IsEmpty())
+        {
+            FIntVector Current;
+            Queue.Dequeue(Current);
+            IslandData.Voxels.Add(Current);
+
+            // 6-connected neighbors
+            static const FIntVector Dirs[] = {
+                {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1}
+            };
+            for (const FIntVector& Dir : Dirs)
+            {
+                FIntVector Neighbor = Current + Dir;
+                if (!Visited.Contains(Neighbor) && IsSolid(Neighbor))
+                {
+                    Queue.Enqueue(Neighbor);
+                    Visited.Add(Neighbor);
+                }
+            }
+        }
+
+        Islands.Add(IslandData);
+    }
+
+    return IslandsData;
+}
+
+
 
 void USparseVoxelGrid::RenderVoxels() {
 
     if (!EnsureDiggerManager()) {
-        UE_LOG(LogTemp, Error, TEXT("DiggerManager is null or invalid in SparseVoxelGrid RenderVoxels()!!"));
+        //UE_LOG(LogTemp, Error, TEXT("DiggerManager is null or invalid in SparseVoxelGrid RenderVoxels()!!"));
         return;
     }
 
     World = DiggerManager->GetWorldFromManager();
     if (!World) {
-        UE_LOG(LogTemp, Error, TEXT("World is null within SparseVoxelGrid RenderVoxels()!!"));
+        //UE_LOG(LogTemp, Error, TEXT("World is null within SparseVoxelGrid RenderVoxels()!!"));
         return;
     }
 

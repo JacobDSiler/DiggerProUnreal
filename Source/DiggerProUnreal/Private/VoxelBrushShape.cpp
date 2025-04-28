@@ -2,14 +2,16 @@
 
 #include "DiggerManager.h"
 #include "EngineUtils.h"
+#include "Landscape.h"
 #include "Kismet/GameplayStatics.h"
 
 UVoxelBrushShape::UVoxelBrushShape()
-    : BrushSize(150.0f), SDFChange(0), bDig(false), World(nullptr), DiggerManager(nullptr), TargetChunk(nullptr),
-      BrushType(EVoxelBrushType::Sphere)
+    : BrushSize(150.0f), SDFChange(0), bDig(false), World(nullptr), BrushRotation(FRotator::ZeroRotator),
+      BrushLength(1.0f),
+      BrushAngle(45.f), DiggerManager(nullptr), TargetChunk(nullptr), BrushType(EVoxelBrushType::Sphere)
 {
-
 }
+
 
 
 bool UVoxelBrushShape::EnsureDiggerManager()

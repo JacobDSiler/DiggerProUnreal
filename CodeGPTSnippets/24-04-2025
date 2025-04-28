@@ -1,0 +1,102 @@
+looking great! Can you add the save static mesh operation which takes the Bake properties from the menu please. Also the add/subtract uttons don't do anything still
+Absolutely! Here’s how to address both:
+
+1. Add/Subtract Buttons Not Working
+Problem:
+The buttons set bBrushDig, but you must also ensure this value is passed to your DiggerManager before calling ApplyBrushInEditor() (or whatever method applies the brush).
+
+Solution:
+
+In your editor mode (or wherever you call the brush action), set:
+cpp
+
+
+Digger->EditorBrushDig = bBrushDig;
+Also, if you want the UI to visually indicate which button is active, you can use ButtonStyle or color, or just log the value for now.
+2. Bake to Static Mesh Operation
+Goal:
+When the user clicks "Bake to Static Mesh", call a function that:
+
+Gathers the current bake settings (bEnableCollision, bEnableNanite, BakeDetail)
+Calls a method on your DiggerManager to perform the bake/export
+Implementation:
+
+A. Add a Method to DiggerManager
+In your DiggerManager.h:
+
+cpp
+
+
+UFUNCTION(BlueprintCallable, CallInEditor, Category = "Export")
+void BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction);
+In your DiggerManager.cpp:
+
+cpp
+
+
+void ADiggerManager::BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction)
+{
+    // TODO: Implement actual baking/export logic
+    UE_LOG(LogTemp, Log, TEXT("Baking to Static Mesh! Collision: %d, Nanite: %d, Detail: %f"),
+        bEnableCollision, bEnableNanite, DetailReduction);
+
+    // Example: Call your mesh export logic here
+    // ExportTerrainToStaticMesh(bEnableCollision, bEnableNanite, DetailReduction);
+}
+
+B. Call This from the Toolkit
+In your toolkit’s "Bake to Static Mesh" button:
+
+cpp
+
+
+.OnClicked_Lambda([this]() {
+    // Find the DiggerManager in the world
+    if (GEditor)
+    {
+        UWorld* World = GEditor->GetEditorWorldContext().World();
+        for (TActorIterator<ADiggerManager> It(World); It; ++It)
+        {
+            ADiggerManager* Digger = *It;
+            if (Digger)
+            {
+                Digger->BakeToStaticMesh(bEnableCollision, bEnableNanite, BakeDetail);
+                break;
+            }
+        }
+    }
+    return FReply::Handled();
+})
+
+3. Full Example: Bake Button in Init
+Replace your Bake button in the Build/Export section with:
+
+cpp
+
+
++ SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+[
+    SNew(SButton)
+    .Text(FText::FromString("Bake to Static Mesh"))
+    .OnClicked_Lambda([this]() {
+        if (GEditor)
+        {
+            UWorld* World = GEditor->GetEditorWorldContext().World();
+            for (TActorIterator<ADiggerManager> It(World); It; ++It)
+            {
+                ADiggerManager* Digger = *It;
+                if (Digger)
+                {
+                    Digger->BakeToStaticMesh(bEnableCollision, bEnableNanite, BakeDetail);
+                    break;
+                }
+            }
+        }
+        return FReply::Handled();
+    })
+]
+
+4. Summary
+Add/Subtract: Make sure you set Digger->EditorBrushDig = bBrushDig; before applying the brush.
+Bake: Add a BakeToStaticMesh method to DiggerManager and call it from the toolkit, passing the current settings.
+Let me know if you want a full code drop for the toolkit and DiggerManager, or if you want to wire up the brush type (sphere/cube/cylinder/custom) as well!

@@ -34,7 +34,7 @@ public:
 	const UVoxelChunk* MyVoxelChunk;
 
 	UPROPERTY(EditAnywhere, Category="Landscape Transition")
-	float TransitionHeight = 100.0f;
+	float TransitionHeight = 20.0f;
 
 	UPROPERTY(EditAnywhere, Category="Landscape Transition")
 	float TransitionSharpness = 2.0f;

@@ -1,33 +1,42 @@
 #include "DiggerManager.h"
+#include "CoreMinimal.h"
 #include "LandscapeEdit.h"
 #include "LandscapeInfo.h"
 #include "LandscapeProxy.h"
 #include "MarchingCubes.h"
 #include "ProceduralMeshComponent.h"
 #include "SparseVoxelGrid.h"
-#include "VoxelChunk.h"
-#include "Kismet/GameplayStatics.h"
-#include "CoreMinimal.h"
-#include "Engine/World.h"
 #include "TimerManager.h"
+#include "VoxelChunk.h"
 #include "Async/Async.h"
+#include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
 #include "UObject/ConstructorHelpers.h"
 
 //Editor Tool Specific Includes
 #if WITH_EDITOR
-#include "Editor.h"
-#endif
+#include "DiggerEditor/DiggerEdModeToolkit.h"
+class Editor;
+class FDiggerEdModeToolkit;
+class FDiggerEdMode;
 
 
 
-#if WITH_EDITOR
 void ADiggerManager::ApplyBrushInEditor()
 {
     FBrushStroke BrushStroke;
     BrushStroke.BrushPosition = EditorBrushPosition;
     BrushStroke.BrushRadius = EditorBrushRadius;
+   // UE_LOG(LogTemp, Error, TEXT("[DiggerManager] BrushRadius set to: %f"), EditorBrushRadius);
+    BrushStroke.BrushRotation = EditorBrushRotation;
+    //UE_LOG(LogTemp, Error, TEXT("[ApplyBrushInEditor] Using rotation: %s"), *EditorBrushRotation.ToString());
     BrushStroke.BrushType = EditorBrushType;
     BrushStroke.bDig = EditorBrushDig; // or expose as property
+    BrushStroke.BrushLength = EditorBrushLength; // or expose as property
+    BrushStroke.BrushAngle = EditorBrushAngle; // or expose as property
+    
+
+    UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushInEditor] EditorBrushPosition (World): %s"), *EditorBrushPosition.ToString());
 
     UVoxelChunk* TargetChunk = FindOrCreateNearestChunk(EditorBrushPosition);
     if (TargetChunk)
@@ -46,7 +55,7 @@ void ADiggerManager::ApplyBrushInEditor()
 
 ADiggerManager::ADiggerManager()
 {
-#if WITH_EDITOR
+#if WITH_EDITOR  
     this->SetFlags(RF_Transactional); // Enable undo/redo support in editor
 #endif
 
@@ -121,6 +130,17 @@ void ADiggerManager::BeginPlay()
         UE_LOG(LogTemp, Error, TEXT("Material M_ProcGrid is null. Please ensure it is loaded properly."));
     }
 }
+
+
+void ADiggerManager::BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction)
+{
+    UE_LOG(LogTemp, Warning, TEXT("BakeToStaticMesh called with:\n  Collision: %s\n  Nanite: %s\n  DetailReduction: %.2f"),
+        bEnableCollision ? TEXT("True") : TEXT("False"),
+        bEnableNanite ? TEXT("True") : TEXT("False"),
+        DetailReduction);
+}
+
+
 
 void ADiggerManager::UpdateVoxelSize()
 {
@@ -540,6 +560,7 @@ UVoxelChunk* ADiggerManager::FindOrCreateNearestChunk(const FVector& Position)
         return *ExistingChunk;
     }
 
+    
     // Find nearest chunk if no exact match found
     UVoxelChunk* NearestChunk = nullptr;
     float MinDistance = FLT_MAX;
@@ -556,6 +577,11 @@ UVoxelChunk* ADiggerManager::FindOrCreateNearestChunk(const FVector& Position)
     // If no nearby chunk is found, create a new one
     if (!NearestChunk)
     {
+        UE_LOG(LogTemp, Warning, TEXT("[FindOrCreateNearestChunk] Input Position (World): %s"), *Position.ToString());
+        ChunkCoords = WorldToChunkCoordinates(Position.X, Position.Y, Position.Z);
+        UE_LOG(LogTemp, Warning, TEXT("[FindOrCreateNearestChunk] ChunkCoords: %s"), *ChunkCoords.ToString());
+
+        
         UVoxelChunk* NewChunk = GetOrCreateChunkAt(ChunkCoords.X, ChunkCoords.Y, ChunkCoords.Z);
         if (NewChunk)
         {
@@ -675,8 +701,24 @@ UVoxelChunk* ADiggerManager::GetOrCreateChunkAt(const FIntVector& ProposedChunkP
         return nullptr;
     }
 }
-
 #if WITH_EDITOR
+// In ADiggerManager.cpp
+TArray<FIslandData> ADiggerManager::GetAllIslands() const
+{
+    TArray<FIslandData> AllIslands;
+    for (const auto& ChunkPair : ChunkMap) // Assuming ChunkMap is your chunk storage
+    {
+        UVoxelChunk* Chunk = ChunkPair.Value;
+        if (Chunk)
+        {
+            TArray<FIslandData> ChunkIslands = Chunk->GetSparseVoxelGrid()->DetectIslands(0.0f);
+            AllIslands.Append(ChunkIslands);
+        }
+    }
+    return AllIslands;
+}
+
+
 
 void ADiggerManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
@@ -715,5 +757,17 @@ void ADiggerManager::EditorRebuildAllChunks()
     // Optionally clear and rebuild all chunks
     InitializeChunks();
 }
+
+
+#if WITH_EDITOR
+/*void ADiggerManager::UpdateAllIslandsInToolkit() const
+{
+    if (EditorToolkit) // Set by toolkit on construction
+    {
+        EditorToolkit->SetIslands(GetAllIslands());
+    }
+}*/
+#endif
+
 
 #endif // WITH_EDITOR

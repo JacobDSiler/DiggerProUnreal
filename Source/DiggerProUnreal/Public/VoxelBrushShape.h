@@ -25,7 +25,6 @@ public:
 
 	// Apply the brush to the SDF in the chunk
 	void ApplyBrushToChunk(UVoxelChunk* BrushChunk, FVector3d BrushPosition, float BrushSize);
-	void InitializeBrushProperties();
 
 	// Debug the brush in the world
 	UFUNCTION(BlueprintCallable, Category = "Brush")
@@ -124,7 +123,10 @@ private:
 	//World
 	UPROPERTY()
 	UWorld* World;
-	
+	FRotator BrushRotation;
+	float BrushLength;
+	float BrushAngle;
+
 	FHitResult PerformComplexTrace(const FVector& Start, const FVector& End, AActor* IgnoredActor);
 	bool IsHoleBPActor(AActor* Actor) const;
 	FHitResult TraceThroughHole(const FHitResult& HoleHit, const FVector& End, AActor* IgnoredActor);
@@ -148,4 +150,6 @@ private:
 	// Brush type
 	UPROPERTY()
 	EVoxelBrushType BrushType;
+
+	
 };

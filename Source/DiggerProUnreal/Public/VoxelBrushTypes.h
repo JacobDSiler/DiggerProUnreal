@@ -10,5 +10,7 @@ enum class EVoxelBrushType : uint8 {
 	Cube,
 	Sphere,
 	Cone,
+	Cylinder,
+	Smooth,
 	Custom
 };

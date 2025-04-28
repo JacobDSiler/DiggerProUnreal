@@ -4,39 +4,96 @@
 #include <queue>
 
 #include "CoreMinimal.h"
-#include "Landscape.h"
+#if WITH_EDITOR
+#include "IMeshMergeUtilities.h"
+#endif
 #include "ProceduralMeshComponent.h"
 #include "VoxelBrushShape.h"
 #include "VoxelBrushTypes.h"
 #include "GameFramework/Actor.h"
 #include "DiggerManager.generated.h"
 
+// Helper struct for an island
+struct FIsland
+{
+    TArray<FIntVector> Voxels;
+};
+
 class UTerrainHoleComponent;
+#if WITH_EDITOR
+class FDiggerEdModeToolkit;
+#endif
 
 // Define the FBrushStroke struct
 USTRUCT(BlueprintType)
-struct FBrushStroke {
+struct FBrushStroke
+{
+    GENERATED_BODY()
+
+    // Location of the stroke in world space
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    FVector BrushPosition = FVector::ZeroVector;
+
+    // Rotation of the brush stroke
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    FRotator BrushRotation = FRotator::ZeroRotator;
+
+    // Size of the brush stroke
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    float BrushRadius = 100.f;
+
+    // Type of the brush (e.g., Sphere, Cube, Custom)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    EVoxelBrushType BrushType = EVoxelBrushType::Sphere;
+
+    // Whether this stroke digs (true) or adds (false)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    bool bDig = true;
+
+    // Length of the brush stroke in world space
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    float BrushLength;
+    
+    // Angle of the brush stroke in degrees
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    float BrushAngle;
+
+    // Offset for the brush stroke as a vector
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    FVector BrushOffset;
+
+    // Optional: allow pressure sensitivity in the future?
+    // float Intensity = 1.0f;
+
+    FBrushStroke() {}
+    
+    FBrushStroke(FVector InPosition, FRotator InRotation, float InRadius, EVoxelBrushType InType, bool bInDig)
+        : BrushPosition(InPosition)
+        , BrushRotation(InRotation)
+        , BrushRadius(InRadius)
+        , BrushType(InType)
+        , bDig(bInDig)
+    {}
+};
+
+USTRUCT(BlueprintType)
+struct FIslandData
+{
     GENERATED_BODY()
 
     UPROPERTY(BlueprintReadWrite)
-    FVector BrushPosition;
+    FVector Location;
 
     UPROPERTY(BlueprintReadWrite)
-    float BrushRadius;
+    int32 IslandID;
 
     UPROPERTY(BlueprintReadWrite)
-    EVoxelBrushType BrushType;
+    int32 VoxelCount;
 
-    UPROPERTY(BlueprintReadWrite)
-    bool bDig;
-
-    FBrushStroke()
-        : BrushPosition(FVector::ZeroVector),
-          BrushRadius(0.f),
-          BrushType(EVoxelBrushType::Sphere),
-          bDig(false)
-    {}
+    // Add anything else you want to track
 };
+
+
 
 UCLASS(Blueprintable)
 class DIGGERPROUNREAL_API ADiggerManager : public AActor
@@ -46,12 +103,28 @@ class DIGGERPROUNREAL_API ADiggerManager : public AActor
 public:
     ADiggerManager();
 
+#if WITH_EDITOR
+    // Add this member
+   /* FDiggerEdModeToolkit* EditorToolkit = nullptr;
+
+    // Add a setter
+    void SetEditorToolkit(FDiggerEdModeToolkit* InToolkit)
+    {
+        EditorToolkit = InToolkit;
+    }*/
+#endif
+
     // Set this true to make the actor never get culled despite distance
     UPROPERTY(EditAnywhere, Category="Digger System")
     bool bNeverCull = true;
+    
 
     bool EnsureWorldReference();
 
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Export")
+    void BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction);
+
+        
     // Reference to the terrain hole Blueprint
     UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Holes")
     TSubclassOf<AActor> HoleBP;
@@ -73,6 +146,18 @@ public:
 
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
     bool EditorBrushDig = true;
+    
+    UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
+    FRotator EditorBrushRotation;
+
+    UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
+    float EditorBrushLength;
+
+    UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
+    float EditorBrushAngle;
+
+    UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
+    float EditorBrushOffset;
 
     UFUNCTION(CallInEditor, Category="Digger Brush|Actions")
     void ApplyBrushInEditor();
@@ -84,6 +169,7 @@ protected:
     void ProcessDirtyChunks();
 
 #if WITH_EDITOR
+public:
     // Editor support
     virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
     virtual void PostEditMove(bool bFinished) override;
@@ -95,6 +181,13 @@ protected:
 
     UFUNCTION(CallInEditor, Category = "Editor Tools")
     void EditorRebuildAllChunks();
+    TArray<FIslandData> GetAllIslands() const;
+    //void UpdateIslandsFromChunk(UVoxelChunk* Chunk);
+
+    FVector WorldToChunkCoordinates(FVector Position) const
+    {
+        return FVector(WorldToChunkCoordinates(Position.X, Position.Y, Position.Z));
+    }
 
 #endif
 

@@ -41,6 +41,13 @@ public:
 	float GetLandscapeHeightAtPoint(FVector Position);
 	FVector VoxelToWorldSpace(const FIntVector& VoxelCoords) const;
 
+	// Save current voxel data to disk
+	bool SaveVoxelDataToFile(const FString& FilePath);
+
+	// Load voxel data from disk into the current grid
+	bool LoadVoxelDataFromFile(const FString& FilePath);
+
+
 	//A public getter for VoxelData
 	const TMap<FIntVector, FVoxelData>& GetVoxelData() const { return VoxelData; }
 	
@@ -67,6 +74,7 @@ public:
 		this->ParentChunkCoordinates = NewParentChunkPosition;
 	}
 	
+	TArray<FIslandData> DetectIslands(float SDFThreshold /* usually 0.0f */) const;
 	
 	FVector3d GetParentChunkCoordinatesV3D() const
 	{

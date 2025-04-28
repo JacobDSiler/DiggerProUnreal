@@ -1,36 +1,40 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// DiggerProUnreal.Build.cs
 
 using UnrealBuildTool;
 
 public class DiggerProUnreal : ModuleRules
 {
-    public DiggerProUnreal(ReadOnlyTargetRules target) : base(target)
+    public DiggerProUnreal(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
-        CppStandard = CppStandardVersion.Cpp20; // This sets the C++ standard to C++20
 
-        // Combine all dependencies into a single list
         PublicDependencyModuleNames.AddRange(new string[] { 
             "Core", 
             "CoreUObject", 
             "Engine", 
             "InputCore", 
-            "UnrealEd", 
-            "EditorStyle", 
-            "LevelEditor", 
-            "Slate", 
-            "SlateCore", 
-            "GeometryFramework",
             "HeadMountedDisplay", 
             "EnhancedInput", 
             "ProceduralMeshComponent", 
             "Landscape", 
             "Foliage"
         });
+
+        // Only add editor-only dependencies in PrivateDependencyModuleNames and only if building for editor
         if (Target.bBuildEditor)
         {
-            PrivateDependencyModuleNames.Add("DiggerEditor");
-        }
+            PrivateDependencyModuleNames.AddRange(new string[] {
+                "UnrealEd",
+                "EditorStyle",
+                "LevelEditor",
+                "Slate",
+                "SlateCore",
+                "GeometryFramework",
+                "EditorScriptingUtilities",
+                "DiggerEditor" 
+            });
 
+            // DO NOT add "DiggerEditor" here!
+        }
     }
 }
