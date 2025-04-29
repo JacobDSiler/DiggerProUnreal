@@ -24,6 +24,8 @@ public:
     void InitializeMeshComponent(UProceduralMeshComponent* MeshComponent);
     void InitializeDiggerManager(ADiggerManager* InDiggerManager);
     
+
+    
     // Debug functions
     void DebugDrawChunk();
     void DebugPrintVoxelData() const;

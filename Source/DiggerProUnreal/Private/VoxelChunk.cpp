@@ -207,22 +207,25 @@ void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 	UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushStroke] BrushPosition (World): %s, Chunk SectionIndex: %d"), *Stroke.BrushPosition.ToString(), SectionIndex);
 
 
+	// Assuming you have a FVector BrushOffset value available in this scope
+	FVector BrushPosWithOffset = Stroke.BrushPosition + Stroke.BrushOffset;
+
 	switch (Stroke.BrushType)
 	{
 	case EVoxelBrushType::Cube:
-		ApplyCubeBrush(Stroke.BrushPosition, Stroke.BrushRadius/2, Stroke.bDig, Stroke.BrushRotation);
+		ApplyCubeBrush(BrushPosWithOffset, Stroke.BrushRadius / 2, Stroke.bDig, Stroke.BrushRotation);
 		break;
 	case EVoxelBrushType::Sphere:
-		ApplySphereBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig);
+		ApplySphereBrush(BrushPosWithOffset, Stroke.BrushRadius, Stroke.bDig);
 		break;
 	case EVoxelBrushType::Cylinder:
-		ApplyCylinderBrush(Stroke.BrushPosition, Stroke.BrushLength, Stroke.BrushRadius * .5f, Stroke.bDig, Stroke.BrushRotation);
+		ApplyCylinderBrush(BrushPosWithOffset, Stroke.BrushLength, Stroke.BrushRadius * .5f, Stroke.bDig, Stroke.BrushRotation);
 		break;
 	case EVoxelBrushType::Cone:
-		ApplyConeBrush(Stroke.BrushPosition, Stroke.BrushLength, Stroke.BrushAngle, Stroke.bDig, Stroke.BrushRotation);
+		ApplyConeBrush(BrushPosWithOffset, Stroke.BrushLength, Stroke.BrushAngle, Stroke.bDig, Stroke.BrushRotation);
 		break;
 	case EVoxelBrushType::Smooth:
-		ApplySmoothBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig, 1);
+		ApplySmoothBrush(BrushPosWithOffset, Stroke.BrushRadius, Stroke.bDig, 1);
 		break;
 	default:
 		UE_LOG(LogTemp, Warning, TEXT("Invalid BrushType: %d"), (int32)Stroke.BrushType);
@@ -624,6 +627,8 @@ void UVoxelChunk::ApplyConeBrush(
     int32 MinZ = VoxelCenter.Z - 2;
     int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + Height * TransitionEnd + 2);
 
+    constexpr float Epsilon = 0.5f; // Helps fill edge voxels
+
     for (int32 X = MinX; X <= MaxX; ++X)
     for (int32 Y = MinY; Y <= MaxY; ++Y)
     for (int32 Z = MinZ; Z <= MaxZ; ++Z)
@@ -634,17 +639,21 @@ void UVoxelChunk::ApplyConeBrush(
         // Only process voxels within the cone's height
         if (LocalPos.Z >= 0 && LocalPos.Z <= Height)
         {
-            float r = (Height - LocalPos.Z) * FMath::Tan(AngleRad); // radius at this height
-            // SDF for finite cone: distance to side, capped at base and tip
-            float dXY = FVector2D(LocalPos.X, LocalPos.Y).Size() - r;
-            float dZ = FMath::Max(-LocalPos.Z, LocalPos.Z - Height); // below base or above tip
-            float dist = FMath::Min(FMath::Max(dXY, dZ), 0.0f) + FVector2D(FMath::Max(dXY, 0.0f), FMath::Max(dZ, 0.0f)).Size();
+            float r = (Height - LocalPos.Z) * FMath::Tan(AngleRad);
+            r = FMath::Max(0.0f, r); // Clamp to zero at the tip
 
-            // Always process voxels in the full transition zone
-            if (dist <= RadiusAtBase * (TransitionEnd - 1.0f))
+            float dXY = FVector2D(LocalPos.X, LocalPos.Y).Size();
+
+            // Robust inclusion test: add epsilon and use <=
+            if (dXY <= r + Epsilon)
             {
-                float SDFValue = ComputeSDFValue(dist / (RadiusAtBase * (TransitionEnd - 1.0f)), bDig, 1.0f, TransitionEnd);
-                SetVoxel(X, Y, Z, SDFValue, bDig);
+                // SDF for smooth transition (optional, or just set value directly)
+                float dist = dXY - r;
+                if (dist <= RadiusAtBase * (TransitionEnd - 1.0f))
+                {
+                    float SDFValue = ComputeSDFValue(dist / (RadiusAtBase * (TransitionEnd - 1.0f)), bDig, 1.0f, TransitionEnd);
+                    SetVoxel(X, Y, Z, SDFValue, bDig);
+                }
             }
         }
     }
@@ -652,6 +661,7 @@ void UVoxelChunk::ApplyConeBrush(
     // Optional: Light smoothing pass for watertightness
     ApplySmoothBrush(BrushPosition, FMath::Max(RadiusAtBase, Height) * 1.1f, false, 3);
 }
+
 
 
 
@@ -964,17 +974,18 @@ void UVoxelChunk::GenerateMesh() const
 
 	
 	// --- Island Detection ---
-	TArray<FIsland> Islands = SparseVoxelGrid->DetectIslands(0.0f);
+	TArray<FIslandData> Islands = SparseVoxelGrid->DetectIslands(0.0f);
 	if (Islands.Num() > 0)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Island detection: %d islands found!"), Islands.Num());
-		// Optionally, log the size of each island
-		for (int32 i = 0; i < Islands.Num(); ++i)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("  Island %d: %d voxels"), i, Islands[i].Voxels.Num());
-		}
-
+	    UE_LOG(LogTemp, Warning, TEXT("Island detection: %d islands found!"), Islands.Num());
+	    for (int32 i = 0; i < Islands.Num(); ++i)
+	    {
+	        UE_LOG(LogTemp, Warning, TEXT("  Island %d: %d voxels"), i, Islands[i].VoxelCount);
+	        // Or, to double-check:
+	        // UE_LOG(LogTemp, Warning, TEXT("  Island %d: %d voxels (Voxels.Num: %d)"), i, Islands[i].VoxelCount, Islands[i].Voxels.Num());
+	    }
 	}
+
 
 	if (MarchingCubesGenerator == nullptr)
 	{

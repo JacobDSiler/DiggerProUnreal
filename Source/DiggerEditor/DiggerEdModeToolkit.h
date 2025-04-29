@@ -7,27 +7,37 @@
 #include "VoxelBrushTypes.h"
 #include "Toolkits/BaseToolkit.h"
 
-struct FIsland;
+struct FIslandData;
 class ADiggerManager;
 class SUniformGridPanel;
 
 class FDiggerEdModeToolkit : public FModeToolkit
 {
 public:
+	void ClearIslands();
+	void AddIsland(const FIslandData& Island);
+	void BindIslandDelegates();
 	virtual void Init(const TSharedPtr<IToolkitHost>& InitToolkitHost) override;
 	virtual FName GetToolkitFName() const override;
 	virtual FText GetBaseToolkitName() const override;
 	virtual class FEdMode* GetEditorMode() const override;
 	virtual TSharedPtr<SWidget> GetInlineContent() const override;
+
+
+	~FDiggerEdModeToolkit();
+	void OnIslandDetectedHandler(const FIslandData& NewIslandData);
+
+
+
 	bool IsDigMode() const
 	{
 		return bBrushDig;
 	}
 
 	float GetBrushAngle(){return ConeAngle;}
-
 	
-    void SetIslands(const TArray<FIsland>& InIslands)
+	
+    void SetIslands(const TArray<FIslandData>& InIslands)
     {
         Islands = InIslands;
         RebuildIslandGrid();
@@ -50,14 +60,16 @@ private:
 
 	TSharedPtr<SVerticalBox> ToolkitWidget;
 	EVoxelBrushType CurrentBrushType = EVoxelBrushType::Sphere; // First option;
-	int ConeAngle=45;
-	int MinConeAngle=5;
-	int MaxConeAngle=60;
-	int MinBrushLength=10;
-	double MaxBrushLength=256.0;
-	signed int SmoothIterations=1;
-
-
+	float ConeAngle=45;
+	float MinConeAngle=5;
+	float MaxConeAngle=60;
+	float MinBrushLength=10;
+	float MaxBrushLength=256.0;
+	// ReSharper disable once CppUninitializedNonStaticDataMember
+	int16 SmoothIterations; // or short SmoothIterations;
+	FVector BrushOffset = FVector(0.f,0.f,0.f);
+	bool bShowOffset=false;
+	
 	//Helpers
 	ADiggerManager* GetDiggerManager();
 
@@ -67,6 +79,37 @@ private:
     TSharedRef<SWidget> MakeAngleButton(double Angle, double& Target, const FString& Label);
     TSharedRef<SWidget> MakeMirrorButton(float& Target, const FString& Label);
 	TSharedRef<SWidget> MakeMirrorButton(double& Target, const FString& Label);
+	TSharedRef<SWidget> MakeBrushSlidersSection();
+	TSharedRef<SWidget> MakeRotationSection(float& RotX, float& RotY, float& RotZ);
+	TSharedRef<SWidget> MakeOperationSection();
+	TSharedRef<SWidget> MakeBrushShapeSection();
+	TSharedRef<SWidget> MakeOffsetSection(FVector& Offset);
+	TSharedRef<SWidget> MakeRotationRow(const FText& Label, double& Value);
+	TSharedRef<SWidget> MakeRotationRow(const FText& Label, float& Value);
+	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, double& Value);
+	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, float& Value);
+	TSharedRef<SWidget> MakeIslandsSection();
+
+	TSharedRef<SWidget> MakeLabeledSliderRow(
+		const FText& Label,
+		TFunction<float()> Getter,
+		TFunction<void(float)> Setter,
+		float MinValue,
+		float MaxValue,
+		const TArray<float>& QuickSetValues,
+		float ResetValue = 0.0f,
+		float Step = 1.0f,
+		bool bIsAngle = false,
+		float* TargetForMirror = nullptr // pointer, not reference!
+	);
+
+	TSharedRef<SWidget> MakeQuickSetButtons(
+		const TArray<float>& QuickSetValues,
+		TFunction<void(float)> Setter,
+		float* TargetForMirror = nullptr,
+		bool bIsAngle = false
+	);
+
 
 	
 public:
@@ -88,14 +131,8 @@ public:
 	void SetBrushLength(float NewLength) { BrushLength = NewLength; }
 	EVoxelBrushType GetCurrentBrushType() const {return CurrentBrushType;}
 
-	// In FDiggerEdModeToolkit.h (public section)
-	void AddIsland(const FIsland& Island)
-	{
-	    Islands.Add(Island);
-	    RebuildIslandGrid();
-	}
 
-	void RemoveIsland(int32 IslandIndex)
+	/*void RemoveIsland(int32 IslandIndex)
 	{
 	    if (Islands.IsValidIndex(IslandIndex))
 	    {
@@ -106,9 +143,9 @@ public:
 	            --SelectedIslandIndex;
 	        RebuildIslandGrid();
 	    }
-	}
+	}*/
 
-	const TArray<FIsland>& GetIslands() const
+	const TArray<FIslandData>& GetIslands() const
 	{
 	    return Islands;
 	}
@@ -134,7 +171,7 @@ private:
 	int32 SelectedBrushIndex = 0;
 	float BrushLength = 200.0f; // Default value, adjust as needed
 
-	TArray<FIsland> Islands; // Your detected islands
+	TArray<FIslandData> Islands; // Your detected islands
 	int32 SelectedIslandIndex = INDEX_NONE; // Currently selected island
 	FRotator IslandRotation;
 	

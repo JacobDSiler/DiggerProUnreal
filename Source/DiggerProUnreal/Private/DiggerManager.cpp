@@ -619,6 +619,39 @@ UVoxelChunk* ADiggerManager::FindNearestChunk(const FVector& Position)
     return NearestChunk;
 }
 
+/*
+void ADiggerManager::PreviewVoxelBrush(const FVoxelBrush& Brush, const FVector& WorldLocation)
+{
+    UWorld* World = GetWorld();
+    if (!World)
+        return;
+
+    const float VoxelSize = Brush.VoxelSize;
+
+    for (const FIntVector& VoxelCoord : Brush.BrushVoxels)
+    {
+        FVector LocalPosition = FVector(
+            VoxelCoord.X * VoxelSize,
+            VoxelCoord.Y * VoxelSize,
+            VoxelCoord.Z * VoxelSize
+        );
+
+        FVector DrawPosition = WorldLocation + LocalPosition;
+
+        DrawDebugBox(
+            World,
+            DrawPosition,
+            FVector(VoxelSize * 0.5f), // Half extents
+            FColor::Cyan,
+            false, // Persistent
+            -1.0f, // Lifetime (only for one frame unless refreshed)
+            0,
+            1.0f   // Thickness
+        );
+    }
+}
+*/
+
 void ADiggerManager::MarkNearbyChunksDirty(const FVector& CenterPosition, float Radius)
 {
     int32 Reach = FMath::CeilToInt(Radius / (ChunkSize * VoxelSize));
@@ -701,12 +734,16 @@ UVoxelChunk* ADiggerManager::GetOrCreateChunkAt(const FIntVector& ProposedChunkP
         return nullptr;
     }
 }
-#if WITH_EDITOR
+
 // In ADiggerManager.cpp
 TArray<FIslandData> ADiggerManager::GetAllIslands() const
 {
+#if WITH_EDITOR
+    OnIslandsDetectionStarted.Broadcast(); // Only clear UI in editor
+#endif
+
     TArray<FIslandData> AllIslands;
-    for (const auto& ChunkPair : ChunkMap) // Assuming ChunkMap is your chunk storage
+    for (const auto& ChunkPair : ChunkMap)
     {
         UVoxelChunk* Chunk = ChunkPair.Value;
         if (Chunk)
@@ -718,7 +755,7 @@ TArray<FIslandData> ADiggerManager::GetAllIslands() const
     return AllIslands;
 }
 
-
+#if WITH_EDITOR
 
 void ADiggerManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {

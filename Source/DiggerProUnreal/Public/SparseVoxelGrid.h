@@ -24,6 +24,8 @@ struct FVoxelData
 	FVoxelData(float InSDFValue) : SDFValue(InSDFValue) {}
 };
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnIslandDetected, const FIslandData&, Island);
+
 UCLASS()
 class DIGGERPROUNREAL_API USparseVoxelGrid : public UObject
 {
@@ -46,6 +48,10 @@ public:
 
 	// Load voxel data from disk into the current grid
 	bool LoadVoxelDataFromFile(const FString& FilePath);
+
+	// Delegate to broadcast when a new island is detected
+	UPROPERTY(BlueprintAssignable, Category = "Island Detection")
+	FOnIslandDetected OnIslandDetected;
 
 
 	//A public getter for VoxelData

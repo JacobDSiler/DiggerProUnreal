@@ -66,20 +66,29 @@ struct FBrushStroke
     // float Intensity = 1.0f;
 
     FBrushStroke() {}
-    
+
     FBrushStroke(FVector InPosition, FRotator InRotation, float InRadius, EVoxelBrushType InType, bool bInDig)
         : BrushPosition(InPosition)
-        , BrushRotation(InRotation)
-        , BrushRadius(InRadius)
-        , BrushType(InType)
-        , bDig(bInDig)
-    {}
+          , BrushRotation(InRotation)
+          , BrushRadius(InRadius)
+          , BrushType(InType)
+          , bDig(bInDig)
+          , BrushLength(0), BrushAngle(0)
+    {
+    }
 };
 
 USTRUCT(BlueprintType)
 struct FIslandData
 {
     GENERATED_BODY()
+
+    FIslandData()
+        : Location(FVector::ZeroVector)
+        , IslandID(-1)
+        , VoxelCount(0)
+        , Voxels()
+    {}
 
     UPROPERTY(BlueprintReadWrite)
     FVector Location;
@@ -90,8 +99,11 @@ struct FIslandData
     UPROPERTY(BlueprintReadWrite)
     int32 VoxelCount;
 
-    // Add anything else you want to track
+    UPROPERTY(BlueprintReadWrite)
+    TArray<FIntVector> Voxels;
 };
+
+
 
 
 
@@ -117,7 +129,26 @@ public:
     // Set this true to make the actor never get culled despite distance
     UPROPERTY(EditAnywhere, Category="Digger System")
     bool bNeverCull = true;
-    
+
+    // Native C++ delegates (not UObject/Blueprint)
+    DECLARE_MULTICAST_DELEGATE(FIslandsDetectionStartedEvent);
+    FIslandsDetectionStartedEvent OnIslandsDetectionStarted;
+
+    DECLARE_MULTICAST_DELEGATE_OneParam(FIslandDetectedEvent, const FIslandData&);
+    FIslandDetectedEvent OnIslandDetected;
+
+
+
+
+    // Method to broadcast the event
+    UFUNCTION(BlueprintCallable, Category = "Island Detection")
+    void BroadcastIslandDetected(const FIslandData& Island)
+    {
+        if (OnIslandDetected.IsBound())
+        {
+            OnIslandDetected.Broadcast(Island);
+        }
+    }
 
     bool EnsureWorldReference();
 

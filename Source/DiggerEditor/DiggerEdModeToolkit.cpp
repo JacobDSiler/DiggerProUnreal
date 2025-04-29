@@ -7,6 +7,8 @@
 #include "EditorStyleSet.h"
 #include "EngineUtils.h"
 #include "IContentBrowserSingleton.h"
+#include "Behaviors/2DViewportBehaviorTargets.h"
+#include "Behaviors/2DViewportBehaviorTargets.h"
 #include "Brushes/SlateImageBrush.h"
 #include "Engine/StaticMesh.h"
 #include "Experimental/EditorInteractiveToolsFramework/Public/Behaviors/2DViewportBehaviorTargets.h"
@@ -30,279 +32,639 @@
 
 #define LOCTEXT_NAMESPACE "FDiggerEdModeToolkit"
 
+
+// FDiggerEdModeToolkit::Init
+
 void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
 {
+    BindIslandDelegates();
+
     AssetThumbnailPool = MakeShareable(new FAssetThumbnailPool(32, true));
-    
-    // Initialize the grid (typically in your Init or Construct function)
     IslandGrid = SNew(SUniformGridPanel).SlotPadding(2.0f);
-    
+
+    static float DummyFloat = 0.0f;
+
     ToolkitWidget = SNew(SVerticalBox)
 
     // --- Brush Shape Section ---
     + SVerticalBox::Slot().AutoHeight().Padding(4)
-[
-    SNew(STextBlock).Text(FText::FromString("Brush Shape"))
-]
-+ SVerticalBox::Slot().AutoHeight().Padding(4)
-[
-    SNew(SHorizontalBox)
-    // Sphere
-    + SHorizontalBox::Slot().AutoWidth().Padding(2)
     [
-        SNew(SCheckBox)
-        .Style(FAppStyle::Get(), "RadioButton")
-        .IsChecked_Lambda([this]() { return (CurrentBrushType == EVoxelBrushType::Sphere) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-        .OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
-            if (State == ECheckBoxState::Checked)
-            {
-                CurrentBrushType = EVoxelBrushType::Sphere;
-                if (ADiggerManager* Manager = GetDiggerManager())
-                {
-                    Manager->EditorBrushType = EVoxelBrushType::Sphere;
-                }
-            }
+        SNew(STextBlock).Text(FText::FromString("Brush Shape"))
+    ]
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
+    [
+        MakeBrushShapeSection()
+    ]
+
+
+    // --- Height/Length UI: Only visible for Cylinder or Cone brush ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SBox)
+        .Visibility_Lambda([this]() {
+            EVoxelBrushType BrushType = GetCurrentBrushType();
+            return (BrushType == EVoxelBrushType::Cylinder || BrushType == EVoxelBrushType::Cone) ? EVisibility::Visible : EVisibility::Collapsed;
         })
         [
-            SNew(STextBlock).Text(FText::FromString("Sphere"))
+            MakeLabeledSliderRow(
+                FText::FromString("Height"),
+                [this]() { return BrushLength; },
+                [this](float NewValue) { BrushLength = FMath::Clamp(NewValue, MinBrushLength, MaxBrushLength); },
+                float(MinBrushLength), float(MaxBrushLength),
+                TArray<float>({float(MinBrushLength), float((MinBrushLength+MaxBrushLength)/2.f), float(MaxBrushLength)}),
+                float(MinBrushLength), 1.0f,
+                false, &DummyFloat
+            )
         ]
     ]
-    // Cube
-    + SHorizontalBox::Slot().AutoWidth().Padding(2)
-    [
-        SNew(SCheckBox)
-        .Style(FAppStyle::Get(), "RadioButton")
-        .IsChecked_Lambda([this]() { return (CurrentBrushType == EVoxelBrushType::Cube) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-        .OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
-            if (State == ECheckBoxState::Checked)
-            {
-                CurrentBrushType = EVoxelBrushType::Cube;
-                if (ADiggerManager* Manager = GetDiggerManager())
-                {
-                    Manager->EditorBrushType = EVoxelBrushType::Cube;
-                }
-            }
-        })
-        [
-            SNew(STextBlock).Text(FText::FromString("Cube"))
-        ]
-    ]
-    // Cylinder
-    + SHorizontalBox::Slot().AutoWidth().Padding(2)
-    [
-        SNew(SCheckBox)
-        .Style(FAppStyle::Get(), "RadioButton")
-        .IsChecked_Lambda([this]() { return (CurrentBrushType == EVoxelBrushType::Cylinder) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-        .OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
-            if (State == ECheckBoxState::Checked)
-            {
-                CurrentBrushType = EVoxelBrushType::Cylinder;
-                if (ADiggerManager* Manager = GetDiggerManager())
-                {
-                    Manager->EditorBrushType = EVoxelBrushType::Cylinder;
-                }
-            }
-        })
-        [
-            SNew(STextBlock).Text(FText::FromString("Cylinder"))
-        ]
-    ]
-    // Cone
-    + SHorizontalBox::Slot().AutoWidth().Padding(2)
-    [
-        SNew(SCheckBox)
-        .Style(FAppStyle::Get(), "RadioButton")
-        .IsChecked_Lambda([this]() { return (CurrentBrushType == EVoxelBrushType::Cone) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-        .OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
-            if (State == ECheckBoxState::Checked)
-            {
-                CurrentBrushType = EVoxelBrushType::Cone;
-                if (ADiggerManager* Manager = GetDiggerManager())
-                {
-                    Manager->EditorBrushType = EVoxelBrushType::Cone;
-                }
-            }
-        })
-        [
-            SNew(STextBlock).Text(FText::FromString("Cone"))
-        ]
-    ]
-    // Smooth
-    + SHorizontalBox::Slot().AutoWidth().Padding(2)
-    [
-        SNew(SCheckBox)
-        .Style(FAppStyle::Get(), "RadioButton")
-        .IsChecked_Lambda([this]() { return (CurrentBrushType == EVoxelBrushType::Smooth) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-        .OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
-            if (State == ECheckBoxState::Checked)
-            {
-                CurrentBrushType = EVoxelBrushType::Smooth;
-                if (ADiggerManager* Manager = GetDiggerManager())
-                {
-                    Manager->EditorBrushType = EVoxelBrushType::Smooth;
-                }
-            }
-        })
-        [
-            SNew(STextBlock).Text(FText::FromString("Smooth"))
-        ]
-    ]
-    // Custom
-    + SHorizontalBox::Slot().AutoWidth().Padding(2)
-    [
-        SNew(SCheckBox)
-        .Style(FAppStyle::Get(), "RadioButton")
-        .IsChecked_Lambda([this]() { return (CurrentBrushType == EVoxelBrushType::Custom) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-        .OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
-            if (State == ECheckBoxState::Checked)
-            {
-                CurrentBrushType = EVoxelBrushType::Custom;
-                if (ADiggerManager* Manager = GetDiggerManager())
-                {
-                    Manager->EditorBrushType = EVoxelBrushType::Custom;
-                }
-            }
-        })
-        [
-            SNew(STextBlock).Text(FText::FromString("Custom"))
-        ]
-    ]
-]
-        
-        // --- Height/Length UI: Only visible for Cylinder or Cone brush ---
-+ SVerticalBox::Slot().AutoHeight().Padding(4)
-[
-    SNew(SBox)
-    .Visibility_Lambda([this]() {
-        EVoxelBrushType BrushType = GetCurrentBrushType();
-        return (BrushType == EVoxelBrushType::Cylinder || BrushType == EVoxelBrushType::Cone) ? EVisibility::Visible : EVisibility::Collapsed;
-    })
-    [
-        SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString("Height"))
-        ]
-        + SHorizontalBox::Slot().FillWidth(1.0f).Padding(4,0)
-        [
-            SNew(SSlider)
-            .Value_Lambda([this]() {
-                float Normalized = (BrushLength - MinBrushLength) / (MaxBrushLength - MinBrushLength);
-                return FMath::Clamp(Normalized, 0.0f, 1.0f);
-            })
-            .OnValueChanged_Lambda([this](float NewValue)
-            {
-                BrushLength = FMath::Clamp(MinBrushLength + NewValue * (MaxBrushLength - MinBrushLength), MinBrushLength, MaxBrushLength);
-            })
-        ]
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-        [
-            SNew(SNumericEntryBox<float>)
-            .Value_Lambda([this]() { return BrushLength; })
-            .OnValueChanged_Lambda([this](float NewValue) {
-                BrushLength = FMath::Clamp(NewValue, MinBrushLength, MaxBrushLength);
-            })
-            .MinValue(MinBrushLength)
-            .MaxValue(MaxBrushLength)
-            .MinSliderValue(MinBrushLength)
-            .MaxSliderValue(MaxBrushLength)
-            .AllowSpin(true)
-        ]
-    ]
-]
 
     // --- Cone Angle UI: Only visible for Cone brush ---
     + SVerticalBox::Slot().AutoHeight().Padding(4)
     [
         SNew(SBox)
-        .Visibility_Lambda([this]()
-        {
+        .Visibility_Lambda([this]() {
             return (GetCurrentBrushType() == EVoxelBrushType::Cone) ? EVisibility::Visible : EVisibility::Collapsed;
         })
         [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+            MakeLabeledSliderRow(
+                FText::FromString("Cone Angle"),
+                [this]() { return float(ConeAngle); },
+                [this](float NewValue) { ConeAngle = FMath::Clamp(double(NewValue), MinConeAngle, MaxConeAngle); },
+                float(MinConeAngle), float(MaxConeAngle),
+                TArray<float>({float(MinConeAngle), float((MinConeAngle+MaxConeAngle)/2.f), float(MaxConeAngle)}),
+                float(MinConeAngle), 1.0f,
+                false, &DummyFloat // No mirror for cone angle
+            )
+        ]
+    ]
+
+    // --- Smooth Iterations (Smooth only) ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SBox)
+        .Visibility_Lambda([this]() {
+            return (GetCurrentBrushType() == EVoxelBrushType::Smooth) ? EVisibility::Visible : EVisibility::Collapsed;
+        })
+        [
+            MakeLabeledSliderRow(
+                FText::FromString("Smooth Iterations"),
+                [this]() { return float(SmoothIterations); },
+                [this](float NewValue) { SmoothIterations = FMath::Clamp(static_cast<int16>(FMath::RoundToInt(NewValue)), int16(1), int16(10)); },
+                1.0f, 10.0f,
+                TArray<float>({1.f, 5.f, 10.f}),
+                1.0f, 1.0f,
+                false, &DummyFloat
+            )
+        ]
+    ]
+
+    // --- Operation (Add/Subtract) Section ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        MakeOperationSection()
+    ]
+
+    // --- Brush Radius, Strength, Falloff ---
+  /*  + SVerticalBox::Slot().AutoHeight().Padding(8, 16, 8, 4)
+    [
+        MakeLabeledSliderRow(
+            FText::FromString("Radius"),
+            [this]() { return BrushRadius; },
+            [this](float NewValue) { BrushRadius = FMath::Clamp(NewValue, 10.0f, 256.0f); },
+            10.0f, 256.0f,
+            TArray<float>({10.f, 64.f, 128.f, 256.f}),
+            10.0f, 1.0f,
+            false, &DummyFloat
+        )
+    ]
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 4)
+    [
+        MakeLabeledSliderRow(
+            FText::FromString("Strength"),
+            [this]() { return BrushStrength; },
+            [this](float NewValue) { BrushStrength = FMath::Clamp(NewValue, 0.0f, 1.0f); },
+            0.0f, 1.0f,
+            TArray<float>({0.1f, 0.5f, 1.0f}),
+            1.0f, 0.01f,
+            false, &DummyFloat
+        )
+    ]
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 8)
+    [
+        MakeLabeledSliderRow(
+            FText::FromString("Falloff"),
+            [this]() { return BrushFalloff; },
+            [this](float NewValue) { BrushFalloff = FMath::Clamp(NewValue, 0.0f, 1.0f); },
+            0.0f, 1.0f,
+            TArray<float>({0.0f, 0.5f, 1.0f}),
+            0.0f, 0.01f,
+            false, &DummyFloat
+        )
+    ]*/
+
+    // --- Rotate Brush Section (roll-down) ---
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
+    [
+        SNew(SButton)
+        .Text(FText::FromString("Rotate Brush"))
+        .OnClicked_Lambda([this]() { bShowRotation = !bShowRotation; return FReply::Handled(); })
+    ]
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 8)
+    [
+        SNew(SVerticalBox)
+        .Visibility_Lambda([this]() { return bShowRotation ? EVisibility::Visible : EVisibility::Collapsed; })
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            MakeRotationRow(FText::FromString("X"), BrushRotX)
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            MakeRotationRow(FText::FromString("Y"), BrushRotY)
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            MakeRotationRow(FText::FromString("Z"), BrushRotZ)
+        ]
+    ]
+
+    // --- Offset Brush Section (roll-down) ---
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
+    [
+        SNew(SButton)
+        .Text(FText::FromString("Offset Brush"))
+        .OnClicked_Lambda([this]() { bShowOffset = !bShowOffset; return FReply::Handled(); })
+    ]
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 8)
+    [
+        SNew(SVerticalBox)
+        .Visibility_Lambda([this]() { return bShowOffset ? EVisibility::Visible : EVisibility::Collapsed; })
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            MakeOffsetRow(FText::FromString("X"), BrushOffset.X)
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            MakeOffsetRow(FText::FromString("Y"), BrushOffset.Y)
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            MakeOffsetRow(FText::FromString("Z"), BrushOffset.Z)
+        ]
+    ]
+
+    // --- Custom Brushes Section ---
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
+    [
+        SNew(STextBlock).Text(FText::FromString("Custom Brushes"))
+    ]
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 4)
+    [
+        SAssignNew(CustomBrushGrid, SUniformGridPanel)
+    ]
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 8)
+    [
+        SNew(SButton)
+        .Text(FText::FromString("Add Custom Brush"))
+        .OnClicked_Lambda([this]() -> FReply
+        {
+            FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
+            FOpenAssetDialogConfig DialogConfig;
+            DialogConfig.DialogTitleOverride = FText::FromString("Select Static Mesh Brush");
+            DialogConfig.AssetClassNames.Add(FTopLevelAssetPath(TEXT("/Script/Engine"), TEXT("StaticMesh")));
+            DialogConfig.bAllowMultipleSelection = true;
+            TArray<FAssetData> SelectedAssets = ContentBrowserModule.Get().CreateModalOpenAssetDialog(DialogConfig);
+
+            for (const FAssetData& AssetData : SelectedAssets)
+            {
+                TSoftObjectPtr<UStaticMesh> MeshPtr = Cast<UStaticMesh>(AssetData.GetAsset());
+                if (MeshPtr.IsValid())
+                {
+                    CustomBrushMeshes.AddUnique(MeshPtr);
+                }
+            }
+            RebuildCustomBrushGrid();
+            return FReply::Handled();
+        })
+    ]
+
+    // --- Build/Export Settings Section (roll-down) ---
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 16, 8, 4)
+    [
+        SNew(SButton)
+        .Text(FText::FromString("Build/Export Settings"))
+        .OnClicked_Lambda([this]() { bShowBuildSettings = !bShowBuildSettings; return FReply::Handled(); })
+    ]
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 8)
+    [
+        SNew(SVerticalBox)
+        .Visibility_Lambda([this]() { return bShowBuildSettings ? EVisibility::Visible : EVisibility::Collapsed; })
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this]() { return bEnableCollision ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState State) { bEnableCollision = (State == ECheckBoxState::Checked); })
+            [
+                SNew(STextBlock).Text(FText::FromString("Enable Collision"))
+            ]
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this]() { return bEnableNanite ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState State) { bEnableNanite = (State == ECheckBoxState::Checked); })
+            [
+                SNew(STextBlock).Text(FText::FromString("Enable Nanite"))
+            ]
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            MakeLabeledSliderRow(
+                FText::FromString("Detail Reduction"),
+                [this]() { return BakeDetail; },
+                [this](float NewValue) { BakeDetail = FMath::Clamp(NewValue, 0.0f, 1.0f); },
+                0.0f, 1.0f,
+                TArray<float>({0.0f, 0.5f, 1.0f}),
+                1.0f, 0.01f,
+                false, &DummyFloat
+            )
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+        [
+            SNew(SButton)
+            .Text(FText::FromString("Bake to Static Mesh"))
+            .OnClicked_Lambda([this]()
+            {
+                if (ADiggerManager* Manager = GetDiggerManager())
+                {
+                    Manager->BakeToStaticMesh(bEnableCollision, bEnableNanite, BakeDetail);
+                }
+                return FReply::Handled();
+            })
+        ]
+    ]
+
+    // --- Islands Section (roll-down) ---
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+    [
+        MakeIslandsSection()
+    ];
+
+    if (CustomBrushGrid.IsValid())
+    {
+        RebuildCustomBrushGrid();
+    }
+
+    FModeToolkit::Init(InitToolkitHost);
+}
+
+
+
+
+
+//Delegate Setup methods
+
+FDiggerEdModeToolkit::~FDiggerEdModeToolkit()
+{
+    if (ADiggerManager* Manager = GetDiggerManager())
+    {
+        Manager->OnIslandDetected.RemoveAll(this);
+    }
+}
+
+
+void FDiggerEdModeToolkit::OnIslandDetectedHandler(const FIslandData& NewIslandData)
+{
+    // Only add if not already present (e.g., by IslandID)
+    if (!Islands.ContainsByPredicate([&](const FIslandData& Island) { return Island.IslandID == NewIslandData.IslandID; }))
+    {
+        Islands.Add(NewIslandData);
+        RebuildIslandGrid();
+    }
+}
+
+void FDiggerEdModeToolkit::ClearIslands()
+{
+    UE_LOG(LogTemp, Warning, TEXT("ClearIslands called on toolkit: %p"), this);
+    Islands.Empty();
+    RebuildIslandGrid();
+}
+
+void FDiggerEdModeToolkit::AddIsland(const FIslandData& Island)
+{
+    UE_LOG(LogTemp, Warning, TEXT("AddIsland called on toolkit: %p, IslandID: %d"), this, Island.IslandID);
+    Islands.Add(Island);
+    RebuildIslandGrid();
+}
+
+//Helper Methods
+
+
+
+//AGetDiggerManager
+ADiggerManager* FDiggerEdModeToolkit::GetDiggerManager()
+{
+    if (GEditor)
+    {
+        UWorld* World = GEditor->GetEditorWorldContext().World();
+        for (TActorIterator<ADiggerManager> It(World); It; ++It)
+        {
+            return *It;                 // <-- Return the manager pointer
+        }
+    }
+    return nullptr;
+}
+
+void FDiggerEdModeToolkit::BindIslandDelegates()
+{
+    if (ADiggerManager* Manager = GetDiggerManager())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Binding delegates for toolkit: %p, manager: %p"), this, Manager);
+
+        Manager->OnIslandsDetectionStarted.RemoveAll(this);
+        Manager->OnIslandDetected.RemoveAll(this);
+
+        Manager->OnIslandsDetectionStarted.AddRaw(this, &FDiggerEdModeToolkit::ClearIslands);
+        Manager->OnIslandDetected.AddRaw(this, &FDiggerEdModeToolkit::AddIsland);
+    }
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeQuickSetButtons(
+    const TArray<float>& QuickSetValues,
+    TFunction<void(float)> Setter,
+    float* TargetForMirror,
+    bool bIsAngle
+)
+{
+    TSharedRef<SHorizontalBox> Box = SNew(SHorizontalBox);
+
+    // Get the default Slate font
+    FSlateFontInfo DefaultFont = FCoreStyle::Get().GetFontStyle("NormalFont");
+
+    for (float Value : QuickSetValues)
+    {
+        // Use plain degree symbol as a literal character
+        FText DisplayText = bIsAngle
+            ? FText::FromString(FString::Printf(TEXT("%.0f°"), Value))
+            : FText::AsNumber(Value);
+
+        Box->AddSlot()
+        .AutoWidth()
+        .Padding(2, 0)
+        [
+            SNew(SButton)
+            .OnClicked_Lambda([Setter, Value]() { Setter(Value); return FReply::Handled(); })
             [
                 SNew(STextBlock)
-                .Text(FText::FromString("Cone Angle"))
+                .Font(DefaultFont)
+                .Text(DisplayText)
             ]
-            + SHorizontalBox::Slot().FillWidth(1.0f).Padding(4, 0)
+        ];
+    }
+    
+
+    if (bIsAngle && TargetForMirror)
+    {
+        Box->AddSlot()
+        .AutoWidth()
+        .Padding(2, 0)
+        [
+            SNew(SButton)
+            .OnClicked_Lambda([TargetForMirror]() {
+                *TargetForMirror = FMath::Fmod(*TargetForMirror + 180.0f, 360.0f);
+                if (*TargetForMirror < 0) *TargetForMirror += 360.0f;
+                return FReply::Handled();
+            })
+            .ToolTipText(FText::FromString("Mirror (add 180°)"))
+            [
+                SNew(STextBlock)
+                .Font(DefaultFont)
+                .Text(FText::FromString("Mirror"))
+            ]
+        ];
+    }
+
+    return Box;
+}
+
+
+
+
+
+// Modular, reusable labeled slider row with quick set buttons and reset.
+// - Label: The label to display (e.g., "X", "Radius").
+// - Getter: Lambda to get the current value.
+// - Setter: Lambda to set the value.
+// - MinValue/MaxValue: Slider and numeric entry range.
+// - QuickSetValues: Array of values for quick-set buttons.
+// - ResetValue: Value to set when "Reset" is pressed.
+// - Step: Step size for numeric entry (default 1.0f).
+// - bIsAngle: true for angle (adds Mirror, °), false for number.
+// - TargetForMirror: reference to the value for Mirror (only used if bIsAngle).
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeLabeledSliderRow(
+    const FText& Label,
+    TFunction<float()> Getter,
+    TFunction<void(float)> Setter,
+    float MinValue,
+    float MaxValue,
+    const TArray<float>& QuickSetValues,
+    float ResetValue,
+    float Step,
+    bool bIsAngle,
+    float* TargetForMirror
+)
+{
+    // State for expand/collapse
+    TSharedPtr<bool> bExpanded = MakeShared<bool>(false);
+
+    return SNew(SHorizontalBox)
+            // Label
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            .VAlign(VAlign_Center)
+            .Padding(0, 0, 8, 0)
+            [
+                SNew(STextBlock)
+                .Text(Label)
+                .MinDesiredWidth(40)
+            ]
+        // Caret button
+        + SHorizontalBox::Slot()
+        .AutoWidth()
+        .VAlign(VAlign_Center)
+        .Padding(0, 0, 4, 0)
+        [
+            SNew(SButton)
+            .ButtonStyle(FCoreStyle::Get(), "NoBorder")
+            .OnClicked_Lambda([bExpanded]() { *bExpanded = !*bExpanded; return FReply::Handled(); })
+            .Content()
+            [
+                SNew(STextBlock)
+                .Text_Lambda([bExpanded]() { return *bExpanded ? FText::FromString("^") : FText::FromString("^"); })
+            ]
+        ]
+        // Slider (conditionally visible)
+        /*+ SHorizontalBox::Slot()
+        .FillWidth(1.0f)
+        .Padding(0, 0, 8, 0)
+        [
+            SNew(SBox)
+            .Visibility_Lambda([bExpanded]() { return *bExpanded ? EVisibility::Visible : EVisibility::Collapsed; })
             [
                 SNew(SSlider)
-                .Value_Lambda([this]()
-                {
-                    // Clamp to avoid out-of-range
-                    float Normalized = (ConeAngle - MinConeAngle) / (MaxConeAngle - MinConeAngle);
-                    return FMath::Clamp(Normalized, 0.0f, 1.0f);
+                .Value_Lambda([=]() {
+                    float Value = Getter();
+                    return (Value - MinValue) / (MaxValue - MinValue);
                 })
-                .OnValueChanged_Lambda([this](float NewValue)
-                {
-                    ConeAngle = FMath::Clamp(MinConeAngle + NewValue * (MaxConeAngle - MinConeAngle), MinConeAngle,
-                                             MaxConeAngle);
+                .OnValueChanged_Lambda([=](float NewValue) {
+                    Setter(MinValue + NewValue * (MaxValue - MinValue));
                 })
             ]
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+        ]*/
+        // Numeric entry (conditionally visible)
+        + SHorizontalBox::Slot()
+        .AutoWidth()
+        [
+            SNew(SBox)
+            .Visibility_Lambda([bExpanded]() { return *bExpanded ? EVisibility::Visible : EVisibility::Collapsed; })
             [
                 SNew(SNumericEntryBox<float>)
-                .Value_Lambda([this]() { return ConeAngle; })
-                .OnValueChanged_Lambda([this](float NewValue)
-                {
-                    ConeAngle = FMath::Clamp(NewValue, MinConeAngle, MaxConeAngle);
+                .Value_Lambda([=]() { return Getter(); })
+                .OnValueChanged_Lambda([=](float NewValue) {
+                    Setter(FMath::Clamp(NewValue, MinValue, MaxValue));
                 })
-                .MinValue(MinConeAngle)
-                .MaxValue(MaxConeAngle)
-                .MinSliderValue(MinConeAngle)
-                .MaxSliderValue(MaxConeAngle)
+                .MinValue(MinValue)
+                .MaxValue(MaxValue)
                 .AllowSpin(true)
+                .MinDesiredValueWidth(50)
+                .Delta(Step)
             ]
         ]
-    ]
-
-+ SVerticalBox::Slot().AutoHeight().Padding(4)
-[
-    SNew(SBox)
-    .Visibility_Lambda([this]() {
-        return (GetCurrentBrushType() == EVoxelBrushType::Smooth) ? EVisibility::Visible : EVisibility::Collapsed;
-    })
-    [
-        SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+        // Quick set buttons
+        + SHorizontalBox::Slot()
+        .AutoWidth()
+        .Padding(2, 0)
         [
-            SNew(STextBlock)
-            .Text(FText::FromString("Smooth Iterations"))
+            MakeQuickSetButtons(QuickSetValues, Setter, TargetForMirror, bIsAngle)
         ]
-        + SHorizontalBox::Slot().FillWidth(1.0f).Padding(4,0)
+        // Reset button
+        + SHorizontalBox::Slot()
+        .AutoWidth()
+        .Padding(8, 0)
         [
-            SNew(SSlider)
-            .Value_Lambda([this]() {
-                float Normalized = (SmoothIterations - 1.0f) / 9.0f; // (max-min)
-                return FMath::Clamp(Normalized, 0.0f, 1.0f);
-            })
-            .OnValueChanged_Lambda([this](float NewValue)
-            {
-                SmoothIterations = FMath::Clamp(FMath::RoundToInt(1.0f + NewValue * 9.0f), 1, 10);
-            })
-        ]
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+            SNew(SButton)
+            .Text(FText::FromString("Reset"))
+            .OnClicked_Lambda([=]() { Setter(ResetValue); return FReply::Handled(); })
+        ];
+}
+
+
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
+{
+    struct FBrushTypeInfo
+    {
+        EVoxelBrushType Type;
+        FString Label;
+        FString Tooltip;
+    };
+
+    TArray<FBrushTypeInfo> BrushTypes = {
+        { EVoxelBrushType::Sphere,   TEXT("Sphere"),   TEXT("Sphere Brush") },
+        { EVoxelBrushType::Cube,     TEXT("Cube"),     TEXT("Cube Brush") },
+        { EVoxelBrushType::Cylinder, TEXT("Cylinder"), TEXT("Cylinder Brush") },
+        { EVoxelBrushType::Cone,     TEXT("Cone"),     TEXT("Cone Brush") },
+        { EVoxelBrushType::Smooth,   TEXT("Smooth"),   TEXT("Smooth Brush") },
+        { EVoxelBrushType::Custom,   TEXT("Custom"),   TEXT("Custom Mesh Brush") }
+    };
+
+    // Number of columns in the grid (adjust as needed)
+    const int32 NumColumns = 3;
+
+    TSharedRef<SUniformGridPanel> ButtonGrid = SNew(SUniformGridPanel).SlotPadding(FMargin(2.0f, 2.0f));
+
+    for (int32 i = 0; i < BrushTypes.Num(); ++i)
+    {
+        const auto& Info = BrushTypes[i];
+        int32 Row = i / NumColumns;
+        int32 Col = i % NumColumns;
+
+        ButtonGrid->AddSlot(Col, Row)
         [
-            SNew(SNumericEntryBox<int32>)
-            .Value_Lambda([this]() { return SmoothIterations; })
-            .OnValueChanged_Lambda([this](int32 NewValue) {
-                SmoothIterations = FMath::Clamp(NewValue, 1, 10);
+            SNew(SCheckBox)
+            .Style(FAppStyle::Get(), "RadioButton")
+            .IsChecked_Lambda([this, Info]() { return (CurrentBrushType == Info.Type) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+            .OnCheckStateChanged_Lambda([this, Info](ECheckBoxState State) {
+                if (State == ECheckBoxState::Checked)
+                {
+                    CurrentBrushType = Info.Type;
+                    if (ADiggerManager* Manager = GetDiggerManager())
+                    {
+                        Manager->EditorBrushType = Info.Type;
+                    }
+                }
             })
-            .MinValue(1)
-            .MaxValue(10)
-            .MinSliderValue(1)
-            .MaxSliderValue(10)
-            .AllowSpin(true)
+            [
+                SNew(STextBlock).Text(FText::FromString(Info.Label))
+            ]
+            .ToolTipText(FText::FromString(Info.Tooltip))
+        ];
+    }
+
+    // Wrap everything in a vertical box
+    return SNew(SVerticalBox)
+
+        // Brush shape label and grid
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)
+            [
+                SNew(STextBlock).Text(FText::FromString("Brush Shape:")).MinDesiredWidth(80)
+            ]
+            + SHorizontalBox::Slot().FillWidth(1.0f)
+            [
+                ButtonGrid
+            ]
         ]
-    ]
-]
+
+        // Brush radius slider
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 16, 8, 4)
+        [
+            MakeLabeledSliderRow(
+                FText::FromString("Radius"),
+                [this]() { return BrushRadius; },
+                [this](float NewValue) { BrushRadius = FMath::Clamp(NewValue, 10.0f, 256.0f); },
+                10.0f, 256.0f, {10.0f, 64.0f, 128.0f, 256.0f}, 10.0f
+            )
+        ];
+}
+
+//Other Brush Settings Sliders
+        /*+ SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 4)
+        [
+            MakeLabeledSliderRow(
+                FText::FromString("Strength"),
+                [this]() { return BrushStrength; },
+                [this](float NewValue) { BrushStrength = FMath::Clamp(NewValue, 0.0f, 1.0f); },
+                0.0f, 1.0f, {0.1f, 0.5f, 1.0f}, 1.0f, 0.01f
+            )
+        ]*/
+       /* + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 8)
+        [
+            MakeLabeledSliderRow(
+                FText::FromString("Falloff"),
+                [this]() { return BrushFalloff; },
+                [this](float NewValue) { BrushFalloff = FMath::Clamp(NewValue, 0.0f, 1.0f); },
+                0.0f, 1.0f, {0.0f, 0.5f, 1.0f}, 0.0f, 0.01f
+            )
+        ]*/;
 
 
 
-// --- Operation (Add/Subtract) Section ---
+// Section for Add/Subtract operation/*
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOperationSection()
+{
+    return SNew(SVerticalBox)
 + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
 [
     SNew(STextBlock).Text(FText::FromString("Operation"))
@@ -350,317 +712,84 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             SNew(STextBlock).Text(FText::FromString("Subtract (Dig)"))
         ]
     ]
-]
+];
+
+}
 
 
 
 
+//Rotation Row
+// For double
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationRow(const FText& Label, double& Value)
+{
+    static float DummyFloat = 0.0f;
+    return MakeLabeledSliderRow(
+        Label,
+        [&Value]() { return float(Value); },
+        [&Value](float NewValue) { Value = double(FMath::Fmod(NewValue, 360.0f)); },
+        0.0f, 360.0f,
+        TArray<float>({45.f, 90.f, 180.f}),
+        0.0f, 1.0f,
+        true, // bIsAngle
+        &DummyFloat // Mirror button not supported for double
+    );
+}
 
-    // Brush Radius
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 16, 8, 4)
-    [
-        SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,8,0)
-        [
-            SNew(STextBlock).Text(FText::FromString("Radius:")).MinDesiredWidth(60)
-        ]
-        + SHorizontalBox::Slot().FillWidth(1.0f).Padding(0,0,8,0)
-        [
-            SNew(SSlider)
-            .Value_Lambda([this]() { return (BrushRadius - 10.0f) / (256.0f - 10.0f); })
-            .OnValueChanged_Lambda([this](float NewValue) { BrushRadius = 10.0f + NewValue * (256.0f - 10.0f); })
-        ]
-        + SHorizontalBox::Slot().AutoWidth()
-        [
-            SNew(SNumericEntryBox<float>)
-            .Value_Lambda([this]() { return BrushRadius; })
-            .OnValueChanged_Lambda([this](float NewValue) { BrushRadius = FMath::Clamp(NewValue, 10.0f, 256.0f); })
-            .MinValue(10.0f)
-            .MaxValue(256.0f)
-            .AllowSpin(true)
-            .MinDesiredValueWidth(50)
-        ]
-    ]
-    // Brush Strength
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 4)
-    [
-        SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,8,0)
-        [
-            SNew(STextBlock).Text(FText::FromString("Strength:")).MinDesiredWidth(60)
-        ]
-        + SHorizontalBox::Slot().FillWidth(1.0f).Padding(0,0,8,0)
-        [
-            SNew(SSlider)
-            .Value_Lambda([this]() { return BrushStrength; })
-            .OnValueChanged_Lambda([this](float NewValue) { BrushStrength = NewValue; })
-        ]
-        + SHorizontalBox::Slot().AutoWidth()
-        [
-            SNew(SNumericEntryBox<float>)
-            .Value_Lambda([this]() { return BrushStrength; })
-            .OnValueChanged_Lambda([this](float NewValue) { BrushStrength = FMath::Clamp(NewValue, 0.0f, 1.0f); })
-            .MinValue(0.0f)
-            .MaxValue(1.0f)
-            .AllowSpin(true)
-            .MinDesiredValueWidth(50)
-        ]
-    ]
-    // Brush Falloff
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 8)
-    [
-        SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,8,0)
-        [
-            SNew(STextBlock).Text(FText::FromString("Falloff:")).MinDesiredWidth(60)
-        ]
-        + SHorizontalBox::Slot().FillWidth(1.0f).Padding(0,0,8,0)
-        [
-            SNew(SSlider)
-            .Value_Lambda([this]() { return BrushFalloff; })
-            .OnValueChanged_Lambda([this](float NewValue) { BrushFalloff = NewValue; })
-        ]
-        + SHorizontalBox::Slot().AutoWidth()
-        [
-            SNew(SNumericEntryBox<float>)
-            .Value_Lambda([this]() { return BrushFalloff; })
-            .OnValueChanged_Lambda([this](float NewValue) { BrushFalloff = FMath::Clamp(NewValue, 0.0f, 1.0f); })
-            .MinValue(0.0f)
-            .MaxValue(1.0f)
-            .AllowSpin(true)
-            .MinDesiredValueWidth(50)
-        ]
-    ]
+// For float
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationRow(const FText& Label, float& Value)
+{
+    return MakeLabeledSliderRow(
+        Label,
+        [&Value]() { return Value; },
+        [&Value](float NewValue) { Value = FMath::Fmod(NewValue, 360.0f); },
+        0.0f, 360.0f,
+        TArray<float>({45.f, 90.f, 180.f}),
+        0.0f, 1.0f,
+        true, // bIsAngle
+        &Value
+    );
+}
 
-    // Rotate Button
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
-    [
-        SNew(SButton)
-        .Text(FText::FromString("Rotate Brush"))
-        .OnClicked_Lambda([this]() { bShowRotation = !bShowRotation; return FReply::Handled(); })
-    ]
+//Offset Row
+// For double
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, double& Value)
+{
+    static float DummyFloat = 0.0f;
+    return MakeLabeledSliderRow(
+        Label,
+        [&Value]() { return float(Value); },
+        [&Value](float NewValue) { Value = double(NewValue); },
+        -100.0f, 100.0f,
+        TArray<float>({-10.f, 0.f, 10.f}),
+        0.0f, 1.0f,
+        false, &DummyFloat
+    );
+}
 
-    // Rotation Sliders (collapsible)
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 8)
-    [
-        SNew(SVerticalBox)
-        .Visibility_Lambda([this]() { return bShowRotation ? EVisibility::Visible : EVisibility::Collapsed; })
+// For float
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, float& Value)
+{
+    static float DummyFloat = 0.0f;
+    return MakeLabeledSliderRow(
+        Label,
+        [&Value]() { return Value; },
+        [&Value](float NewValue) { Value = NewValue; },
+        -100.0f, 100.0f,
+        TArray<float>({-10.f, 0.f, 10.f}),
+        0.0f, 1.0f,
+        false, &DummyFloat
+    );
+}
 
-        // X Rotation
-        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,8,0)
-            [
-                SNew(STextBlock).Text(FText::FromString("X:")).MinDesiredWidth(20)
-            ]
-            + SHorizontalBox::Slot().FillWidth(1.0f).Padding(0,0,8,0)
-            [
-                SNew(SSlider)
-                .Value_Lambda([this]() { return BrushRotX / 360.0f; })
-                .OnValueChanged_Lambda([this](float NewValue) { BrushRotX = NewValue * 360.0f; })
-            ]
-            + SHorizontalBox::Slot().AutoWidth()
-            [
-                SNew(SNumericEntryBox<float>)
-                .Value_Lambda([this]() { return BrushRotX; })
-                .OnValueChanged_Lambda([this](float NewValue) { BrushRotX = FMath::Fmod(NewValue, 360.0f); })
-                .MinValue(0.0f).MaxValue(360.0f)
-                .AllowSpin(true)
-                .MinDesiredValueWidth(50)
-            ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2,0)
-            [ MakeAngleButton(45.f, BrushRotX, TEXT("45")) ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2,0)
-            [ MakeAngleButton(90.f, BrushRotX, TEXT("90")) ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2,0)
-            [ MakeAngleButton(180.f, BrushRotX, TEXT("180")) ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2,0)
-            [ MakeMirrorButton(BrushRotX, TEXT("Mirror")) ]
-        ]
-        // Y Rotation
-        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,8,0)
-            [
-                SNew(STextBlock).Text(FText::FromString("Y:")).MinDesiredWidth(20)
-            ]
-            + SHorizontalBox::Slot().FillWidth(1.0f).Padding(0,0,8,0)
-            [
-                SNew(SSlider)
-                .Value_Lambda([this]() { return BrushRotY / 360.0f; })
-                .OnValueChanged_Lambda([this](float NewValue) { BrushRotY = NewValue * 360.0f; })
-            ]
-            + SHorizontalBox::Slot().AutoWidth()
-            [
-                SNew(SNumericEntryBox<float>)
-                .Value_Lambda([this]() { return BrushRotY; })
-                .OnValueChanged_Lambda([this](float NewValue) { BrushRotY = FMath::Fmod(NewValue, 360.0f); })
-                .MinValue(0.0f).MaxValue(360.0f)
-                .AllowSpin(true)
-                .MinDesiredValueWidth(50)
-            ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2,0)
-            [ MakeAngleButton(45.f, BrushRotY, TEXT("45")) ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2,0)
-            [ MakeAngleButton(90.f, BrushRotY, TEXT("90")) ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2,0)
-            [ MakeAngleButton(180.f, BrushRotY, TEXT("180")) ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2,0)
-            [ MakeMirrorButton(BrushRotY, TEXT("Mirror")) ]
-        ]
-        // Z Rotation
-        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0,0,8,0)
-            [
-                SNew(STextBlock).Text(FText::FromString("Z:")).MinDesiredWidth(20)
-            ]
-            + SHorizontalBox::Slot().FillWidth(1.0f).Padding(0,0,8,0)
-            [
-                SNew(SSlider)
-                .Value_Lambda([this]() { return BrushRotZ / 360.0f; })
-                .OnValueChanged_Lambda([this](float NewValue) { BrushRotZ = NewValue * 360.0f; })
-            ]
-            + SHorizontalBox::Slot().AutoWidth()
-            [
-                SNew(SNumericEntryBox<float>)
-                .Value_Lambda([this]() { return BrushRotZ; })
-                .OnValueChanged_Lambda([this](float NewValue) { BrushRotZ = FMath::Fmod(NewValue, 360.0f); })
-                .MinValue(0.0f).MaxValue(360.0f)
-                .AllowSpin(true)
-                .MinDesiredValueWidth(50)
-            ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2,0)
-            [ MakeAngleButton(45.f, BrushRotZ, TEXT("45")) ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2,0)
-            [ MakeAngleButton(90.f, BrushRotZ, TEXT("90")) ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2,0)
-            [ MakeAngleButton(180.f, BrushRotZ, TEXT("180")) ]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2,0)
-            [ MakeMirrorButton(BrushRotZ, TEXT("Mirror")) ]
-        ]
-    ]
 
-    // Custom Brushes Section
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
-    [
-        SNew(STextBlock).Text(FText::FromString("Custom Brushes"))
-    ]
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 4)
-    [
-        SAssignNew(CustomBrushGrid, SUniformGridPanel)
-    ]
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 8)
-    [
-        SNew(SButton)
-        .Text(FText::FromString("Add Custom Brush"))
-        .OnClicked_Lambda([this]() -> FReply
-        {
-            FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
-            FOpenAssetDialogConfig DialogConfig;
-            DialogConfig.DialogTitleOverride = FText::FromString("Select Static Mesh Brush");
-            DialogConfig.AssetClassNames.Add(FTopLevelAssetPath(TEXT("/Script/Engine"), TEXT("StaticMesh")));
-            DialogConfig.bAllowMultipleSelection = true;
-            TArray<FAssetData> SelectedAssets = ContentBrowserModule.Get().CreateModalOpenAssetDialog(DialogConfig);
-
-            for (const FAssetData& AssetData : SelectedAssets)
-            {
-                TSoftObjectPtr<UStaticMesh> MeshPtr = Cast<UStaticMesh>(AssetData.GetAsset());
-                if (MeshPtr.IsValid())
-                {
-                    CustomBrushMeshes.AddUnique(MeshPtr);
-                }
-            }
-            RebuildCustomBrushGrid();
-            return FReply::Handled();
-        })
-    ]
-
-    // --- Build Settings Roll-down ---
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 16, 8, 4)
-    [
-        SNew(SButton)
-        .Text(FText::FromString("Build/Export Settings"))
-        .OnClicked_Lambda([this]() { bShowBuildSettings = !bShowBuildSettings; return FReply::Handled(); })
-    ]
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 8)
-    [
-        SNew(SVerticalBox)
-        .Visibility_Lambda([this]() { return bShowBuildSettings ? EVisibility::Visible : EVisibility::Collapsed; })
-
-        // Collision Checkbox
-        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
-        [
-            SNew(SCheckBox)
-            .IsChecked_Lambda([this]() { return bEnableCollision ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-            .OnCheckStateChanged_Lambda([this](ECheckBoxState State) { bEnableCollision = (State == ECheckBoxState::Checked); })
-            [
-                SNew(STextBlock).Text(FText::FromString("Enable Collision"))
-            ]
-        ]
-        // Nanite Checkbox
-        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
-        [
-            SNew(SCheckBox)
-            .IsChecked_Lambda([this]() { return bEnableNanite ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-            .OnCheckStateChanged_Lambda([this](ECheckBoxState State) { bEnableNanite = (State == ECheckBoxState::Checked); })
-            [
-                SNew(STextBlock).Text(FText::FromString("Enable Nanite"))
-            ]
-        ]
-        // Detail Reduction Slider (stub)
-        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-            [
-                SNew(STextBlock).Text(FText::FromString("Detail Reduction:"))
-            ]
-            + SHorizontalBox::Slot().FillWidth(1.0f).Padding(4, 0)
-            [
-                SNew(SSlider)
-                .Value_Lambda([this]() { return BakeDetail; })
-                .OnValueChanged_Lambda([this](float NewValue) { BakeDetail = NewValue; })
-            ]
-            + SHorizontalBox::Slot().AutoWidth()
-            [
-                SNew(SNumericEntryBox<float>)
-                .Value_Lambda([this]() { return BakeDetail; })
-                .OnValueChanged_Lambda([this](float NewValue) { BakeDetail = FMath::Clamp(NewValue, 0.0f, 1.0f); })
-                .MinValue(0.0f)
-                .MaxValue(1.0f)
-                .AllowSpin(true)
-                .MinDesiredValueWidth(50)
-            ]
-        ]
-        // Bake Button
-        + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
-        [
-            SNew(SButton)
-            .Text(FText::FromString("Bake to Static Mesh"))
-            .OnClicked_Lambda([this]()
-            {
-                // Find the DiggerManager in the worl
-                if (ADiggerManager* Manager = GetDiggerManager())
-                {
-                    Manager->BakeToStaticMesh(bEnableCollision, bEnableNanite, BakeDetail);
-                }
-                return FReply::Handled();
-            })
-
-        ]
-    ]
-        
-    //Islands Rollout Menu
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
-    [
-        SNew(SExpandableArea)
-                             .AreaTitle(FText::FromString("Islands"))
-                             .InitiallyCollapsed(true) // Collapsed by default
-                             .BodyContent()
+//Make Island Section
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
+{
+    return SNew(SExpandableArea)
+        .AreaTitle(FText::FromString("Islands"))
+        .InitiallyCollapsed(true)
+        .BodyContent()
         [
             SNew(SVerticalBox)
             // --- Island Operations Section ---
@@ -672,33 +801,21 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
                     SNew(SButton)
                     .Text(FText::FromString("Convert To Physics Object"))
                     .IsEnabled_Lambda([this]() { return SelectedIslandIndex != INDEX_NONE; })
-                    .OnClicked_Lambda([this]()
-                    {
-                        /* Convert logic here */
-                        return FReply::Handled();
-                    })
+                    .OnClicked_Lambda([this]() { /* Convert logic here */ return FReply::Handled(); })
                 ]
                 + SHorizontalBox::Slot().AutoWidth().Padding(2)
                 [
                     SNew(SButton)
                     .Text(FText::FromString("Remove"))
                     .IsEnabled_Lambda([this]() { return SelectedIslandIndex != INDEX_NONE; })
-                    .OnClicked_Lambda([this]()
-                    {
-                        /* Remove logic here */
-                        return FReply::Handled();
-                    })
+                    .OnClicked_Lambda([this]() { /* Remove logic here */ return FReply::Handled(); })
                 ]
                 + SHorizontalBox::Slot().AutoWidth().Padding(2)
                 [
                     SNew(SButton)
                     .Text(FText::FromString("Duplicate"))
                     .IsEnabled_Lambda([this]() { return SelectedIslandIndex != INDEX_NONE; })
-                    .OnClicked_Lambda([this]()
-                    {
-                        /* Duplicate logic here */
-                        return FReply::Handled();
-                    })
+                    .OnClicked_Lambda([this]() { /* Duplicate logic here */ return FReply::Handled(); })
                 ]
             ]
             // --- Change Rotation Section (vertical) ---
@@ -710,157 +827,18 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
                 .BodyContent()
                 [
                     SNew(SVerticalBox)
-
-                    // Pitch (X)
                     + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
                     [
-                        SNew(SHorizontalBox)
-                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)
-                        [
-                            SNew(STextBlock).Text(FText::FromString("Pitch:")).MinDesiredWidth(20)
-                        ]
-                        + SHorizontalBox::Slot().FillWidth(1.0f).Padding(0, 0, 8, 0)
-                        [
-                            SNew(SSlider)
-                            .Value_Lambda([this]() { return IslandRotation.Pitch / 360.0f; })
-                            .OnValueChanged_Lambda([this](float NewValue)
-                            {
-                                IslandRotation.Pitch = NewValue * 360.0f;
-                                UE_LOG(LogTemp, Warning, TEXT("IslandRotation.Pitch changed: %f"),
-                                       IslandRotation.Pitch);
-                            })
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth()
-                        [
-                            SNew(SNumericEntryBox<float>)
-                            .Value_Lambda([this]() { return IslandRotation.Pitch; })
-                            .OnValueChanged_Lambda([this](float NewValue)
-                            {
-                                IslandRotation.Pitch = FMath::Fmod(NewValue, 360.0f);
-                                UE_LOG(LogTemp, Warning, TEXT("IslandRotation.Pitch changed: %f"),
-                                       IslandRotation.Pitch);
-                            })
-                            .MinValue(0.0f)
-                            .MaxValue(360.0f)
-                            .AllowSpin(true)
-                            .MinDesiredValueWidth(50)
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth().Padding(2, 0)
-                        [
-                            MakeAngleButton(45.f, IslandRotation.Pitch, TEXT("45"))
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth().Padding(2, 0)
-                        [
-                            MakeAngleButton(90.f, IslandRotation.Pitch, TEXT("90"))
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth().Padding(2, 0)
-                        [
-                            MakeAngleButton(180.f, IslandRotation.Pitch, TEXT("180"))
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth().Padding(2, 0)
-                        [
-                            MakeMirrorButton(IslandRotation.Pitch, TEXT("Mirror"))
-                        ]
+                        MakeRotationRow(FText::FromString("Pitch"), IslandRotation.Pitch)
                     ]
-                    // Yaw (Y)
                     + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
                     [
-                        SNew(SHorizontalBox)
-                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)
-                        [
-                            SNew(STextBlock).Text(FText::FromString("Yaw:")).MinDesiredWidth(20)
-                        ]
-                        + SHorizontalBox::Slot().FillWidth(1.0f).Padding(0, 0, 8, 0)
-                        [
-                            SNew(SSlider)
-                            .Value_Lambda([this]() { return IslandRotation.Yaw / 360.0f; })
-                            .OnValueChanged_Lambda([this](float NewValue)
-                            {
-                                IslandRotation.Yaw = NewValue * 360.0f;
-                                UE_LOG(LogTemp, Warning, TEXT("IslandRotation.Yaw changed: %f"), IslandRotation.Yaw);
-                            })
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth()
-                        [
-                            SNew(SNumericEntryBox<float>)
-                            .Value_Lambda([this]() { return IslandRotation.Yaw; })
-                            .OnValueChanged_Lambda([this](float NewValue)
-                            {
-                                IslandRotation.Yaw = FMath::Fmod(NewValue, 360.0f);
-                                UE_LOG(LogTemp, Warning, TEXT("IslandRotation.Yaw changed: %f"), IslandRotation.Yaw);
-                            })
-                            .MinValue(0.0f)
-                            .MaxValue(360.0f)
-                            .AllowSpin(true)
-                            .MinDesiredValueWidth(50)
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth().Padding(2, 0)
-                        [
-                            MakeAngleButton(45.0, IslandRotation.Yaw, TEXT("45"))
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth().Padding(2, 0)
-                        [
-                            MakeAngleButton(90.0, IslandRotation.Yaw, TEXT("90"))
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth().Padding(2, 0)
-                        [
-                            MakeAngleButton(180.0, IslandRotation.Yaw, TEXT("180"))
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth().Padding(2, 0)
-                        [
-                            MakeMirrorButton(IslandRotation.Yaw, TEXT("Mirror"))
-                        ]
+                        MakeRotationRow(FText::FromString("Yaw"), IslandRotation.Yaw)
                     ]
-                    // Roll (Z)
                     + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
                     [
-                        SNew(SHorizontalBox)
-                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)
-                        [
-                            SNew(STextBlock).Text(FText::FromString("Roll:")).MinDesiredWidth(20)
-                        ]
-                        + SHorizontalBox::Slot().FillWidth(1.0f).Padding(0, 0, 8, 0)
-                        [
-                            SNew(SSlider)
-                            .Value_Lambda([this]() { return IslandRotation.Roll / 360.0f; })
-                            .OnValueChanged_Lambda([this](float NewValue)
-                            {
-                                IslandRotation.Roll = NewValue * 360.0f;
-                                UE_LOG(LogTemp, Warning, TEXT("IslandRotation.Roll changed: %f"), IslandRotation.Roll);
-                            })
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth()
-                        [
-                            SNew(SNumericEntryBox<float>)
-                            .Value_Lambda([this]() { return IslandRotation.Roll; })
-                            .OnValueChanged_Lambda([this](float NewValue)
-                            {
-                                IslandRotation.Roll = FMath::Fmod(NewValue, 360.0f);
-                                UE_LOG(LogTemp, Warning, TEXT("IslandRotation.Roll changed: %f"), IslandRotation.Roll);
-                            })
-                            .MinValue(0.0f)
-                            .MaxValue(360.0f)
-                            .AllowSpin(true)
-                            .MinDesiredValueWidth(50)
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth().Padding(2, 0)
-                        [
-                            MakeAngleButton(45.f, IslandRotation.Roll, TEXT("45"))
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth().Padding(2, 0)
-                        [
-                            MakeAngleButton(90.f, IslandRotation.Roll, TEXT("90"))
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth().Padding(2, 0)
-                        [
-                            MakeAngleButton(180.f, IslandRotation.Roll, TEXT("180"))
-                        ]
-                        + SHorizontalBox::Slot().AutoWidth().Padding(2, 0)
-                        [
-                            MakeMirrorButton(IslandRotation.Roll, TEXT("Mirror"))
-                        ]
+                        MakeRotationRow(FText::FromString("Roll"), IslandRotation.Roll)
                     ]
-                    // Apply Button
                     + SVerticalBox::Slot().AutoHeight().Padding(0, 8)
                     [
                         SNew(SButton)
@@ -868,58 +846,114 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
                         .OnClicked_Lambda([this]()
                         {
                             UE_LOG(LogTemp, Warning, TEXT("Island Rotation Applied: Pitch=%f, Yaw=%f, Roll=%f"),
-                                   IslandRotation.Pitch, IslandRotation.Yaw, IslandRotation.Roll);
+                                IslandRotation.Pitch, IslandRotation.Yaw, IslandRotation.Roll);
                             // Your apply logic here
                             return FReply::Handled();
                         })
                     ]
-
-
-
-                    // --- Island Grid Section ---
-                    + SVerticalBox::Slot().AutoHeight().Padding(4)
-                    [
-                        SAssignNew(IslandGridContainer, SBox)
-                        [
-                            MakeIslandGridWidget()
-                        ]
-                    ]
-                    ]
+                ]
+            ]
+            // --- Island Grid Section ---
+            + SVerticalBox::Slot().AutoHeight().Padding(4)
+            [
+                SAssignNew(IslandGridContainer, SBox)
+                [
+                    MakeIslandGridWidget()
                 ]
             ]
         ];
-
-
-
-
-    
-
-    if (CustomBrushGrid.IsValid())
-    {
-        RebuildCustomBrushGrid();
-    }
-
-    FModeToolkit::Init(InitToolkitHost);
 }
 
 
-//Helper Methods
-
-
-
-//AGetDiggerManager
-ADiggerManager* FDiggerEdModeToolkit::GetDiggerManager()
+// Section for rotation (X, Y, Z), collapsible
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationSection(float& RotX, float& RotY, float& RotZ)
 {
-    if (GEditor)
-    {
-        UWorld* World = GEditor->GetEditorWorldContext().World();
-        for (TActorIterator<ADiggerManager> It(World); It; ++It)
-        {
-            return *It;                 // <-- Return the manager pointer
-        }
-    }
-    return nullptr;
+    return SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
+        [
+            SNew(SButton)
+            .Text(FText::FromString("Rotate"))
+            .OnClicked_Lambda([this]() { bShowRotation = !bShowRotation; return FReply::Handled(); })
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 8)
+        [
+            SNew(SVerticalBox)
+            .Visibility_Lambda([this]() { return bShowRotation ? EVisibility::Visible : EVisibility::Collapsed; })
+            + SVerticalBox::Slot().AutoHeight().Padding(0,2)
+            [
+                MakeLabeledSliderRow(
+                    FText::FromString("X"),
+                    [&RotX]() { return RotX; },
+                    [&RotX](float NewValue) { RotX = FMath::Fmod(NewValue, 360.0f); },
+                    0.0f, 360.0f, {45.0f, 90.0f, 180.0f}, 0.0f
+                )
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0,2)
+            [
+                MakeLabeledSliderRow(
+                    FText::FromString("Y"),
+                    [&RotY]() { return RotY; },
+                    [&RotY](float NewValue) { RotY = FMath::Fmod(NewValue, 360.0f); },
+                    0.0f, 360.0f, {45.0f, 90.0f, 180.0f}, 0.0f
+                )
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0,2)
+            [
+                MakeLabeledSliderRow(
+                    FText::FromString("Z"),
+                    [&RotZ]() { return RotZ; },
+                    [&RotZ](float NewValue) { RotZ = FMath::Fmod(NewValue, 360.0f); },
+                    0.0f, 360.0f, {45.0f, 90.0f, 180.0f}, 0.0f
+                )
+            ]
+        ];
 }
+
+// Section for offset (X, Y, Z), collapsible
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetSection(FVector& Offset)
+{
+    return SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
+        [
+            SNew(SButton)
+            .Text(FText::FromString("Offset"))
+            .OnClicked_Lambda([this]() { bShowOffset = !bShowOffset; return FReply::Handled(); })
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 8)
+        [
+            SNew(SVerticalBox)
+            .Visibility_Lambda([this]() { return bShowOffset ? EVisibility::Visible : EVisibility::Collapsed; })
+            + SVerticalBox::Slot().AutoHeight().Padding(0,2)
+            [
+                MakeLabeledSliderRow(
+                    FText::FromString("X"),
+                    [&Offset]() { return Offset.X; },
+                    [&Offset](float NewValue) { Offset.X = NewValue; },
+                    -100.0f, 100.0f, {-10.0f, 0.0f, 10.0f}, 0.0f
+                )
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0,2)
+            [
+                MakeLabeledSliderRow(
+                    FText::FromString("Y"),
+                    [&Offset]() { return Offset.Y; },
+                    [&Offset](float NewValue) { Offset.Y = NewValue; },
+                    -100.0f, 100.0f, {-10.0f, 0.0f, 10.0f}, 0.0f
+                )
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0,2)
+            [
+                MakeLabeledSliderRow(
+                    FText::FromString("Z"),
+                    [&Offset]() { return Offset.Z; },
+                    [&Offset](float NewValue) { Offset.Z = NewValue; },
+                    -100.0f, 100.0f, {-10.0f, 0.0f, 10.0f}, 0.0f
+                )
+            ]
+        ];
+}
+
+
 
 //Make Island Widget <Here>
 

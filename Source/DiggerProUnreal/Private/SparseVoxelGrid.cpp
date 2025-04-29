@@ -346,6 +346,7 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold /* usuall
 {
     TSet<FIntVector> Visited;
     TArray<FIslandData> Islands;
+    int32 NextAvailableIslandID = 0; // Counter to assign unique IslandIDs
 
     // Lambda to check if a voxel is solid
     auto IsSolid = [&](const FIntVector& Voxel) -> bool
@@ -360,17 +361,28 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold /* usuall
         if (Visited.Contains(Start) || Elem.Value.SDFValue >= SDFThreshold)
             continue;
 
-        // New island found
-        FIslandData Island;
+        // New island found, initialize island data
+        FIslandData NewIsland;
+        NewIsland.IslandID = NextAvailableIslandID++; // Assign unique IslandID
+        NewIsland.VoxelCount = 0; // Will be set after BFS
+        NewIsland.Voxels.Empty();
+
         TQueue<FIntVector> Queue;
         Queue.Enqueue(Start);
         Visited.Add(Start);
+
+        FVector IslandLocation = FVector(Start.X, Start.Y, Start.Z);
 
         while (!Queue.IsEmpty())
         {
             FIntVector Current;
             Queue.Dequeue(Current);
-            IslandData.Voxels.Add(Current);
+
+            // Add voxel to the island
+            NewIsland.Voxels.Add(Current);
+
+            // Update island location (for center of mass)
+            IslandLocation += FVector(Current.X, Current.Y, Current.Z);
 
             // 6-connected neighbors
             static const FIntVector Dirs[] = {
@@ -387,11 +399,28 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold /* usuall
             }
         }
 
-        Islands.Add(IslandData);
+        // Set VoxelCount and average location
+        NewIsland.VoxelCount = NewIsland.Voxels.Num();
+        if (NewIsland.VoxelCount > 0)
+        {
+            IslandLocation /= NewIsland.VoxelCount;
+        }
+        NewIsland.Location = IslandLocation;
+
+        // Add the island data to the list
+        Islands.Add(NewIsland);
+
+        // Broadcast the detection event if bound
+        if (DiggerManager)
+        {
+            DiggerManager->BroadcastIslandDetected(NewIsland);
+        }
     }
 
-    return IslandsData;
+    return Islands;
 }
+
+
 
 
 
