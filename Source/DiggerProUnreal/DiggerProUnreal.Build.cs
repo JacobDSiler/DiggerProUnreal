@@ -30,7 +30,9 @@ public class DiggerProUnreal : ModuleRules
                 "Slate",
                 "SlateCore",
                 "GeometryFramework",
-                "EditorScriptingUtilities"
+                "EditorScriptingUtilities",
+                "MeshDescription",
+                "StaticMeshDescription"
             });
 
             // DO NOT add "DiggerEditor" here!

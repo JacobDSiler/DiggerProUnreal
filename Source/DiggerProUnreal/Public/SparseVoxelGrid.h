@@ -37,11 +37,8 @@ public:
 	void Initialize(UVoxelChunk* ParentChunkReference);
 	void InitializeDiggerManager();
 	bool EnsureDiggerManager();
-	FIntVector WorldToVoxelSpace(const FVector& WorldCoords);
 	bool IsPointAboveLandscape(FVector& Point);
-	UFUNCTION(BlueprintCallable)
 	float GetLandscapeHeightAtPoint(FVector Position);
-	FVector VoxelToWorldSpace(const FIntVector& VoxelCoords) const;
 
 	void RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove);
 
@@ -54,7 +51,7 @@ public:
 	// Delegate to broadcast when a new island is detected
 	UPROPERTY(BlueprintAssignable, Category = "Island Detection")
 	FOnIslandDetected OnIslandDetected;
-
+	
 
 	//A public getter for VoxelData
 	const TMap<FIntVector, FVoxelData>& GetVoxelData() const { return VoxelData; }
@@ -64,7 +61,7 @@ public:
 	void SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool& bDig);
 
 	// Retrieves the voxel's SDF value; returns true if the voxel exists
-	float GetVoxel(int32 X, int32 Y, int32 Z) const;
+	float GetVoxel(int32 X, int32 Y, int32 Z);
 
 	// Method to get all voxel data
 	TMap<FVector, float> GetVoxels() const;
@@ -77,6 +74,11 @@ public:
 	void RenderVoxels();
 
 	bool CollectIslandAtPosition(const FVector& Center, TArray<FIntVector>& OutVoxels);
+
+	bool ExtractIslandAtPosition(
+	const FVector& Center,
+	USparseVoxelGrid*& OutTempGrid,
+	TArray<FIntVector>& OutVoxels);
 	
 
 	void SetParentChunkCoordinates(FIntVector& NewParentChunkPosition)
@@ -122,6 +124,13 @@ private:
 	UPROPERTY()
 	UVoxelChunk* ParentChunk;
 
+public:
+	[[nodiscard]] UVoxelChunk* ParentChunk1() const
+	{
+		return ParentChunk;
+	}
+
+private:
 	UPROPERTY()
 	UWorld* World;
 

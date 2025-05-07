@@ -29,10 +29,15 @@ public:
 	~FDiggerEdModeToolkit();
 	void OnIslandDetectedHandler(const FIslandData& NewIslandData);
 
-
+	
 
 	[[nodiscard]]bool IsDigMode() const
 	{
+		if (TemporaryDigOverride.IsSet())
+		{
+			return TemporaryDigOverride.GetValue();
+		}
+
 		return bBrushDig;
 	}
 
@@ -108,6 +113,35 @@ public:
 	}
 
 private:
+	bool bDetailedDebug = false;
+
+	// Function to handle state change
+	/*void OnDetailedDebugCheckChanged(ECheckBoxState NewState)
+	{
+		bDetailedDebug = (NewState == ECheckBoxState::Checked);
+
+		if (ADiggerManager* Manager = GetDiggerManager())
+		{
+			if (UVoxelChunk* Chunk = Manager->GetOrCreateChunkAtChunk(ChunkPosition);)
+			{
+				if (bDetailedDebug)
+				{
+					Chunk->DebugPrintVoxelData();  // Show detailed debug
+				}
+				else
+				{
+					Chunk->DebugDrawChunk();  // Show basic chunk debug
+				}
+			}
+		}
+	}*/
+
+	// Function to check the current state of the checkbox
+	ECheckBoxState IsDetailedDebugChecked() const
+	{
+		return bDetailedDebug ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+	}
+
 	//Helpers
 	ADiggerManager* GetDiggerManager();
 
@@ -187,6 +221,7 @@ public:
 	    return Islands;
 	}
 
+	void SetTemporaryDigOverride(TOptional<bool> Override);
 	
 
 
@@ -207,12 +242,22 @@ private:
 	bool bShowRotation = false;
 	int32 SelectedBrushIndex = 0;
 	float BrushLength = 200.0f; // Default value, adjust as needed
+	bool bDebugVoxels = false;
 
 	TArray<FIslandData> Islands; // Your detected islands
 	int32 SelectedIslandIndex = INDEX_NONE; // Currently selected island
 	FRotator IslandRotation;
 	
+	
+	bool bUseBrushDigPreviewOverride = false;
+	bool bBrushDigPreviewOverride = false;
 
+	void SetBrushDigPreviewOverride(bool bInDig);
+	void ClearBrushDigPreviewOverride();
+	TOptional<bool> TemporaryDigOverride;
+
+
+	
 	TArray<TSoftObjectPtr<UStaticMesh>> CustomBrushMeshes;
 	TSharedPtr<SUniformGridPanel> CustomBrushGrid;
 	TSharedPtr<SBox> IslandGridContainer; // Add this!

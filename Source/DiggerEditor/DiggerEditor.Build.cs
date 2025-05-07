@@ -34,7 +34,8 @@ public class DiggerEditor : ModuleRules
                 "EditorSubsystem",
                 "AssetTools",
                 "ContentBrowser",
-                "EditorWidgets"
+                "MeshDescription",
+                "StaticMeshDescription",
             }
         );
     }

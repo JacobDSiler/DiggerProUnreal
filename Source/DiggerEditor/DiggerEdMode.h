@@ -25,6 +25,7 @@ public:
 	virtual void Tick(FEditorViewportClient* ViewportClient, float DeltaTime) override;
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
 	virtual bool UsesToolkits() const override;
+	virtual bool EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport) override;
 	// Your custom stuff
 	ADiggerManager* FindDiggerManager(); // Add this for Step 2
 

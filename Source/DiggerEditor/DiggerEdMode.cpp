@@ -132,12 +132,16 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
 {
     FVector HitLocation;
     FHitResult Hit;
+
+    // Retrieve the world space hit location
     if (GetMouseWorldHit(InViewportClient, HitLocation, Hit))
     {
+        // Log the hit location for debugging
+        UE_LOG(LogTemp, Log, TEXT("Click Location: %s"), *HitLocation.ToString());
+
         const bool bCtrlPressed = Click.IsControlDown();
-        const bool bShiftPressed = Click.IsShiftDown();
-        const bool bAltPressed = Click.IsAltDown();
-        
+        const bool bRightClick = Click.GetKey() == EKeys::RightMouseButton;
+
         TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = StaticCastSharedPtr<FDiggerEdModeToolkit>(Toolkit);
 
         if (DiggerToolkit.IsValid())
@@ -145,49 +149,52 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
             FVector SurfaceNormal = Hit.ImpactNormal;
             FRotator SurfaceRotation = SurfaceNormal.Rotation();
 
+            // Handle Ctrl + Click to rotate the brush based on surface normal
             if (bCtrlPressed)
             {
-                // Set brush rotation for preview/control
                 DiggerToolkit->SetBrushRotation(SurfaceRotation);
-
                 UE_LOG(LogTemp, Log, TEXT("[HandleClick] Sampled surface normal (Ctrl): %s"), *SurfaceRotation.ToString());
-                return true; // Don't apply brush — just sample rotation
+                return true;
             }
 
-            // Regular digging action
             if (ADiggerManager* Digger = FindDiggerManager())
             {
-                if (DiggerToolkit->GetCurrentBrushType() == EVoxelBrushType::Cone || DiggerToolkit->GetCurrentBrushType() == EVoxelBrushType::Cylinder)
+                EVoxelBrushType BrushType = DiggerToolkit->GetCurrentBrushType();
+
+                // Apply brush settings based on selected brush type
+                if (BrushType == EVoxelBrushType::Cone || BrushType == EVoxelBrushType::Cylinder)
                 {
                     Digger->EditorBrushLength = DiggerToolkit->GetBrushLength();
                 }
-                
-                //Logic to handle the brush rotation based on all UI state input
-                FRotator FinalRotation = DiggerToolkit->GetBrushRotation();
 
+                // Handle brush rotation
+                FRotator FinalRotation = DiggerToolkit->GetBrushRotation();
                 if (DiggerToolkit->UseSurfaceNormalRotation())
                 {
-                    // Create a quaternion that rotates UpVector to the surface normal
-                    const FVector Up = FVector::UpVector;
                     const FVector Normal = Hit.ImpactNormal.GetSafeNormal();
-
-                    const FQuat AlignRotation = FQuat::FindBetweenNormals(Up, Normal);
+                    const FQuat AlignRotation = FQuat::FindBetweenNormals(FVector::UpVector, Normal);
                     FinalRotation = (AlignRotation * FinalRotation.Quaternion()).Rotator();
                 }
-                
 
+                // Brush digging/building state from UI
+                bool bFinalBrushDig = Digger->EditorBrushDig;
 
+                // Override based on right-click
+                if (bRightClick)
+                {
+                    bFinalBrushDig = !bFinalBrushDig;
+                }
 
+                // Apply brush settings
                 Digger->EditorBrushRadius = DiggerToolkit->GetBrushRadius();
-                Digger->EditorBrushDig = DiggerToolkit->IsDigMode();
+                Digger->EditorBrushDig = bFinalBrushDig;
                 Digger->EditorBrushRotation = FinalRotation;
                 Digger->EditorBrushAngle = DiggerToolkit->GetBrushAngle();
 
-                // Calculate transient rotated offset
-                FVector Offset = DiggerToolkit->GetBrushOffset(); // Do NOT modify
+                // Brush offset calculation
+                FVector Offset = DiggerToolkit->GetBrushOffset();
                 FVector OffsetXY = FVector(Offset.X, Offset.Y, 0.f);
                 float ZDistance = Offset.Z;
-
                 FVector FinalOffset = OffsetXY;
 
                 if (DiggerToolkit->RotateToSurfaceNormal())
@@ -199,18 +206,59 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
                     FinalOffset.Z = ZDistance;
                 }
 
+                // Set final brush position
                 Digger->EditorBrushOffset = FinalOffset;
-
-                FVector VoxelCoords = HitLocation * 0.5f;
-                Digger->EditorBrushPosition = VoxelCoords;
-
+                Digger->EditorBrushPosition = HitLocation * 0.5f;  // Adjust the location if needed
                 Digger->ApplyBrushInEditor();
+
+                // Temporary override UI display for visual feedback
+                if (bRightClick)
+                {
+                    DiggerToolkit->SetTemporaryDigOverride(bFinalBrushDig);
+                }
+                else
+                {
+                    DiggerToolkit->SetTemporaryDigOverride(TOptional<bool>());
+                }
+
+                // Now use the location from the click to perform chunk operations
+                // Convert world position (HitLocation) to chunk coordinates
+                FVector ChunkPosition = HitLocation / (Digger->TerrainGridSize * Digger->ChunkSize);
+                ChunkPosition = FVector(FMath::FloorToInt(ChunkPosition.X), FMath::FloorToInt(ChunkPosition.Y), FMath::FloorToInt(ChunkPosition.Z));
+
+                /*
+                // Now use ChunkPosition to retrieve the correct chunk from the manager
+                if (DiggerToolkit->GetDetailedDebug())
+                {
+                    // Get the chunk at this hit location and call the debug method
+                    if (ADiggerManager* Manager = FindDiggerManager())
+                    {
+                        if (UVoxelChunk* Chunk = Manager->GetOrCreateChunkAtChunk(ChunkPosition))
+                        {
+                            Chunk->DebugPrintVoxelData(); // Show detailed debug
+                        }
+                    }
+                }
+                else
+                {
+                    // Use the basic chunk debug drawing
+                    if (ADiggerManager* Manager = FindDiggerManager())
+                    {
+                        if (UVoxelChunk* Chunk = Manager->GetOrCreateChunkAtChunk(ChunkPosition))
+                        {
+                            Chunk->DebugDrawChunk(); // Show basic chunk debug
+                        }
+                    }
+                }*/
+
                 return true;
             }
         }
     }
+
     return false;
 }
+
 
 
 
@@ -251,3 +299,17 @@ ADiggerManager* FDiggerEdMode::FindDiggerManager()
 	}
 	return nullptr;
 }
+
+bool FDiggerEdMode::EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
+{
+    if (Toolkit.IsValid())
+    {
+        if (TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = StaticCastSharedPtr<FDiggerEdModeToolkit>(Toolkit))
+        {
+            DiggerToolkit->SetTemporaryDigOverride(TOptional<bool>()); // Clear override
+        }
+    }
+
+    return FEdMode::EndTracking(InViewportClient, InViewport); // Return base result
+}
+

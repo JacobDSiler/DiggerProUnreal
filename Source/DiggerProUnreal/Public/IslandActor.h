@@ -6,13 +6,21 @@
 #include "GameFramework/Actor.h"
 #include "IslandActor.generated.h"
 
+class UProceduralMeshComponent;
+
 UCLASS()
 class DIGGERPROUNREAL_API AIslandActor : public AActor
 {
 	GENERATED_BODY()
 	
 public:	
-	// Sets default values for this actor's properties
+
+	// The procedural mesh component for this island
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Island")
+	UProceduralMeshComponent* ProcMesh;
+
+	void ApplyPhysics();
+	void RemovePhysics();
 	AIslandActor();
 
 protected:

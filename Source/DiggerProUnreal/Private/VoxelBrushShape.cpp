@@ -52,10 +52,10 @@ UVoxelChunk* UVoxelBrushShape::GetTargetChunkFromBrushPosition(const FVector3d& 
     if (!DiggerManager) return nullptr;
 
     // Calculate the chunk position based on the brush position
-    FIntVector ChunkPosition = DiggerManager->CalculateChunkPosition(BrushPosition);
+    FIntVector ChunkPosition = FVoxelConversion::WorldToChunk(BrushPosition);
 
     // Retrieve the chunk from the map
-    UVoxelChunk* NewTargetChunk = DiggerManager->GetOrCreateChunkAt(ChunkPosition);
+    UVoxelChunk* NewTargetChunk = DiggerManager->GetOrCreateChunkAtChunk(ChunkPosition);
     
     // Return the chunk if found, otherwise return nullptr
     return (NewTargetChunk) ? NewTargetChunk : nullptr;
@@ -257,7 +257,7 @@ void UVoxelBrushShape::ApplyCubeBrush(FBrushStroke* BrushStroke)
         {
             for (int32 Z = 0; Z < TargetChunk->GetChunkSize(); ++Z)
             {
-                FVector VoxelPosition = FVector(X, Y, Z) * TargetChunk->GetVoxelSize();
+                FVector VoxelPosition = FVector(X, Y, Z) * FVoxelConversion::LocalVoxelSize;
                 if (FVector::Dist(BrushLocation, VoxelPosition) < BrushSize)
                 {
                     TargetChunk->SetVoxel(X, Y, Z, -1.0f, bDig); // Adjust the SDF value to 'cut' into the chunk

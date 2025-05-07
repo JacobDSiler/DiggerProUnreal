@@ -22,6 +22,37 @@ public:
 
 	// Generate the mesh based on the voxel grid
 	void GenerateMesh(const UVoxelChunk* ChunkPtr);
+	
+	void GenerateMeshFromGrid(
+		USparseVoxelGrid* VoxelGrid,
+		const FVector& Origin,
+		float VoxelSize,
+		TArray<FVector>& OutVertices,
+		TArray<int32>& OutTriangles,
+		TArray<FVector>& OutNormals
+		// Add TArray<FVector2D>& OutUVs, TArray<FColor>& OutColors, TArray<FProcMeshTangent>& OutTangents if needed
+	);
+
+	void GenerateMeshForIsland(
+		USparseVoxelGrid* IslandGrid,
+		const FVector& Origin,
+		float VoxelSize,
+		TArray<FVector>& OutVertices,
+		TArray<int32>& OutTriangles,
+		TArray<FVector>& OutNormals
+	);
+
+	void AddSkirtMesh(
+	const TArray<int32>& RimVertexIndices,
+	TArray<FVector>& Vertices,
+	TArray<int32>& Triangles,
+	TArray<FVector>& Normals) const;
+
+	void FindRimVertices(
+	const TArray<FVector>& Vertices,
+	const TArray<int32>& Triangles,
+	TArray<int32>& OutRimVertexIndices);
+	
 	FVector InterpolateVertex(const FVector& P1, const FVector& P2, float SDF1, float SDF2);
 
 	int32 CalculateMarchingCubesIndex(const TArray<float>& CornerSDFValues);

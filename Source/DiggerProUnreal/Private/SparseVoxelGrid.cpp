@@ -2,10 +2,15 @@
 #include "DiggerManager.h"
 #include "DrawDebugHelpers.h"
 #include "VoxelChunk.h"
+#include "VoxelConversion.h"
 #include "Engine/World.h"
 #include "Misc/FileHelper.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Serialization/BufferArchive.h"
+
+constexpr float SDF_SOLID = -1.0f; // or whatever your convention is
+constexpr float SDF_AIR   = 1.0f;
+
 
 
 USparseVoxelGrid::USparseVoxelGrid(): LocalVoxelSize(0), DiggerManager(nullptr), ParentChunk(nullptr), World(nullptr),
@@ -61,46 +66,6 @@ bool USparseVoxelGrid::EnsureDiggerManager()
     return true;
 }
 
-// Converts voxel-local coordinates to world space (using chunk world position)
-FVector USparseVoxelGrid::VoxelToWorldSpace(const FIntVector& VoxelCoords) const
-{
-    if (!ParentChunk) {
-        //UE_LOG(LogTemp, Error, TEXT("ParentChunk is null in VoxelToWorldSpace"));
-        return FVector::ZeroVector;
-    }
-    
-    // Get the world origin of the chunk
-    FVector ChunkWorldOrigin = ParentChunk->GetWorldPosition();
-    float VoxelSize = ParentChunk->GetVoxelSize();
-    
-    // Convert voxel coordinates to world position
-    return ChunkWorldOrigin + FVector(
-        VoxelCoords.X * VoxelSize, 
-        VoxelCoords.Y * VoxelSize, 
-        VoxelCoords.Z * VoxelSize
-    );
-}
-
-
-// Converts world space to voxel-local coordinates (for a specific chunk)
-FIntVector USparseVoxelGrid::WorldToVoxelSpace(const FVector& WorldCoords)
-{
-    if (!EnsureDiggerManager()) return FIntVector::ZeroValue;
-       
-    FVector LocalCoords = WorldCoords - ParentChunk->GetWorldPosition();
-    
-    FIntVector VoxelCoords = FIntVector(
-           FMath::FloorToInt(LocalCoords.X / LocalVoxelSize),
-           FMath::FloorToInt(LocalCoords.Y / LocalVoxelSize),
-           FMath::FloorToInt(LocalCoords.Z / LocalVoxelSize)
-       );
-
-    //UE_LOG(LogTemp, Log, TEXT("WorldToVoxelSpace: World(%f,%f,%f) -> Voxel(%d,%d,%d)"),
-        //WorldCoords.X, WorldCoords.Y, WorldCoords.Z,
-        //VoxelCoords.X, VoxelCoords.Y, VoxelCoords.Z);
-
-    return VoxelCoords;
-}
 
 
 
@@ -129,23 +94,6 @@ bool USparseVoxelGrid::IsPointAboveLandscape(FVector& Point)
 
 float USparseVoxelGrid::GetLandscapeHeightAtPoint(FVector Position)
 {
-    // Define start and end points for the raycast
-    /*FVector Start = FVector(Position.X, Position.Y, Position.Z + 10000); // Start ray above the point
-    FVector End = FVector(Position.X, Position.Y, Position.Z - 10000); // End ray below the point
-
-    FHitResult HitResult;
-
-    // Perform the raycast
-    bool bHit = GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility);
-
-    if (bHit && HitResult.GetActor() && HitResult.GetActor()->IsA(ALandscape::StaticClass()))
-    {
-        // If hit landscape, return the Z position of the hit point
-        return HitResult.ImpactPoint.Z;
-    }
-
-    // If no hit or not a landscape, return a default value indicating no hit
-    return -999999.0f;*/
     return DiggerManager->GetLandscapeHeightAt(Position);
 }
 
@@ -156,6 +104,8 @@ void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue, bool &bDig)
     SetVoxel(Position.X, Position.Y, Position.Z, SDFValue, bDig);
 }
 
+
+
 // In USparseVoxelGrid, update SetVoxel to use world coordinates comparison
 // Enhanced SetVoxel for better blending and transitions
 void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool &bDig)
@@ -163,58 +113,32 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
     FIntVector VoxelKey(X, Y, Z);
     FVoxelData* ExistingVoxel = VoxelData.Find(VoxelKey);
 
+    // Compute world position of this voxel
+    FVector WorldPos = ParentChunk->GetWorldPosition(FIntVector(X, Y, Z));
+    float LandscapeHeight = DiggerManager->GetLandscapeHeightAt(FVector(WorldPos.X, WorldPos.Y, 0));
+    float DefaultSDFValue = (WorldPos.Z < LandscapeHeight) ? SDF_SOLID : SDF_AIR;
+
     if (ExistingVoxel)
     {
         float CurrentValue = ExistingVoxel->SDFValue;
-
-        if (bDig)
-        {
-            // Blend the new SDF value additively for digging
-            ExistingVoxel->SDFValue = FMath::Max(CurrentValue, NewSDFValue);
-        }
-        else
-        {
-            // Blend the new SDF value additively for adding
-            ExistingVoxel->SDFValue = FMath::Min(CurrentValue, NewSDFValue);
-        }
-
-        //UE_LOG(LogTemp, Warning, TEXT("Existing Voxel Updated at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, ExistingVoxel->SDFValue);
+        ExistingVoxel->SDFValue = bDig
+            ? FMath::Max(CurrentValue, NewSDFValue)
+            : FMath::Min(CurrentValue, NewSDFValue);
     }
     else
     {
-        float DefaultSDFValue = bDig ? 1.0f : -1.0f;  // Default to air for digging, solid for adding
-        VoxelData.Add(VoxelKey, FVoxelData(DefaultSDFValue));
-
-        // Set the new SDF value directly
-        if (bDig)
-        {
-            VoxelData[VoxelKey].SDFValue = FMath::Min(DefaultSDFValue, NewSDFValue);
-        }
-        else
-        {
-            VoxelData[VoxelKey].SDFValue = FMath::Max(DefaultSDFValue, NewSDFValue);
-        }
-
-        //UE_LOG(LogTemp, Warning, TEXT("New Voxel Added at (%d,%d,%d) with SDFValue = %f"), X, Y, Z, NewSDFValue);
+        float BlendedValue = bDig
+            ? FMath::Max(DefaultSDFValue, NewSDFValue)
+            : FMath::Min(DefaultSDFValue, NewSDFValue);
+        VoxelData.Add(VoxelKey, FVoxelData(BlendedValue));
     }
 
+    // Always mark the parent chunk dirty
     if (ParentChunk)
-    {
-        FIntVector ChunkCoords = ParentChunk->WorldToChunkCoordinates(FVector(X, Y, Z));
-        ADiggerManager* Manager = ParentChunk->GetDiggerManager();
-
-        if (Manager)
-        {
-            UVoxelChunk** FoundChunk = Manager->ChunkMap.Find(ChunkCoords);
-
-            if (FoundChunk && *FoundChunk)
-            {
-                (*FoundChunk)->MarkDirty();
-                //UE_LOG(LogTemp, Warning, TEXT("Correct chunk marked dirty for voxel at (%d,%d,%d)"), X, Y, Z);
-            }
-        }
-    }
+        ParentChunk->MarkDirty();
 }
+
+
 
 
 bool USparseVoxelGrid::SaveVoxelDataToFile(const FString& FilePath)
@@ -290,22 +214,25 @@ bool USparseVoxelGrid::LoadVoxelDataFromFile(const FString& FilePath)
 
 
 
-float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z) const
+float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z)
 {
-    const FVoxelData* Voxel = VoxelData.Find(FIntVector(X, Y, Z));
-    if (Voxel)
+    FIntVector VoxelKey(X, Y, Z);
+    FVoxelData* ExistingVoxel = VoxelData.Find(VoxelKey);
+
+    if (ExistingVoxel)
     {
-        //UE_LOG(LogTemp, Warning, TEXT("SVG: Voxel found at X=%d, Y=%d, Z=%d with SDF=%f"), X, Y, Z, Voxel->SDFValue);
-        return Voxel->SDFValue;
+        return ExistingVoxel->SDFValue;
     }
     else
     {
-    //If Z is below the landscape, return solid, otherwise return air.
-        //return Z <= GetLandscapeHeightAtPoint(FVector(X, Y, Z))? -1.0f :1.0f;
-        return 1.0f;
-        // Default to air if the voxel doesn't exist
+        FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(FIntVector(X, Y, Z));
+        float LandscapeHeight = DiggerManager->GetLandscapeHeightAt(FVector(WorldPos.X, WorldPos.Y, 0));
+        return (WorldPos.Z < LandscapeHeight) ? SDF_SOLID : SDF_AIR;
     }
 }
+
+
+
 
 TMap<FVector, float> USparseVoxelGrid::GetVoxels() const
 {
@@ -354,12 +281,215 @@ void USparseVoxelGrid::RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove)
 // Returns all voxels belonging to the island at the given position
 bool USparseVoxelGrid::CollectIslandAtPosition(const FVector& Center, TArray<FIntVector>& OutVoxels)
 {
-    // Use your island detection logic to find the island at Center
-    // For example, run BFS from the Center voxel, collecting all connected voxels below SDF threshold
-    // Fill OutVoxels with the result
-    // Return true if successful, false otherwise
+    OutVoxels.Empty();
+
+    // Convert world position to voxel space using the helper
+    FIntVector StartVoxel = FVoxelConversion::WorldToLocalVoxel(Center);
+
+    // Log conversion info
+    UE_LOG(LogTemp, Warning, TEXT("Island extraction started at world position: %s (voxel space: %s)"), *Center.ToString(), *StartVoxel.ToString());
+
+    // SDF threshold (use your default or expose as parameter)
+    float SDFThreshold = 0.0f;
+
+    // Lambda to check if a voxel is solid
+    auto IsSolid = [&](const FIntVector& Voxel) -> bool
+    {
+        const FVoxelData* Data = VoxelData.Find(Voxel);
+        return Data && Data->SDFValue < SDFThreshold;
+    };
+
+    // Early out if the start voxel is not solid
+    if (!IsSolid(StartVoxel))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Start voxel is not solid. Aborting extraction."));
+
+        // Log surrounding voxel data for debugging
+        for (int32 dx = -1; dx <= 1; ++dx)
+        for (int32 dy = -1; dy <= 1; ++dy)
+        for (int32 dz = -1; dz <= 1; ++dz)
+        {
+            FIntVector P = StartVoxel + FIntVector(dx, dy, dz);
+            const FVoxelData* D = VoxelData.Find(P);
+            if (D)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Neighbor voxel %s: SDF=%f"), *P.ToString(), D->SDFValue);
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Neighbor voxel %s: not found"), *P.ToString());
+            }
+        }
+
+        return false;
+    }
+
+    TSet<FIntVector> Visited;
+    TQueue<FIntVector> Queue;
+    Queue.Enqueue(StartVoxel);
+    Visited.Add(StartVoxel);
+
+    while (!Queue.IsEmpty())
+    {
+        FIntVector Current;
+        Queue.Dequeue(Current);
+
+        OutVoxels.Add(Current);
+
+        // 6-connected neighbors
+        static const FIntVector Dirs[] = {
+            {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1}
+        };
+        for (const FIntVector& Dir : Dirs)
+        {
+            FIntVector Neighbor = Current + Dir;
+            if (!Visited.Contains(Neighbor) && IsSolid(Neighbor))
+            {
+                Queue.Enqueue(Neighbor);
+                Visited.Add(Neighbor);
+            }
+        }
+    }
+
+    return OutVoxels.Num() > 0;
+}
+
+
+bool USparseVoxelGrid::ExtractIslandAtPosition(
+    const FVector& Center,
+    USparseVoxelGrid*& OutTempGrid,
+    TArray<FIntVector>& OutVoxels)
+{
+    OutVoxels.Empty();
+    OutTempGrid = nullptr;
+
+    // Step 1: Convert Center from World Space to Voxel Space Correctly
+    FIntVector CenterVoxelCoords = FVoxelConversion::WorldToLocalVoxel(Center);
+    
+    UE_LOG(LogTemp, Warning, TEXT("Island extraction started at world position: %s (voxel space: %s)"),
+        *Center.ToString(), *CenterVoxelCoords.ToString());
+
+    float SDFThreshold = 0.0f;
+
+    auto IsSolid = [&](const FIntVector& Voxel) -> bool
+    {
+        const FVoxelData* Data = VoxelData.Find(Voxel);
+        return Data && ((Data->SDFValue <= 0.0f) || (Data->SDFValue < SDFThreshold));
+    };
+
+    // Step 2: Find a solid voxel nearby
+    FIntVector StartVoxel = CenterVoxelCoords;
+    bool bFoundStart = false;
+
+    const int32 SearchRadius = 5;
+    for (int32 dx = -SearchRadius; dx <= SearchRadius && !bFoundStart; ++dx)
+    for (int32 dy = -SearchRadius; dy <= SearchRadius && !bFoundStart; ++dy)
+    for (int32 dz = -SearchRadius; dz <= SearchRadius && !bFoundStart; ++dz)
+    {
+        FIntVector TestVoxel = CenterVoxelCoords + FIntVector(dx, dy, dz);
+        if (IsSolid(TestVoxel))
+        {
+            StartVoxel = TestVoxel;
+            bFoundStart = true;
+        }
+    }
+
+    if (!bFoundStart)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No solid voxel found near the provided position. Aborting extraction."));
+        return false;
+    }
+
+    // Step 3: BFS to find connected solid region (island)
+    TSet<FIntVector> Visited;
+    TQueue<FIntVector> Queue;
+    Queue.Enqueue(StartVoxel);
+    Visited.Add(StartVoxel);
+
+    FVector AccumulatedPos = FVector(StartVoxel);
+    int32 Count = 1;
+    OutVoxels.Add(StartVoxel);
+
+    UE_LOG(LogTemp, Warning, TEXT("Island search started from voxel: %s"), *StartVoxel.ToString());
+
+    static const FIntVector Dirs[] = {
+        {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1}
+    };
+
+    bool bFoundSecondNil = false;
+
+    while (!Queue.IsEmpty())
+    {
+        FIntVector Current;
+        Queue.Dequeue(Current);
+
+        UE_LOG(LogTemp, Warning, TEXT("Processing voxel: %s"), *Current.ToString());
+
+        for (const FIntVector& Dir : Dirs)
+        {
+            FIntVector Neighbor = Current + Dir;
+            const FVoxelData* Data = VoxelData.Find(Neighbor);
+
+            if (!Visited.Contains(Neighbor) && IsSolid(Neighbor))
+            {
+                Queue.Enqueue(Neighbor);
+                Visited.Add(Neighbor);
+
+                OutVoxels.Add(Neighbor);
+                AccumulatedPos += FVector(Neighbor);
+                Count++;
+            }
+            else if (Data == nullptr)
+            {
+                if (bFoundSecondNil)
+                {
+                    goto StopExtraction; // Stops once we hit the second nil voxel
+                }
+                bFoundSecondNil = true;
+            }
+        }
+    }
+
+StopExtraction:
+
+    if (OutVoxels.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No voxels found in island extraction."));
+        return false;
+    }
+
+    // Step 4: Create the output grid
+    OutTempGrid = NewObject<USparseVoxelGrid>(GetOuter());
+    OutTempGrid->VoxelData.Reserve(OutVoxels.Num());
+    OutTempGrid->LocalVoxelSize = this->LocalVoxelSize;
+    OutTempGrid->ParentChunk = this->ParentChunk;
+
+    for (const FIntVector& Voxel : OutVoxels)
+    {
+        if (FVoxelData* Data = VoxelData.Find(Voxel))
+        {
+            OutTempGrid->VoxelData.Add(Voxel, *Data);
+        }
+    }
+
+    RemoveVoxels(OutVoxels);
+
+    // Step 5: Compute world-space center of mass correctly
+    FVector CenterOfMass = AccumulatedPos / static_cast<float>(Count);
+    FIntVector Rounded = FIntVector(FMath::RoundToInt(CenterOfMass.X),
+                                    FMath::RoundToInt(CenterOfMass.Y),
+                                    FMath::RoundToInt(CenterOfMass.Z));
+
+    FVector WorldCenterOfMass = FVoxelConversion::LocalVoxelToWorld(Rounded);
+
+    UE_LOG(LogTemp, Warning, TEXT("Extracted %d voxels for island. Center at voxel space: %s (world: %s)."),
+        OutVoxels.Num(), *CenterOfMass.ToString(), *WorldCenterOfMass.ToString());
+
     return true;
 }
+
+
+
 
 TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold /* usually 0.0f */) const
 {
@@ -380,6 +510,9 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold /* usuall
         if (Visited.Contains(Start) || Elem.Value.SDFValue >= SDFThreshold)
             continue;
 
+        // Log detected voxel starting position
+        UE_LOG(LogTemp, Warning, TEXT("Starting voxel detection: %s"), *Start.ToString());
+
         // New island found, initialize island data
         FIslandData NewIsland;
         NewIsland.IslandID = NextAvailableIslandID++; // Assign unique IslandID
@@ -396,6 +529,9 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold /* usuall
         {
             FIntVector Current;
             Queue.Dequeue(Current);
+
+            // Log each voxel added to the island
+            UE_LOG(LogTemp, Warning, TEXT("Voxel added to island: %s"), *Current.ToString());
 
             // Add voxel to the island
             NewIsland.Voxels.Add(Current);
@@ -424,20 +560,23 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold /* usuall
         {
             IslandLocation /= NewIsland.VoxelCount;
         }
+
+        // Log island location before conversion
+        UE_LOG(LogTemp, Warning, TEXT("Island location before conversion: %s"), *IslandLocation.ToString());
+
         NewIsland.Location = IslandLocation;
+        NewIsland.Location = FVoxelConversion::LocalVoxelToWorld(FIntVector(IslandLocation));// * 2.2f;
+
+        // Log final world space island location
+        UE_LOG(LogTemp, Warning, TEXT("Final world-space island location: %s"), *NewIsland.Location.ToString());
 
         // Add the island data to the list
         Islands.Add(NewIsland);
-
-        // Broadcast the detection event if bound
-       // if (DiggerManager)
-        //{
-         //   DiggerManager->BroadcastIslandDetected(NewIsland);
-        //}
     }
 
     return Islands;
 }
+
 
 
 
@@ -468,7 +607,7 @@ void USparseVoxelGrid::RenderVoxels() {
         FVoxelData VoxelDataValue = Voxel.Value;
 
         // Convert voxel coordinates to world space
-        FVector WorldPos = VoxelToWorldSpace(VoxelCoords);
+        FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(VoxelCoords);
         FVector Center = WorldPos + FVector(LocalVoxelSize / 2); // Adjust to the center of the voxel
 
         float SDFValue = VoxelDataValue.SDFValue; // Access the SDF value from the VoxelData

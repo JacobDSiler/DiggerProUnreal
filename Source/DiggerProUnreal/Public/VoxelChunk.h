@@ -50,10 +50,7 @@ public:
     float GetVoxel(int32 X, int32 Y, int32 Z) const;
 
     // Coordinate conversion
-    FIntVector WorldToChunkCoordinates(const FVector& WorldCoords) const;
-    FVector ChunkToWorldCoordinates(const FVector& ChunkCoords) const;
-    FIntVector WorldToVoxelCoordinates(const FVector& WorldCoords) const;
-    FVector VoxelToWorldCoordinates(const FIntVector& VoxelCoords) const;
+
     bool IsValidChunkLocalCoordinate(FVector Position) const;
     bool IsValidChunkLocalCoordinate(int32 LocalX, int32 LocalY, int32 LocalZ) const;
     FVector GetWorldPosition(const FIntVector& VoxelCoordinates) const;
@@ -100,6 +97,8 @@ private:
     
     FIntVector ChunkCoordinates;
     int32 ChunkSize;
+
+
 
 private:
     int16 TerrainGridSize; // Default size of 1 meter

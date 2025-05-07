@@ -18,12 +18,16 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
+#include "VoxelConversion.h"
 #include "UObject/Package.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 
+
 #include "DiggerManager.generated.h"
 
+
+class AIslandActor;
 
 // Helper struct for an island
 struct FIsland
@@ -115,8 +119,15 @@ struct FIslandData
     TArray<FIntVector> Voxels;
 };
 
-
-
+struct FIslandMeshData
+{
+    TArray<FVector> Vertices;
+    TArray<int32> Triangles;
+    TArray<FVector> Normals;
+    // Add UVs, Colors, Tangents if needed
+    FVector MeshOrigin;
+    bool bValid = false;
+};
 
 
 UCLASS(Blueprintable)
@@ -126,17 +137,28 @@ class DIGGERPROUNREAL_API ADiggerManager : public AActor
 
 public:
     ADiggerManager();
+    void ApplyBrushToAllChunks(FBrushStroke& BrushStroke);
     UStaticMesh* ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName);
+    AIslandActor* SpawnIslandActorFromIslandAtPosition(const FVector& IslandCenter, bool bEnablePhysics);
+
+    FIslandMeshData ExtractAndGenerateIslandMesh(const FVector& IslandCenter);
+    void ConvertIslandAtPositionToPhysicsObject(const FVector& Vector);
+    void ConvertIslandAtPositionToStaticMesh(const FVector& Vector);
+
+    template<typename TIn, typename TOut>
+    TArray<TOut> ConvertArray(const TArray<TIn>& InArray)
+        {
+            TArray<TOut> OutArray;
+            OutArray.Reserve(InArray.Num());
+            for (const TIn& Item : InArray)
+            {
+                OutArray.Add(TOut(Item));
+            }
+            return OutArray;
+        }
+
 
 #if WITH_EDITOR
-    // Add this member
-   /* FDiggerEdModeToolkit* EditorToolkit = nullptr;
-
-    // Add a setter
-    void SetEditorToolkit(FDiggerEdModeToolkit* InToolkit)
-    {
-        EditorToolkit = InToolkit;
-    }*/
     
     // Native C++ delegates (not UObject/Blueprint)
     DECLARE_MULTICAST_DELEGATE(FIslandsDetectionStartedEvent);
@@ -144,9 +166,7 @@ public:
 
     DECLARE_MULTICAST_DELEGATE_OneParam(FIslandDetectedEvent, const FIslandData&);
     FIslandDetectedEvent OnIslandDetected;
-
-
-
+    
 
     // Method to broadcast the event
     UFUNCTION(BlueprintCallable, Category = "Island Detection")
@@ -208,6 +228,16 @@ public:
     UFUNCTION(CallInEditor, Category="Digger Brush|Actions")
     void ApplyBrushInEditor();
 
+    AIslandActor* SpawnIslandActorWithMeshData(
+        const FVector& SpawnLocation,
+        const FIslandMeshData& MeshData,
+        bool bEnablePhysics
+    );
+    void SaveIslandMeshAsStaticMesh(
+        const FString& AssetName,
+        const FIslandMeshData& MeshData
+    );
+
     UFUNCTION(BlueprintCallable, CallInEditor, Category = "Islands")
     AStaticMeshActor* SpawnPhysicsIsland(UStaticMesh* StaticMesh, FVector Location = FVector::ZeroVector)
     {
@@ -239,6 +269,7 @@ protected:
 public:
     // Editor support
     virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+    void OnConstruction(const FTransform& Transform);
     virtual void PostEditMove(bool bFinished) override;
     virtual void PostEditUndo() override;
 
@@ -251,22 +282,19 @@ public:
     TArray<FIslandData> GetAllIslands() const;
     //void UpdateIslandsFromChunk(UVoxelChunk* Chunk);
 
-    FVector WorldToChunkCoordinates(FVector Position) const
-    {
-        return FVector(WorldToChunkCoordinates(Position.X, Position.Y, Position.Z));
-    }
 
 #endif
 
 public:
-
-    FVector ChunkToWorldCoordinates(int32 XInd, int32 YInd, int32 ZInd) const
+    
+   /* FVector ChunkToWorldCoordinates(int32 XInd, int32 YInd, int32 ZInd) const
     {
-        return FVector(XInd * ChunkSize * TerrainGridSize, YInd * ChunkSize * TerrainGridSize, ZInd * ChunkSize * TerrainGridSize);
-    }
+        FIntVector ChunkPosition=FIntVector(XInd, YInd, ZInd);
+        return FVoxelConversion::ChunkToWorld(ChunkPosition);
+    }*/
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
-    int32 ChunkSize = 32;  // Number of subdivisions per grid size
+    int32 ChunkSize = 32;  // Number of grif squares per chunk
 
     // Chunk and grid settings
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
@@ -300,18 +328,16 @@ public:
 
     // Get the relevant voxel chunk based on position
     UFUNCTION(BlueprintCallable, Category = "Chunk Management")
-    UVoxelChunk* GetOrCreateChunkAt(const FIntVector& ProposedChunkPosition);
-
+    UVoxelChunk* GetOrCreateChunkAtWorld(const FVector& Vector);
+    
     UFUNCTION(BlueprintCallable, Category = "Debug")
     void DebugLogVoxelChunkGrid() const;
 
-    //Helper functions
-    //Calculate a chunk position according to the chunk grid.
-    FIntVector CalculateChunkPosition(const FIntVector3& WorldPosition) const;
-    FIntVector CalculateChunkPosition(const FVector3d& WorldPosition) const;
-    UVoxelChunk* GetOrCreateChunkAt(const FVector3d& ProposedChunkPosition);
-    UVoxelChunk* GetOrCreateChunkAt(const float& ProposedChunkX, const float& ProposedChunkY,
+
+    UVoxelChunk* GetOrCreateChunkAtCoordinates(const float& ProposedChunkX, const float& ProposedChunkY,
                                     const float& ProposedChunkZ);
+    UVoxelChunk* GetOrCreateChunkAtChunk(const FIntVector& ChunkCoords);
+    
 
     // Debug voxel system
     UFUNCTION(BlueprintCallable, Category = "Voxel Debug")
@@ -350,91 +376,16 @@ private:
     TArray<UProceduralMeshComponent*> ProceduralMeshComponents;
 
 
-/*
-UStaticMesh* CreateStaticMeshFromRawData(
-    UObject* Outer,
-    const FString& AssetName,
-    const TArray<FVector>& Vertices,
-    const TArray<int32>& Triangles,
-    const TArray<FVector>& Normals,
-    const TArray<FVector2D>& UVs,
-    const TArray<FColor>& Colors,
-    const TArray<FProcMeshTangent>& Tangents
-)
-{
-    // 1. Create a new package for the asset
-    FString PackageName = FString::Printf(TEXT("/Game/Islands/%s"), *AssetName);
-    UPackage* MeshPackage = CreatePackage(*PackageName);
-
-    // 2. Create the static mesh object
-    UStaticMesh* StaticMesh = NewObject<UStaticMesh>(MeshPackage, *AssetName, RF_Public | RF_Standalone);
-    if (!StaticMesh)
-    {
-        UE_LOG(LogTemp, Error, TEXT("Failed to create UStaticMesh object!"));
-        return nullptr;
-    }
-
-    // 3. Create a MeshDescription
-    FMeshDescription MeshDescription;
-    FStaticMeshAttributes Attributes(MeshDescription);
-    Attributes.Register();
-
-    // 4. Create a polygon group (single material slot)
-    FPolygonGroupID PolyGroupID = MeshDescription.CreatePolygonGroup();
-
-    // 5. Build the mesh
-    TMap<int32, FVertexID> IndexToVertexID;
-    for (int32 i = 0; i < Vertices.Num(); ++i)
-    {
-        FVertexID VertexID = MeshDescription.CreateVertex();
-        Attributes.GetVertexPositions()[VertexID] = Vertices[i];
-        IndexToVertexID.Add(i, VertexID);
-    }
-
-    // 6. Create triangles and set attributes
-    for (int32 i = 0; i < Triangles.Num(); i += 3)
-    {
-        TArray<FVertexInstanceID> VertexInstanceIDs;
-        for (int32 j = 0; j < 3; ++j)
-        {
-            FVertexInstanceID InstanceID = MeshDescription.CreateVertexInstance(IndexToVertexID[Triangles[i + j]]);
-            // Set normals
-            if (Normals.IsValidIndex(Triangles[i + j]))
-                Attributes.GetVertexInstanceNormals()[InstanceID] = Normals[Triangles[i + j]];
-            // Set UVs (only first channel for simplicity)
-            if (UVs.IsValidIndex(Triangles[i + j]))
-                Attributes.GetVertexInstanceUVs()[InstanceID][0] = UVs[Triangles[i + j]];
-            // Set colors
-            if (Colors.IsValidIndex(Triangles[i + j]))
-                Attributes.GetVertexInstanceColors()[InstanceID] = FVector4f(Colors[Triangles[i + j]]);
-            // Set tangents
-            if (Tangents.IsValidIndex(Triangles[i + j]))
-            {
-                Attributes.GetVertexInstanceTangents()[InstanceID] = (FVector3f)Tangents[Triangles[i + j]].TangentX;
-                Attributes.GetVertexInstanceBinormalSigns()[InstanceID] = Tangents[Triangles[i + j]].bFlipTangentY ? -1.0f : 1.0f;
-            }
-            VertexInstanceIDs.Add(InstanceID);
-        }
-        // Create the polygon (triangle)
-        MeshDescription.CreatePolygon(PolyGroupID, VertexInstanceIDs);
-    }
-
-    // 7. Set the mesh description
-    StaticMesh->SetMeshDescription(0, MeshDescription);
-    StaticMesh->CommitMeshDescription(0);
-
-    // 8. Build the static mesh
-    StaticMesh->Build(false);
-
-    // 9. Register and save the asset
-    FAssetRegistryModule::AssetCreated(StaticMesh);
-    StaticMesh->MarkPackageDirty();
-
-    UE_LOG(LogTemp, Warning, TEXT("Static mesh asset created: %s"), *PackageName);
-
-    return StaticMesh;
-}
-*/
+    UStaticMesh* CreateStaticMeshFromRawData(
+        UObject* Outer,
+        const FString& AssetName,
+        const TArray<FVector3f>& Vertices,
+        const TArray<int32>& Triangles,
+        const TArray<FVector3f>& Normals,
+        const TArray<FVector2d>& UVs,
+        const TArray<FColor>& Colors,
+        const TArray<FProcMeshTangent>& Tangents
+    );
 
 
 public:
@@ -461,6 +412,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Landscape Tools")
     float GetLandscapeHeightAt(FVector WorldPosition);
     bool GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector& Location, float& OutHeight);
+    FVector GetLandscapeNormalAt(const FVector& WorldPosition);
 
 private:
 
@@ -468,15 +420,5 @@ private:
     const int32 MaxUndoLength = 10; // Example limit
 
     FTimerHandle ChunkProcessTimerHandle;
-
-    //Space Conversion Helper Methods
-    FIntVector WorldToChunkCoordinates(float x, float y, float z) const
-    {
-        const float ChunkWorldSize = ChunkSize * TerrainGridSize;
-        return FIntVector(
-            FMath::FloorToInt(x / ChunkWorldSize),
-            FMath::FloorToInt(y / ChunkWorldSize),
-            FMath::FloorToInt(z / ChunkWorldSize)
-        );
-    }
+    
 };

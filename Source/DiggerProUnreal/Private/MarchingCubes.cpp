@@ -339,7 +339,7 @@ UMarchingCubes::UMarchingCubes()
 
 // Constructor with FObjectInitializer and UVoxelChunk
 UMarchingCubes::UMarchingCubes(const FObjectInitializer& ObjectInitializer, const UVoxelChunk* VoxelChunk)
-	: UObject(ObjectInitializer), MyVoxelChunk(VoxelChunk), DiggerManager(nullptr)
+	: UObject(ObjectInitializer), MyVoxelChunk(VoxelChunk), DiggerManager(nullptr), VoxelGrid(nullptr)
 {
 }
 
@@ -347,6 +347,53 @@ void UMarchingCubes::Initialize(ADiggerManager* InDiggerManager)
 {
 	DiggerManager = InDiggerManager;
 }
+
+void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
+{
+    if (!ChunkPtr) {
+        UE_LOG(LogTemp, Error, TEXT("ChunkPtr is null in UMarchingCubes::GenerateMesh()!"));
+        return;
+    }
+
+    if (!DiggerManager) {
+        UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in UMarchingCubes::GenerateMesh()!"));
+        DiggerManager = ChunkPtr->GetDiggerManager();
+        if (!DiggerManager) return;
+    }
+
+    int32 SectionIndex = ChunkPtr->GetSectionIndex();
+    UE_LOG(LogTemp, Error, TEXT("Generating Mesh for Section with Section ID: %i"), SectionIndex);
+
+    USparseVoxelGrid* InVoxelGrid = ChunkPtr->GetSparseVoxelGrid();
+    if (!InVoxelGrid || InVoxelGrid->VoxelData.IsEmpty()) {
+        UE_LOG(LogTemp, Warning, TEXT("No InVoxelGrid and/or data to generate mesh! InVoxelGrid: %s, VoxelData.Num(): %d"),
+            InVoxelGrid ? TEXT("Valid") : TEXT("Invalid"),
+            InVoxelGrid ? InVoxelGrid->VoxelData.Num() : 0);
+        return;
+    }
+
+    FVector ChunkOrigin = FVector(ChunkPtr->GetWorldPosition());
+    FVector UnderSurfaceOffset(0, 0, 0); // Or your actual offset
+    float VoxelSize = DiggerManager->VoxelSize;
+
+    TArray<FVector> OutVertices;
+    TArray<int32> OutTriangles;
+    TArray<FVector> OutNormals;
+
+    // Call the modular function, passing the offset
+    GenerateMeshFromGrid(InVoxelGrid, ChunkOrigin, VoxelSize, OutVertices, OutTriangles, OutNormals);
+
+    if (OutVertices.Num() > 0 && OutTriangles.Num() > 0 && OutNormals.Num() > 0) {
+        AsyncTask(ENamedThreads::GameThread, [this, SectionIndex, OutVertices, OutTriangles, OutNormals]()
+        {
+            ReconstructMeshSection(SectionIndex, OutVertices, OutTriangles, OutNormals);
+        });
+    } else {
+        UE_LOG(LogTemp, Warning, TEXT("Empty mesh data in GenerateMesh"));
+    }
+}
+
+
 
 bool UMarchingCubes::IsValidVoxel(const FIntVector& Position) const {
 	return Position.X >= 0 && Position.X < DiggerManager->ChunkSize &&
@@ -397,43 +444,119 @@ FVector UMarchingCubes::ApplyLandscapeTransition(const FVector& VertexWS) const
     return VertexWS;
 }
 
-
-void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
+void UMarchingCubes::AddSkirtMesh(
+    const TArray<int32>& RimVertexIndices,
+    TArray<FVector>& Vertices,
+    TArray<int32>& Triangles,
+    TArray<FVector>& Normals) const
 {
-	if (!ChunkPtr) {
-		UE_LOG(LogTemp, Error, TEXT("ChunkPtr is null in UMarchingCubes::GenerateMesh()!"));
-		return;
-	}
-    
-	if (!DiggerManager) {
-		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in UMarchingCubes::GenerateMesh()!"));
-		DiggerManager = ChunkPtr->GetDiggerManager();
-		if (!DiggerManager) return;
-	}
+    int32 NumRim = RimVertexIndices.Num();
+    if (NumRim < 2) return;
 
-	int32 SectionIndex = ChunkPtr->GetSectionIndex();
-	UE_LOG(LogTemp, Error, TEXT("Generating Mesh for Section with Section ID: %i"), SectionIndex);
+    TArray<int32> SkirtVertexIndices;
+    SkirtVertexIndices.SetNum(NumRim);
 
-	if(!VoxelGrid) VoxelGrid = ChunkPtr->GetSparseVoxelGrid();
-	if (!VoxelGrid || VoxelGrid->GetVoxelData().IsEmpty() || VoxelGrid->VoxelData.IsEmpty()) {
-		UE_LOG(LogTemp, Warning, TEXT("No UVoxelGrid and/or data to generate mesh! VoxelGrid: %s, VoxelData.Num(): %d"), 
-			   VoxelGrid ? TEXT("Valid") : TEXT("Invalid"), 
-			   VoxelGrid ? VoxelGrid->VoxelData.Num() : 0);
-		return;
-	}
+    const float SkirtOffset = 1.0f; // 1cm above the landscape
 
-	TArray<FVector> OutVertices;
-	TArray<int32> OutTriangles;
-	TArray<FVector> Normals;
-	// Sort the conversion formula used so it works and aligns properly in worldspace. Is this looking for voxel, chunk, or worldspace coordinates?
-	FVector ChunkOrigin;
-	FVector  UnderSurfaceOffset(0,0,0);
-		ChunkOrigin = FVector(ChunkPtr->GetWorldPosition());
+    // Add skirt vertices (projected to landscape, offset along normal)
+    for (int32 i = 0; i < NumRim; ++i)
+    {
+        const FVector& RimV = Vertices[RimVertexIndices[i]];
+        FVector SkirtV = RimV;
+        SkirtV.Z = DiggerManager->GetLandscapeHeightAt(RimV);
 
-	float VoxelSize= DiggerManager->VoxelSize;
-	
+        // Offset along the landscape normal to avoid z-fighting and ensure visibility
+        FVector LandscapeNormal = DiggerManager->GetLandscapeNormalAt(RimV);
+        SkirtV += LandscapeNormal * SkirtOffset;
+
+        SkirtVertexIndices[i] = Vertices.Add(SkirtV);
+    }
+
+    // Add triangles for the skirt
+    for (int32 i = 0; i < NumRim; ++i)
+    {
+        int32 Next = (i + 1) % NumRim;
+        int32 RimA = RimVertexIndices[i];
+        int32 RimB = RimVertexIndices[Next];
+        int32 SkirtA = SkirtVertexIndices[i];
+        int32 SkirtB = SkirtVertexIndices[Next];
+
+        // Triangle 1
+        Triangles.Add(RimA);
+        Triangles.Add(RimB);
+        Triangles.Add(SkirtB);
+
+        // Triangle 2
+        Triangles.Add(RimA);
+        Triangles.Add(SkirtB);
+        Triangles.Add(SkirtA);
+    }
+
+    // Add normals for new skirt vertices (use landscape normal)
+    for (int32 i = 0; i < NumRim; ++i)
+    {
+        FVector LandscapeNormal = DiggerManager->GetLandscapeNormalAt(Vertices[SkirtVertexIndices[i]]);
+        Normals.Add(LandscapeNormal);
+    }
+}
+
+
+
+void UMarchingCubes::FindRimVertices(
+    const TArray<FVector>& Vertices,
+    const TArray<int32>& Triangles,
+    TArray<int32>& OutRimVertexIndices)
+{
+    // Map to count how many times each edge appears
+    TMap<TPair<int32, int32>, int32> EdgeCount;
+
+    // Count edges
+    for (int32 i = 0; i < Triangles.Num(); i += 3)
+    {
+        int32 Indices[3] = {Triangles[i], Triangles[i+1], Triangles[i+2]};
+        for (int32 e = 0; e < 3; ++e)
+        {
+            int32 A = Indices[e];
+            int32 B = Indices[(e+1)%3];
+            // Always store edge with smaller index first for consistency
+            TPair<int32, int32> Edge = (A < B) ? TPair<int32, int32>(A, B) : TPair<int32, int32>(B, A);
+            EdgeCount.FindOrAdd(Edge)++;
+        }
+    }
+
+    // Collect all vertices that are part of a boundary edge (used only once)
+    TSet<int32> RimSet;
+    for (const auto& Pair : EdgeCount)
+    {
+        if (Pair.Value == 1) // Boundary edge
+        {
+            RimSet.Add(Pair.Key.Key);
+            RimSet.Add(Pair.Key.Value);
+        }
+    }
+    OutRimVertexIndices = RimSet.Array();
+}
+
+
+
+void UMarchingCubes::GenerateMeshFromGrid(
+    USparseVoxelGrid* InVoxelGrid,
+    const FVector& Origin,
+    float VoxelSize,
+    TArray<FVector>& OutVertices,
+    TArray<int32>& OutTriangles,
+    TArray<FVector>& OutNormals
+)
+{
+	FVector UnderSurfaceOffset = FVector(0.0f,0.0f,-0.01f);
+    if (!InVoxelGrid || InVoxelGrid->VoxelData.IsEmpty()) {
+        UE_LOG(LogTemp, Warning, TEXT("Invalid or empty VoxelGrid in GenerateMeshFromGrid!"));
+        return;
+    }
+
     TMap<FVector, int32> VertexCache;
-    for (const auto& Voxel : VoxelGrid->VoxelData) {
+
+    for (const auto& Voxel : InVoxelGrid->VoxelData) {
         FIntVector VoxelCoords = Voxel.Key;
         FVoxelData VoxelValue = Voxel.Value;
 
@@ -442,13 +565,12 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 
         for (int32 i = 0; i < 8; i++) {
             FIntVector CornerCoords = VoxelCoords + GetCornerOffset(i);
-        	// IMPORTANT: Precise world position calculation
-        	CornerWSPositions[i] = ChunkOrigin + FVector(
-				CornerCoords.X * VoxelSize,
-				CornerCoords.Y * VoxelSize,
-				CornerCoords.Z * VoxelSize
-			);
-        	CornerSDFValues[i] = VoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
+            CornerWSPositions[i] = Origin + FVector(
+                CornerCoords.X * VoxelSize,
+                CornerCoords.Y * VoxelSize,
+                CornerCoords.Z * VoxelSize
+            );
+            CornerSDFValues[i] = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
         }
 
         TArray<float> SDFValuesArray;
@@ -465,16 +587,14 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
             for (int32 j = 0; j < 3; ++j) {
                 int32 EdgeIndex = TriangleConnectionTable[CubeIndex][i + j];
                 FVector Vertex = InterpolateVertex(
-                    CornerWSPositions[EdgeConnection[EdgeIndex][0]], 
-                    CornerWSPositions[EdgeConnection[EdgeIndex][1]], 
-                    CornerSDFValues[EdgeConnection[EdgeIndex][0]], 
-                    CornerSDFValues[EdgeConnection[EdgeIndex][1]]);
-            	// UnderSurfaceOffset is a tiny negative vector that offsets the
-            	// mesh down slightly such that it sits under the landscape just enough
-            	// to avoid flickering between the hole mesh and the landscape surface above it.
-				FVector AdjustedVertex = ApplyLandscapeTransition(Vertex + UnderSurfaceOffset);
-				Vertices[j] = AdjustedVertex;
-
+                    CornerWSPositions[EdgeConnection[EdgeIndex][0]],
+                    CornerWSPositions[EdgeConnection[EdgeIndex][1]],
+                    CornerSDFValues[EdgeConnection[EdgeIndex][0]],
+                    CornerSDFValues[EdgeConnection[EdgeIndex][1]]
+                );
+                // Apply offset and transition as in original
+                FVector AdjustedVertex = ApplyLandscapeTransition(Vertex + UnderSurfaceOffset);
+                Vertices[j] = AdjustedVertex;
             }
 
             for (int32 j = 0; j < 3; ++j) {
@@ -490,47 +610,55 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
         }
     }
 
-    // Calculate smooth normals
-    TArray<FVector> VertexNormals;
-    VertexNormals.SetNum(OutVertices.Num(), false);
+	/*// 1. Find rim vertices
+	TArray<int32> RimVertexIndices;
+	FindRimVertices(OutVertices, OutTriangles, RimVertexIndices);
 
-    // Initialize normals to zero
-    for (int32 i = 0; i < VertexNormals.Num(); ++i) {
-        VertexNormals[i] = FVector::ZeroVector;
+	// 2. Add skirt mesh
+	AddSkirtMesh(RimVertexIndices, OutVertices, OutTriangles, OutNormals);
+
+	// 3. (Optional) Recompute normals for all triangles if you want smooth shading
+	// ... (your normal calculation code)*/
+
+
+    // Calculate smooth normals (as in original)
+    OutNormals.SetNum(OutVertices.Num(), false);
+    for (int32 i = 0; i < OutNormals.Num(); ++i) {
+        OutNormals[i] = FVector::ZeroVector;
     }
 
-    // Calculate face normals and accumulate
     for (int32 i = 0; i < OutTriangles.Num(); i += 3) {
-        FVector Normal = FVector::CrossProduct(OutVertices[OutTriangles[i+1]] - OutVertices[OutTriangles[i]], 
-                                                OutVertices[OutTriangles[i+2]] - OutVertices[OutTriangles[i]]).GetSafeNormal();
-    	Normal=-Normal;
-        VertexNormals[OutTriangles[i]] += Normal;
-        VertexNormals[OutTriangles[i+1]] += Normal;
-        VertexNormals[OutTriangles[i+2]] += Normal;
+        const FVector& A = OutVertices[OutTriangles[i]];
+        const FVector& B = OutVertices[OutTriangles[i + 1]];
+        const FVector& C = OutVertices[OutTriangles[i + 2]];
+        FVector Normal = FVector::CrossProduct(B - A, C - A).GetSafeNormal();
+        Normal = -Normal; // Flip as in original
+        OutNormals[OutTriangles[i]]     += Normal;
+        OutNormals[OutTriangles[i + 1]] += Normal;
+        OutNormals[OutTriangles[i + 2]] += Normal;
     }
 
-    // Normalize vertex normals
-	for (int32 i = 0; i < VertexNormals.Num(); ++i) {
-        VertexNormals[i].Normalize();
+    for (int32 i = 0; i < OutNormals.Num(); ++i) {
+        OutNormals[i].Normalize();
     }
 
-    UE_LOG(LogTemp, Log, TEXT("Mesh generated with %d OutVertices and %d OutTriangles."), OutVertices.Num(), OutTriangles.Num());
-
-    if (OutVertices.Num() > 0 && OutTriangles.Num() > 0 && VertexNormals.Num() > 0) {
-        // Pass data to be processed on the game thread
-        AsyncTask(ENamedThreads::GameThread, [this, SectionIndex, OutVertices, OutTriangles, VertexNormals]()
-        {
-            ReconstructMeshSection(SectionIndex, OutVertices, OutTriangles, VertexNormals);
-        });
-    } else {
-        UE_LOG(LogTemp, Warning, TEXT("Empty mesh data in GenerateMesh"));
-    }
+    UE_LOG(LogTemp, Log, TEXT("Mesh generated from grid: %d vertices, %d triangles."), OutVertices.Num(), OutTriangles.Num());
 }
 
-/*void UMarchingCubes::GenerateMeshForIsland(USparseVoxelGrid* IslandGrid, TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs, TArray<FColor>& Colors, TArray<FProcMeshTangent>& Tangents)
+
+
+void UMarchingCubes::GenerateMeshForIsland(
+    USparseVoxelGrid* IslandGrid,
+    const FVector& Origin,
+    float VoxelSize,
+    TArray<FVector>& OutVertices,
+    TArray<int32>& OutTriangles,
+    TArray<FVector>& OutNormals
+)
 {
-    // Run marching cubes on the provided grid, filling the arrays
-}*/
+    GenerateMeshFromGrid(IslandGrid, Origin, VoxelSize, OutVertices, OutTriangles, OutNormals);
+}
+
 
 
 

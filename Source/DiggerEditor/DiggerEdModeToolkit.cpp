@@ -56,6 +56,38 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         MakeBrushShapeSection()
     ]
 
+        // --- Debug Voxels Checkbox: Only visible for DebugChunk brush ---
+    /*+ SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SBox)
+        .Visibility_Lambda([this]()
+        {
+            return (GetCurrentBrushType() == EVoxelBrushType::Debug) ? EVisibility::Visible : EVisibility::Collapsed;
+        })
+        [
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this]() { return bDebugVoxels; })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+            {
+                bDebugVoxels = (NewState == ECheckBoxState::Checked);
+            })
+            [
+                SNew(STextBlock).Text(FText::FromString("Debug Voxels"))
+            ]
+        ]
+    ]
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 4)
+    [
+        SNew(SCheckBox)
+        .OnCheckStateChanged(this, &FDiggerEdModeToolkit::OnDetailedDebugCheckChanged)
+        .IsChecked(this, &FDiggerEdModeToolkit::IsDetailedDebugChecked)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString("Enable Detailed Debug"))
+        ]
+    ]*/
+
+
 
     // --- Height/Length UI: Only visible for Cylinder or Cone brush ---
     + SVerticalBox::Slot().AutoHeight().Padding(4)
@@ -474,6 +506,26 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeQuickSetButtons(
 }
 
 
+void FDiggerEdModeToolkit::SetBrushDigPreviewOverride(bool bInDig)
+{
+    bUseBrushDigPreviewOverride = true;
+    bBrushDigPreviewOverride = bInDig;
+}
+
+void FDiggerEdModeToolkit::ClearBrushDigPreviewOverride()
+{
+    bUseBrushDigPreviewOverride = false;
+}
+
+void FDiggerEdModeToolkit::SetTemporaryDigOverride(TOptional<bool> Override)
+{
+    TemporaryDigOverride = Override;
+
+    // If you have any preview/hint widgets that show the current mode,
+    // this is a good place to refresh them. Example:
+    // RefreshBrushPreview(); // hypothetical method to update the UI
+}
+
 
 
 
@@ -601,6 +653,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
         { EVoxelBrushType::Cylinder, TEXT("Cylinder"), TEXT("Cylinder Brush") },
         { EVoxelBrushType::Cone,     TEXT("Cone"),     TEXT("Cone Brush") },
         { EVoxelBrushType::Smooth,   TEXT("Smooth"),   TEXT("Smooth Brush") },
+        { EVoxelBrushType::Debug,   TEXT("Debug"),   TEXT("Debug Clicked Chunk Brush") },
         { EVoxelBrushType::Custom,   TEXT("Custom"),   TEXT("Custom Mesh Brush") }
     };
 
@@ -699,46 +752,54 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOperationSection()
 + SVerticalBox::Slot().AutoHeight().Padding(4)
 [
     SNew(SHorizontalBox)
-    // Add (Build)
-    + SHorizontalBox::Slot().AutoWidth().Padding(2)
-    [
-        SNew(SCheckBox)
-        .Style(FAppStyle::Get(), "RadioButton")
-        .IsChecked_Lambda([this]() { return !bBrushDig ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-        .OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
-            if (State == ECheckBoxState::Checked)
-            {
-                bBrushDig = false;
-                if (ADiggerManager* Manager = GetDiggerManager())
-                {
-                    Manager->EditorBrushDig = false;
-                }
-            }
-        })
-        [
-            SNew(STextBlock).Text(FText::FromString("Add (Build)"))
-        ]
-    ]
-    // Subtract (Dig)
-    + SHorizontalBox::Slot().AutoWidth().Padding(2)
-    [
-        SNew(SCheckBox)
-        .Style(FAppStyle::Get(), "RadioButton")
-        .IsChecked_Lambda([this]() { return bBrushDig ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-        .OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
-            if (State == ECheckBoxState::Checked)
-            {
-                bBrushDig = true;
-                if (ADiggerManager* Manager = GetDiggerManager())
-                {
-                    Manager->EditorBrushDig = true;
-                }
-            }
-        })
-        [
-            SNew(STextBlock).Text(FText::FromString("Subtract (Dig)"))
-        ]
-    ]
+     // Add (Build)
+     + SHorizontalBox::Slot().AutoWidth().Padding(2)
+     [
+         SNew(SCheckBox)
+         .Style(FAppStyle::Get(), "RadioButton")
+         .IsChecked_Lambda([this]() {
+             const bool bEffectiveDig = bUseBrushDigPreviewOverride ? bBrushDigPreviewOverride : bBrushDig;
+             return !bEffectiveDig ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+         })
+         .OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+             if (State == ECheckBoxState::Checked)
+             {
+                 bBrushDig = false;
+                 ClearBrushDigPreviewOverride();
+                 if (ADiggerManager* Manager = GetDiggerManager())
+                 {
+                     Manager->EditorBrushDig = false;
+                 }
+             }
+         })
+         [
+             SNew(STextBlock).Text(FText::FromString("Add (Build)"))
+         ]
+     ]
+     // Subtract (Dig)
+     + SHorizontalBox::Slot().AutoWidth().Padding(2)
+     [
+         SNew(SCheckBox)
+         .Style(FAppStyle::Get(), "RadioButton")
+         .IsChecked_Lambda([this]() {
+             const bool bEffectiveDig = bUseBrushDigPreviewOverride ? bBrushDigPreviewOverride : bBrushDig;
+             return bEffectiveDig ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+         })
+         .OnCheckStateChanged_Lambda([this](ECheckBoxState State) {
+             if (State == ECheckBoxState::Checked)
+             {
+                 bBrushDig = true;
+                 ClearBrushDigPreviewOverride();
+                 if (ADiggerManager* Manager = GetDiggerManager())
+                 {
+                     Manager->EditorBrushDig = true;
+                 }
+             }
+         })
+         [
+             SNew(STextBlock).Text(FText::FromString("Subtract (Dig)"))
+         ]
+     ]
 ];
 
 }
@@ -828,7 +889,40 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                     SNew(SButton)
                     .Text(FText::FromString("Convert To Physics Object"))
                     .IsEnabled_Lambda([this]() { return SelectedIslandIndex != INDEX_NONE; })
-                    .OnClicked_Lambda([this]() { /* Convert logic here */ return FReply::Handled(); })
+                    .OnClicked_Lambda([this]()
+                    {
+                        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Add Physics to Selected Island button pressed."));
+                        /* Convert logic here */
+                        if (SelectedIslandIndex != INDEX_NONE && Islands.IsValidIndex(SelectedIslandIndex))
+                        {
+                            const FIslandData& Island = Islands[SelectedIslandIndex];
+                            GetDiggerManager()->ConvertIslandAtPositionToPhysicsObject(Island.Location);
+                            UE_LOG(LogTemp, Error, TEXT("Island Location: %s"), *Island.Location.ToString());
+                        }
+                        return FReply::Handled();
+                    })
+                ]
+                + SHorizontalBox::Slot().AutoWidth().Padding(2)
+                [
+                    SNew(SButton)
+                    .Text(FText::FromString("Convert/Save as Static Mesh"))
+                    .IsEnabled_Lambda([this]() { return SelectedIslandIndex != INDEX_NONE; })
+                    .OnClicked_Lambda([this]()
+                    {
+                        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Create Static Mesh from Island button pressed."));
+                        /* Convert logic here */
+                        if (SelectedIslandIndex != INDEX_NONE && Islands.IsValidIndex(SelectedIslandIndex))
+                        {
+                            const FIslandData& Island = Islands[SelectedIslandIndex];
+                            FString AssetName = FString::Printf(TEXT("Island_%d_StaticMesh"), Island.IslandID);
+                            GetDiggerManager()->ConvertIslandAtPositionToStaticMesh(Island.Location);
+                            Islands.RemoveAt(SelectedIslandIndex);
+                            SelectedIslandIndex = INDEX_NONE;
+                            // Call your UI refresh/update method here
+                           
+                        }
+                        return FReply::Handled();
+                    })
                 ]
                 + SHorizontalBox::Slot().AutoWidth().Padding(2)
                 [
@@ -1079,6 +1173,9 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeMirrorButton(double& Target, const
         .ToolTipText(FText::FromString("Mirror (add 180°)"))
         .ContentPadding(FMargin(2,0));
 }
+
+
+
 
 
 void FDiggerEdModeToolkit::RebuildCustomBrushGrid()
