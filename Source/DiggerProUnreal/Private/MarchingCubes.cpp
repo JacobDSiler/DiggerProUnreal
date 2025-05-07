@@ -527,6 +527,12 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
     }
 }
 
+/*void UMarchingCubes::GenerateMeshForIsland(USparseVoxelGrid* IslandGrid, TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs, TArray<FColor>& Colors, TArray<FProcMeshTangent>& Tangents)
+{
+    // Run marching cubes on the provided grid, filling the arrays
+}*/
+
+
 
 void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutOutVertices, const TArray<int32>& OutTriangles, const TArray<FVector>& Normals) const {
     // Validate pointers

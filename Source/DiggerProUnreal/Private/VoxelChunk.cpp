@@ -206,26 +206,24 @@ void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
 	UE_LOG(LogTemp, Warning, TEXT("Applying Brush Stroke. Chunk ID: %d, Dirty: %d"), SectionIndex, bIsDirty);
 	UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushStroke] BrushPosition (World): %s, Chunk SectionIndex: %d"), *Stroke.BrushPosition.ToString(), SectionIndex);
 
-
-	// Assuming you have a FVector BrushOffset value available in this scope
-	FVector BrushPosWithOffset = Stroke.BrushPosition + Stroke.BrushOffset;
+	
 
 	switch (Stroke.BrushType)
 	{
 	case EVoxelBrushType::Cube:
-		ApplyCubeBrush(BrushPosWithOffset, Stroke.BrushRadius / 2, Stroke.bDig, Stroke.BrushRotation);
+		ApplyCubeBrush( Stroke.BrushPosition, Stroke.BrushRadius / 2, Stroke.bDig, Stroke.BrushRotation);
 		break;
 	case EVoxelBrushType::Sphere:
-		ApplySphereBrush(BrushPosWithOffset, Stroke.BrushRadius, Stroke.bDig);
+		ApplySphereBrush( Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig);
 		break;
 	case EVoxelBrushType::Cylinder:
-		ApplyCylinderBrush(BrushPosWithOffset, Stroke.BrushLength, Stroke.BrushRadius * .5f, Stroke.bDig, Stroke.BrushRotation);
+		ApplyCylinderBrush( Stroke.BrushPosition, Stroke.BrushLength, Stroke.BrushRadius * .5f, Stroke.bDig, Stroke.BrushRotation);
 		break;
 	case EVoxelBrushType::Cone:
-		ApplyConeBrush(BrushPosWithOffset, Stroke.BrushLength, Stroke.BrushAngle, Stroke.bDig, Stroke.BrushRotation);
+		ApplyConeBrush( Stroke.BrushPosition, Stroke.BrushLength, Stroke.BrushAngle, Stroke.bDig, Stroke.BrushRotation);
 		break;
 	case EVoxelBrushType::Smooth:
-		ApplySmoothBrush(BrushPosWithOffset, Stroke.BrushRadius, Stroke.bDig, 1);
+		ApplySmoothBrush( Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig, 1);
 		break;
 	default:
 		UE_LOG(LogTemp, Warning, TEXT("Invalid BrushType: %d"), (int32)Stroke.BrushType);

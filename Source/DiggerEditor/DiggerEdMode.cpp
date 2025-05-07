@@ -142,47 +142,75 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
 
         if (DiggerToolkit.IsValid())
         {
-            if (bCtrlPressed) // 🔥 If holding Ctrl, sample the surface normal
+            FVector SurfaceNormal = Hit.ImpactNormal;
+            FRotator SurfaceRotation = SurfaceNormal.Rotation();
+
+            if (bCtrlPressed)
             {
-                FVector SurfaceNormal = Hit.ImpactNormal;
-                FRotator NewRotation = SurfaceNormal.Rotation();
-                
-                // Optionally clamp rotation to only pitch/yaw if needed
-                // NewRotation.Roll = 0.0f;
+                // Set brush rotation for preview/control
+                DiggerToolkit->SetBrushRotation(SurfaceRotation);
 
-                DiggerToolkit->SetBrushRotation(NewRotation);
-
-                UE_LOG(LogTemp, Log, TEXT("[HandleClick] Sampled surface normal and set rotation: %s"), *NewRotation.ToString());
-                return true; // ✅ Done sampling, no digging.
+                UE_LOG(LogTemp, Log, TEXT("[HandleClick] Sampled surface normal (Ctrl): %s"), *SurfaceRotation.ToString());
+                return true; // Don't apply brush — just sample rotation
             }
-            else
+
+            // Regular digging action
+            if (ADiggerManager* Digger = FindDiggerManager())
             {
-                // Regular digging action
-                if (ADiggerManager* Digger = FindDiggerManager())
+                if (DiggerToolkit->GetCurrentBrushType() == EVoxelBrushType::Cone || DiggerToolkit->GetCurrentBrushType() == EVoxelBrushType::Cylinder)
                 {
-                    if (DiggerToolkit->GetCurrentBrushType() == EVoxelBrushType::Cone || DiggerToolkit->GetCurrentBrushType() == EVoxelBrushType::Cylinder)
-                    {
-                        Digger->EditorBrushLength = DiggerToolkit->GetBrushLength();
-                    }
-
-                    Digger->EditorBrushRadius = DiggerToolkit->GetBrushRadius();
-                    Digger->EditorBrushDig = DiggerToolkit->IsDigMode();
-                    Digger->EditorBrushRotation = DiggerToolkit->GetBrushRotation();
-                    Digger->EditorBrushAngle = DiggerToolkit->GetBrushAngle();
-
-                    FVector VoxelCoords = HitLocation * 0.5f;
-                    Digger->EditorBrushPosition = VoxelCoords;
-
-                    Digger->ApplyBrushInEditor();
-                    return true;
+                    Digger->EditorBrushLength = DiggerToolkit->GetBrushLength();
                 }
+                
+                //Logic to handle the brush rotation based on all UI state input
+                FRotator FinalRotation = DiggerToolkit->GetBrushRotation();
+
+                if (DiggerToolkit->UseSurfaceNormalRotation())
+                {
+                    // Create a quaternion that rotates UpVector to the surface normal
+                    const FVector Up = FVector::UpVector;
+                    const FVector Normal = Hit.ImpactNormal.GetSafeNormal();
+
+                    const FQuat AlignRotation = FQuat::FindBetweenNormals(Up, Normal);
+                    FinalRotation = (AlignRotation * FinalRotation.Quaternion()).Rotator();
+                }
+                
+
+
+
+                Digger->EditorBrushRadius = DiggerToolkit->GetBrushRadius();
+                Digger->EditorBrushDig = DiggerToolkit->IsDigMode();
+                Digger->EditorBrushRotation = FinalRotation;
+                Digger->EditorBrushAngle = DiggerToolkit->GetBrushAngle();
+
+                // Calculate transient rotated offset
+                FVector Offset = DiggerToolkit->GetBrushOffset(); // Do NOT modify
+                FVector OffsetXY = FVector(Offset.X, Offset.Y, 0.f);
+                float ZDistance = Offset.Z;
+
+                FVector FinalOffset = OffsetXY;
+
+                if (DiggerToolkit->RotateToSurfaceNormal())
+                {
+                    FinalOffset += Hit.ImpactNormal * ZDistance;
+                }
+                else
+                {
+                    FinalOffset.Z = ZDistance;
+                }
+
+                Digger->EditorBrushOffset = FinalOffset;
+
+                FVector VoxelCoords = HitLocation * 0.5f;
+                Digger->EditorBrushPosition = VoxelCoords;
+
+                Digger->ApplyBrushInEditor();
+                return true;
             }
         }
     }
     return false;
 }
-
-
 
 
 

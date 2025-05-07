@@ -10,8 +10,20 @@
 #include "ProceduralMeshComponent.h"
 #include "VoxelBrushShape.h"
 #include "VoxelBrushTypes.h"
+#include "Engine/StaticMeshActor.h"
 #include "GameFramework/Actor.h"
+
+#include "Engine/StaticMesh.h"
+#include "StaticMeshAttributes.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+#include "UObject/Package.h"
+#include "Misc/PackageName.h"
+#include "Misc/Paths.h"
+
 #include "DiggerManager.generated.h"
+
 
 // Helper struct for an island
 struct FIsland
@@ -114,6 +126,7 @@ class DIGGERPROUNREAL_API ADiggerManager : public AActor
 
 public:
     ADiggerManager();
+    UStaticMesh* ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName);
 
 #if WITH_EDITOR
     // Add this member
@@ -124,12 +137,7 @@ public:
     {
         EditorToolkit = InToolkit;
     }*/
-#endif
-
-    // Set this true to make the actor never get culled despite distance
-    UPROPERTY(EditAnywhere, Category="Digger System")
-    bool bNeverCull = true;
-
+    
     // Native C++ delegates (not UObject/Blueprint)
     DECLARE_MULTICAST_DELEGATE(FIslandsDetectionStartedEvent);
     FIslandsDetectionStartedEvent OnIslandsDetectionStarted;
@@ -146,10 +154,17 @@ public:
     {
         if (OnIslandDetected.IsBound())
         {
+            UE_LOG(LogTemp, Warning, TEXT("Broadcasting OnIslandDetected: %d"), Island.IslandID);
             OnIslandDetected.Broadcast(Island);
         }
     }
+#endif
+    
+    // Set this true to make the actor never get culled despite distance
+    UPROPERTY(EditAnywhere, Category="Digger System")
+    bool bNeverCull = true;
 
+    
     bool EnsureWorldReference();
 
     UFUNCTION(BlueprintCallable, CallInEditor, Category = "Export")
@@ -188,10 +203,31 @@ public:
     float EditorBrushAngle;
 
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
-    float EditorBrushOffset;
+    FVector EditorBrushOffset;
 
     UFUNCTION(CallInEditor, Category="Digger Brush|Actions")
     void ApplyBrushInEditor();
+
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Islands")
+    AStaticMeshActor* SpawnPhysicsIsland(UStaticMesh* StaticMesh, FVector Location = FVector::ZeroVector)
+    {
+        if (!StaticMesh || !GetWorld())
+        {
+            UE_LOG(LogTemp, Error, TEXT("Invalid mesh or world!"));
+            return nullptr;
+        }
+
+        FActorSpawnParameters SpawnParams;
+        AStaticMeshActor* NewActor = GetWorld()->SpawnActor<AStaticMeshActor>(Location, FRotator::ZeroRotator, SpawnParams);
+        if (NewActor)
+        {
+            NewActor->GetStaticMeshComponent()->SetStaticMesh(StaticMesh);
+            NewActor->GetStaticMeshComponent()->SetSimulatePhysics(true);
+            NewActor->SetActorLabel(TEXT("PhysicsIsland"));
+            UE_LOG(LogTemp, Warning, TEXT("Spawned physics island at %s"), *Location.ToString());
+        }
+        return NewActor;
+    }
 
     
 protected:
@@ -312,6 +348,94 @@ private:
 
     UPROPERTY()
     TArray<UProceduralMeshComponent*> ProceduralMeshComponents;
+
+
+/*
+UStaticMesh* CreateStaticMeshFromRawData(
+    UObject* Outer,
+    const FString& AssetName,
+    const TArray<FVector>& Vertices,
+    const TArray<int32>& Triangles,
+    const TArray<FVector>& Normals,
+    const TArray<FVector2D>& UVs,
+    const TArray<FColor>& Colors,
+    const TArray<FProcMeshTangent>& Tangents
+)
+{
+    // 1. Create a new package for the asset
+    FString PackageName = FString::Printf(TEXT("/Game/Islands/%s"), *AssetName);
+    UPackage* MeshPackage = CreatePackage(*PackageName);
+
+    // 2. Create the static mesh object
+    UStaticMesh* StaticMesh = NewObject<UStaticMesh>(MeshPackage, *AssetName, RF_Public | RF_Standalone);
+    if (!StaticMesh)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to create UStaticMesh object!"));
+        return nullptr;
+    }
+
+    // 3. Create a MeshDescription
+    FMeshDescription MeshDescription;
+    FStaticMeshAttributes Attributes(MeshDescription);
+    Attributes.Register();
+
+    // 4. Create a polygon group (single material slot)
+    FPolygonGroupID PolyGroupID = MeshDescription.CreatePolygonGroup();
+
+    // 5. Build the mesh
+    TMap<int32, FVertexID> IndexToVertexID;
+    for (int32 i = 0; i < Vertices.Num(); ++i)
+    {
+        FVertexID VertexID = MeshDescription.CreateVertex();
+        Attributes.GetVertexPositions()[VertexID] = Vertices[i];
+        IndexToVertexID.Add(i, VertexID);
+    }
+
+    // 6. Create triangles and set attributes
+    for (int32 i = 0; i < Triangles.Num(); i += 3)
+    {
+        TArray<FVertexInstanceID> VertexInstanceIDs;
+        for (int32 j = 0; j < 3; ++j)
+        {
+            FVertexInstanceID InstanceID = MeshDescription.CreateVertexInstance(IndexToVertexID[Triangles[i + j]]);
+            // Set normals
+            if (Normals.IsValidIndex(Triangles[i + j]))
+                Attributes.GetVertexInstanceNormals()[InstanceID] = Normals[Triangles[i + j]];
+            // Set UVs (only first channel for simplicity)
+            if (UVs.IsValidIndex(Triangles[i + j]))
+                Attributes.GetVertexInstanceUVs()[InstanceID][0] = UVs[Triangles[i + j]];
+            // Set colors
+            if (Colors.IsValidIndex(Triangles[i + j]))
+                Attributes.GetVertexInstanceColors()[InstanceID] = FVector4f(Colors[Triangles[i + j]]);
+            // Set tangents
+            if (Tangents.IsValidIndex(Triangles[i + j]))
+            {
+                Attributes.GetVertexInstanceTangents()[InstanceID] = (FVector3f)Tangents[Triangles[i + j]].TangentX;
+                Attributes.GetVertexInstanceBinormalSigns()[InstanceID] = Tangents[Triangles[i + j]].bFlipTangentY ? -1.0f : 1.0f;
+            }
+            VertexInstanceIDs.Add(InstanceID);
+        }
+        // Create the polygon (triangle)
+        MeshDescription.CreatePolygon(PolyGroupID, VertexInstanceIDs);
+    }
+
+    // 7. Set the mesh description
+    StaticMesh->SetMeshDescription(0, MeshDescription);
+    StaticMesh->CommitMeshDescription(0);
+
+    // 8. Build the static mesh
+    StaticMesh->Build(false);
+
+    // 9. Register and save the asset
+    FAssetRegistryModule::AssetCreated(StaticMesh);
+    StaticMesh->MarkPackageDirty();
+
+    UE_LOG(LogTemp, Warning, TEXT("Static mesh asset created: %s"), *PackageName);
+
+    return StaticMesh;
+}
+*/
+
 
 public:
     [[nodiscard]] UMaterial* GetTerrainMaterial() const

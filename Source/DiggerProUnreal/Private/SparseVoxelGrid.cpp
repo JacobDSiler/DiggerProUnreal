@@ -341,6 +341,25 @@ void USparseVoxelGrid::LogVoxelData() const
     }*/
 }
 
+void USparseVoxelGrid::RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove)
+{
+    for (const FIntVector& Voxel : VoxelsToRemove)
+    {
+        VoxelData.Remove(Voxel);
+    }
+}
+
+
+
+// Returns all voxels belonging to the island at the given position
+bool USparseVoxelGrid::CollectIslandAtPosition(const FVector& Center, TArray<FIntVector>& OutVoxels)
+{
+    // Use your island detection logic to find the island at Center
+    // For example, run BFS from the Center voxel, collecting all connected voxels below SDF threshold
+    // Fill OutVoxels with the result
+    // Return true if successful, false otherwise
+    return true;
+}
 
 TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold /* usually 0.0f */) const
 {
@@ -411,10 +430,10 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold /* usuall
         Islands.Add(NewIsland);
 
         // Broadcast the detection event if bound
-        if (DiggerManager)
-        {
-            DiggerManager->BroadcastIslandDetected(NewIsland);
-        }
+       // if (DiggerManager)
+        //{
+         //   DiggerManager->BroadcastIslandDetected(NewIsland);
+        //}
     }
 
     return Islands;

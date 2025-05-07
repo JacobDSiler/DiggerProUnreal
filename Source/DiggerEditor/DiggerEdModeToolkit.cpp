@@ -185,6 +185,23 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         [
             MakeRotationRow(FText::FromString("Z"), BrushRotZ)
         ]
+        // Checkbox for surface normal rotation
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+        [
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this]()
+            {
+                return bUseSurfaceNormalRotation ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+            })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+            {
+                bUseSurfaceNormalRotation = (NewState == ECheckBoxState::Checked);
+            })
+            [
+                SNew(STextBlock).Text(FText::FromString("Align Rotation to Normal"))
+            ]
+        ]
+
     ]
 
     // --- Offset Brush Section (roll-down) ---
@@ -210,7 +227,24 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         [
             MakeOffsetRow(FText::FromString("Z"), BrushOffset.Z)
         ]
+        //Checkbox for surface normal alignment
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+        [
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this]()
+            {
+                return bRotateToSurfaceNormal ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+            })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+            {
+                bRotateToSurfaceNormal = (NewState == ECheckBoxState::Checked);
+            })
+            [
+                SNew(STextBlock).Text(FText::FromString("Rotate to Surface Normal"))
+            ]
+        ]
     ]
+
 
     // --- Custom Brushes Section ---
     + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
@@ -342,16 +376,9 @@ void FDiggerEdModeToolkit::OnIslandDetectedHandler(const FIslandData& NewIslandD
     }
 }
 
-void FDiggerEdModeToolkit::ClearIslands()
-{
-    UE_LOG(LogTemp, Warning, TEXT("ClearIslands called on toolkit: %p"), this);
-    Islands.Empty();
-    RebuildIslandGrid();
-}
-
 void FDiggerEdModeToolkit::AddIsland(const FIslandData& Island)
 {
-    UE_LOG(LogTemp, Warning, TEXT("AddIsland called on toolkit: %p, IslandID: %d"), this, Island.IslandID);
+    UE_LOG(LogTemp, Error, TEXT("AddIsland called on toolkit: %p, IslandID: %d"), this, Island.IslandID);
     Islands.Add(Island);
     RebuildIslandGrid();
 }
@@ -959,6 +986,15 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetSection(FVector& Offset)
 
 // DiggerEdModeToolkit.cpp
 
+void FDiggerEdModeToolkit::ClearIslands()
+{
+    UE_LOG(LogTemp, Warning, TEXT("ClearIslands called on toolkit: %p"), this);
+    Islands.Empty();
+    SelectedIslandIndex = INDEX_NONE;
+    RebuildIslandGrid();
+}
+
+
 void FDiggerEdModeToolkit::RebuildIslandGrid()
 {
     UE_LOG(LogTemp, Warning, TEXT("RebuildIslandGrid called!"));
@@ -967,8 +1003,6 @@ void FDiggerEdModeToolkit::RebuildIslandGrid()
         IslandGridContainer->SetContent(MakeIslandGridWidget());
     }
 }
-
-
 
 // In DiggerEdModeToolkit.cpp
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()

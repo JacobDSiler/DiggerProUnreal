@@ -15,6 +15,8 @@ class FDiggerEdModeToolkit : public FModeToolkit
 {
 public:
 	void ClearIslands();
+	void RebuildIslandGrid();
+	
 	void AddIsland(const FIslandData& Island);
 	void BindIslandDelegates();
 	virtual void Init(const TSharedPtr<IToolkitHost>& InitToolkitHost) override;
@@ -29,14 +31,28 @@ public:
 
 
 
-	bool IsDigMode() const
+	[[nodiscard]]bool IsDigMode() const
 	{
 		return bBrushDig;
 	}
 
-	float GetBrushAngle(){return ConeAngle;}
+	[[nodiscard]] FVector GetBrushOffset() const
+	{
+		return BrushOffset;
+	}
 	
+	void SetBrushOffset(FVector NewOffset)
+	{
+		BrushOffset = NewOffset;
+	}
 	
+	[[nodiscard]] float GetBrushAngle() const
+	{
+		return ConeAngle;
+	}
+
+	
+
     void SetIslands(const TArray<FIslandData>& InIslands)
     {
         Islands = InIslands;
@@ -68,8 +84,30 @@ private:
 	// ReSharper disable once CppUninitializedNonStaticDataMember
 	int16 SmoothIterations; // or short SmoothIterations;
 	FVector BrushOffset = FVector(0.f,0.f,0.f);
+
+
+private:
 	bool bShowOffset=false;
-	
+	bool bRotateToSurfaceNormal = false;
+	bool bUseSurfaceNormalRotation = false;
+
+public:
+	[[nodiscard]] bool UseSurfaceNormalRotation() const
+	{
+		return bUseSurfaceNormalRotation;
+	}
+
+	void SetUseSurfaceNormalRotation(bool InbUseSurfaceNormalRotation)
+	{
+		this->bUseSurfaceNormalRotation = InbUseSurfaceNormalRotation;
+	}
+
+	[[nodiscard]] bool RotateToSurfaceNormal() const
+	{
+		return bRotateToSurfaceNormal;
+	}
+
+private:
 	//Helpers
 	ADiggerManager* GetDiggerManager();
 
@@ -79,7 +117,6 @@ private:
     TSharedRef<SWidget> MakeAngleButton(double Angle, double& Target, const FString& Label);
     TSharedRef<SWidget> MakeMirrorButton(float& Target, const FString& Label);
 	TSharedRef<SWidget> MakeMirrorButton(double& Target, const FString& Label);
-	TSharedRef<SWidget> MakeBrushSlidersSection();
 	TSharedRef<SWidget> MakeRotationSection(float& RotX, float& RotY, float& RotZ);
 	TSharedRef<SWidget> MakeOperationSection();
 	TSharedRef<SWidget> MakeBrushShapeSection();
@@ -183,7 +220,4 @@ private:
 	TSharedPtr<FAssetThumbnailPool> AssetThumbnailPool;
 	bool bBrushDig = false;
 	void RebuildCustomBrushGrid();
-
-public:
-	void RebuildIslandGrid();
 };

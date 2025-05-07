@@ -39,6 +39,7 @@ public:
 	UPROPERTY(EditAnywhere, Category="Landscape Transition")
 	float TransitionSharpness = 2.0f;
 
+//	void GenerateMeshForIsland(USparseVoxelGrid* IslandGrid, TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs, TArray<FColor>& Colors, TArray<FProcMeshTangent>& Tangents);
 
 private:
 	// Helper functions for mesh generation

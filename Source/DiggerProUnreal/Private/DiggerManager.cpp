@@ -12,6 +12,13 @@
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "UObject/ConstructorHelpers.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+#include "Engine/StaticMesh.h"
+#include "Misc/PackageName.h"
+#include "Misc/Paths.h"
+#include "UObject/Package.h"
 
 //Editor Tool Specific Includes
 #if WITH_EDITOR
@@ -25,7 +32,7 @@ class FDiggerEdMode;
 void ADiggerManager::ApplyBrushInEditor()
 {
     FBrushStroke BrushStroke;
-    BrushStroke.BrushPosition = EditorBrushPosition;
+    BrushStroke.BrushPosition = EditorBrushPosition + EditorBrushOffset;
     BrushStroke.BrushRadius = EditorBrushRadius;
    // UE_LOG(LogTemp, Error, TEXT("[DiggerManager] BrushRadius set to: %f"), EditorBrushRadius);
     BrushStroke.BrushRotation = EditorBrushRotation;
@@ -46,10 +53,15 @@ void ADiggerManager::ApplyBrushInEditor()
         ProcessDirtyChunks(); // Or whatever triggers your mesh update
     }
     
+    
     if (GEditor)
     {
         GEditor->RedrawAllViewports();
     }
+
+    // Update islands for the UI/toolkit
+   TArray<FIslandData> DetectedIslands = GetAllIslands();
+    
 }
 #endif
 
@@ -81,6 +93,79 @@ ADiggerManager::ADiggerManager()
         UE_LOG(LogTemp, Error, TEXT("Material M_ProcGrid required in /Content/Materials/ folder. Please ensure it is there."));
     }
 }
+
+
+UStaticMesh* ADiggerManager::ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName)
+{
+    UE_LOG(LogTemp, Warning, TEXT("Converting island %d to static mesh..."), Island.IslandID);
+
+    // 1. Generate mesh data for the island using Marching Cubes
+    TArray<FVector> Vertices;
+    TArray<int32> Triangles;
+    TArray<FVector> Normals;
+    TArray<FVector2D> UVs;
+    TArray<FColor> Colors;
+    TArray<FProcMeshTangent> Tangents;
+
+/* Single Island Mesh Generation in DiggerManager
+            // You may need to create a temporary SparseVoxelGrid for just this island
+            USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
+            
+            //TempGrid->AddVoxels(IslandVoxels);
+
+            // Generate mesh for just this island
+            MarchingCubes->GenerateMeshForIsland(TempGrid, Vertices, Triangles, Normals, UVs, Colors, Tangents);
+
+            // 4. Remove island voxels from the main grid
+            //TempGrid->RemoveVoxels(IslandVoxels);
+*/
+    // For demonstration, we'll log and return nullptr if not implemented
+    if (Vertices.Num() == 0 || Triangles.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("No mesh data generated for island!"));
+        return nullptr;
+    }
+
+    // 2. Create a temporary ProceduralMeshComponent
+    UProceduralMeshComponent* TempProcMesh = NewObject<UProceduralMeshComponent>(this);
+    TempProcMesh->CreateMeshSection(0, Vertices, Triangles, Normals, UVs, Colors, Tangents, true);
+
+    // 3. Convert ProceduralMeshComponent to StaticMesh
+    FString PackageName = FString::Printf(TEXT("/Game/Islands/%s"), *AssetName);
+    UPackage* MeshPackage = CreatePackage(*PackageName);
+
+    UStaticMesh* NewStaticMesh = NewObject<UStaticMesh>(MeshPackage, *AssetName, RF_Public | RF_Standalone);
+    if (!NewStaticMesh)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to create UStaticMesh object!"));
+        return nullptr;
+    }
+
+    // Use the built-in conversion utility (UE 4.23+)
+    bool bSuccess = false;//TempProcMesh->CreateStaticMesh(NewStaticMesh, MeshPackage, AssetName, true);
+    if (!bSuccess)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to convert procedural mesh to static mesh!"));
+        return nullptr;
+    }
+
+    // 4. Register and save the asset
+    FAssetRegistryModule::AssetCreated(NewStaticMesh);
+    NewStaticMesh->MarkPackageDirty();
+
+#if WITH_EDITOR
+    // Notify the content browser
+    TArray<UObject*> ObjectsToSync;
+    ObjectsToSync.Add(NewStaticMesh);
+    GEditor->SyncBrowserToObjects(ObjectsToSync);
+#endif
+
+    UE_LOG(LogTemp, Warning, TEXT("Static mesh asset created: %s"), *PackageName);
+
+    return NewStaticMesh;
+}
+
+
 
 bool ADiggerManager::EnsureWorldReference()
 {
@@ -735,25 +820,50 @@ UVoxelChunk* ADiggerManager::GetOrCreateChunkAt(const FIntVector& ProposedChunkP
     }
 }
 
+
 // In ADiggerManager.cpp
 TArray<FIslandData> ADiggerManager::GetAllIslands() const
 {
 #if WITH_EDITOR
-    OnIslandsDetectionStarted.Broadcast(); // Only clear UI in editor
+    UE_LOG(LogTemp, Warning, TEXT("Broadcasting OnIslandsDetectionStarted"));
+    OnIslandsDetectionStarted.Broadcast();
 #endif
 
-    TArray<FIslandData> AllIslands;
+    TMap<FIntVector, FIslandData> UniqueIslands; // Key: rounded center position
+
     for (const auto& ChunkPair : ChunkMap)
     {
         UVoxelChunk* Chunk = ChunkPair.Value;
         if (Chunk)
         {
             TArray<FIslandData> ChunkIslands = Chunk->GetSparseVoxelGrid()->DetectIslands(0.0f);
-            AllIslands.Append(ChunkIslands);
+            for (const FIslandData& Island : ChunkIslands)
+            {
+                // Round the center position to nearest int for deduplication
+                FIntVector Center = FIntVector(
+                    FMath::RoundToInt(Island.Location.X),
+                    FMath::RoundToInt(Island.Location.Y),
+                    FMath::RoundToInt(Island.Location.Z)
+                );
+                // Only add if not already present
+                if (!UniqueIslands.Contains(Center))
+                {
+                    UniqueIslands.Add(Center, Island);
+                }
+            }
         }
+    }
+
+    // Now broadcast only unique islands
+    TArray<FIslandData> AllIslands;
+    UniqueIslands.GenerateValueArray(AllIslands);
+    for (const FIslandData& Island : AllIslands)
+    {
+        OnIslandDetected.Broadcast(Island);
     }
     return AllIslands;
 }
+
 
 #if WITH_EDITOR
 
@@ -794,17 +904,5 @@ void ADiggerManager::EditorRebuildAllChunks()
     // Optionally clear and rebuild all chunks
     InitializeChunks();
 }
-
-
-#if WITH_EDITOR
-/*void ADiggerManager::UpdateAllIslandsInToolkit() const
-{
-    if (EditorToolkit) // Set by toolkit on construction
-    {
-        EditorToolkit->SetIslands(GetAllIslands());
-    }
-}*/
-#endif
-
 
 #endif // WITH_EDITOR

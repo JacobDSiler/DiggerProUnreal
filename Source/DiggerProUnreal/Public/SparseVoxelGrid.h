@@ -43,6 +43,8 @@ public:
 	float GetLandscapeHeightAtPoint(FVector Position);
 	FVector VoxelToWorldSpace(const FIntVector& VoxelCoords) const;
 
+	void RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove);
+
 	// Save current voxel data to disk
 	bool SaveVoxelDataToFile(const FString& FilePath);
 
@@ -73,6 +75,8 @@ public:
 	// Logs the current voxels and their SDF values
 	void LogVoxelData() const;
 	void RenderVoxels();
+
+	bool CollectIslandAtPosition(const FVector& Center, TArray<FIntVector>& OutVoxels);
 	
 
 	void SetParentChunkCoordinates(FIntVector& NewParentChunkPosition)
