@@ -5,6 +5,7 @@
 #include "DiggerManager.h" // ✅ Needed for ADiggerManager
 #include "EngineUtils.h"
 
+enum class EVoxelBrushType : FPlatformTypes::uint8;
 class FEditorViewportClient;
 class UWorld;
 // Define the Editor Mode ID
@@ -139,6 +140,7 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
         // Log the hit location for debugging
         UE_LOG(LogTemp, Log, TEXT("Click Location: %s"), *HitLocation.ToString());
 
+
         const bool bCtrlPressed = Click.IsControlDown();
         const bool bRightClick = Click.GetKey() == EKeys::RightMouseButton;
 
@@ -161,6 +163,11 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
             {
                 EVoxelBrushType BrushType = DiggerToolkit->GetCurrentBrushType();
 
+                // Add verification log
+                UE_LOG(LogTemp, Error, TEXT("Found DiggerManager, calling DebugBrushPlacement with: %s"), *HitLocation.ToString());
+                
+                Digger->DebugBrushPlacement(HitLocation);
+                
                 // Apply brush settings based on selected brush type
                 if (BrushType == EVoxelBrushType::Cone || BrushType == EVoxelBrushType::Cylinder)
                 {
@@ -208,7 +215,7 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
 
                 // Set final brush position
                 Digger->EditorBrushOffset = FinalOffset;
-                Digger->EditorBrushPosition = HitLocation * 0.5f;  // Adjust the location if needed
+                Digger->EditorBrushPosition = HitLocation;// * 0.5f;  // Adjust the location if needed
                 Digger->ApplyBrushInEditor();
 
                 // Temporary override UI display for visual feedback

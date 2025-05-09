@@ -1,8 +1,8 @@
 #include "VoxelConversion.h"
 
-// These defaults can be overridden at startup, or set from your manager
-FVector FVoxelConversion::Origin = FVector(0.f,0.f,0.f);
-int32  FVoxelConversion::ChunkSize = 64;    // e.g. 64 voxels per chunk
-int FVoxelConversion::Subdivisions = 1;
-float FVoxelConversion::LocalVoxelSize=25;
-float FVoxelConversion::TerrainGridSize = 100.0f;
+// Initialize static members with default values
+int32   FVoxelConversion::ChunkSize = 8;
+int32   FVoxelConversion::Subdivisions = 4;
+float   FVoxelConversion::TerrainGridSize = 100.0f;
+float   FVoxelConversion::LocalVoxelSize = FVoxelConversion::TerrainGridSize / FVoxelConversion::Subdivisions;
+FVector FVoxelConversion::Origin = FVector::ZeroVector;

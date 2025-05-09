@@ -114,6 +114,13 @@ ADiggerManager::ADiggerManager()
 
 void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
 {
+    // Make sure our static conversion class is initialized
+    if (FVoxelConversion::LocalVoxelSize <= 0.0f)
+    {
+        UE_LOG(LogTemp, Error, TEXT("VoxelConversion not initialized! Using default values."));
+        FVoxelConversion::InitFromConfig(8, 4, 100.0f, FVector::ZeroVector);
+    }
+
     // Add padding to ensure we catch chunks at the boundaries
     float PaddedRadius = BrushStroke.BrushRadius + FVoxelConversion::LocalVoxelSize * 2.0f;
     
@@ -125,11 +132,27 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
     FIntVector MinChunk = FVoxelConversion::WorldToChunk(Min);
     FIntVector MaxChunk = FVoxelConversion::WorldToChunk(Max);
 
-    // Debug output
+    // Debug output - extra verbose for diagnosing issues
+    UE_LOG(LogTemp, Warning, TEXT("--------------------------------------------"));
     UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: BrushPosition=%s, Radius=%f"),
            *BrushStroke.BrushPosition.ToString(), BrushStroke.BrushRadius);
+    UE_LOG(LogTemp, Warning, TEXT("Min World Pos: %s, Max World Pos: %s"),
+           *Min.ToString(), *Max.ToString());
     UE_LOG(LogTemp, Warning, TEXT("Affected Chunks: X=[%d,%d], Y=[%d,%d], Z=[%d,%d]"),
            MinChunk.X, MaxChunk.X, MinChunk.Y, MaxChunk.Y, MinChunk.Z, MaxChunk.Z);
+    UE_LOG(LogTemp, Warning, TEXT("VoxelConversion Config: ChunkSize=%d, Subs=%d, GridSize=%f, VoxelSize=%f"),
+           FVoxelConversion::ChunkSize, FVoxelConversion::Subdivisions,
+           FVoxelConversion::TerrainGridSize, FVoxelConversion::LocalVoxelSize);
+
+    // Show brush center location in voxel space
+    FIntVector BrushChunk = FVoxelConversion::WorldToChunk(BrushStroke.BrushPosition);
+    FIntVector BrushLocalVoxel = FVoxelConversion::WorldToLocalVoxel(BrushStroke.BrushPosition);
+    UE_LOG(LogTemp, Warning, TEXT("Brush center is in chunk %s at local voxel %s"),
+           *BrushChunk.ToString(), *BrushLocalVoxel.ToString());
+
+    // In your brush application code, after determining the brush position
+    //DebugBrushPlacement(ClickPosition, BrushStroke.BrushPosition);
+
 
     // Loop over all affected chunks
     for (int32 X = MinChunk.X; X <= MaxChunk.X; ++X)
@@ -148,9 +171,228 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
             Chunk->ApplyBrushStroke(BrushStroke);
             Chunk->MarkDirty(); // Make sure to mark the chunk as dirty
         }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("Failed to get or create chunk at %s"), *ChunkCoords.ToString());
+        }
     }
+    
+    UE_LOG(LogTemp, Warning, TEXT("--------------------------------------------"));
 }
 
+
+void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
+{
+    // Verify this instance is valid
+    if (!IsValid(this))
+    {
+        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement called on invalid ADiggerManager instance!"));
+        return;
+    }
+
+    // Verify we're in the game thread
+    if (!IsInGameThread())
+    {
+        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: not called from game thread!"));
+        return;
+    }
+    
+    // Confirm method is called
+    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: called with position: %s"), *ClickPosition.ToString());
+    
+    // Check if World is valid
+    UWorld* CurrentWorld = GetWorld();
+    if (!CurrentWorld) 
+    {
+        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: GetWorld() returned null in DebugBrushPlacement!"));
+        return;
+    }
+    
+    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: World is valid, proceeding with calculations"));
+    
+    // Calculate sizes
+    TerrainGridSize = 100.0f; // Hardcoded for now since the log shows it as 0.0
+    float ChunkWorldSize = ChunkSize * TerrainGridSize;
+    
+    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: ChunkSize=%d, TerrainGridSize=%f, ChunkWorldSize=%f"), 
+           ChunkSize, TerrainGridSize, ChunkWorldSize);
+    
+    // Calculate chunk coordinates
+    FIntVector ChunkCoords = FIntVector(
+        FMath::FloorToInt(ClickPosition.X / ChunkWorldSize),
+        FMath::FloorToInt(ClickPosition.Y / ChunkWorldSize),
+        FMath::FloorToInt(ClickPosition.Z / ChunkWorldSize)
+    );
+    
+    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: ChunkCoords: %s"), *ChunkCoords.ToString());
+    
+    // Calculate chunk center and origin
+    FVector ChunkCenter = FVector(ChunkCoords) * ChunkWorldSize;
+    FVector ChunkOrigin = ChunkCenter - FVector(ChunkWorldSize * 0.5f);
+    FVector ChunkExtent = FVector(ChunkWorldSize * 0.5f);
+    
+    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: ChunkCenter: %s, ChunkOrigin: %s, ChunkExtent: %s"), 
+           *ChunkCenter.ToString(), *ChunkOrigin.ToString(), *ChunkExtent.ToString());
+    
+    // Calculate local position within the chunk
+    FVector LocalInChunk = ClickPosition - ChunkOrigin;
+    
+    // Calculate local voxel coordinates
+    FIntVector LocalVoxel = FIntVector(
+        FMath::FloorToInt(LocalInChunk.X / TerrainGridSize),
+        FMath::FloorToInt(LocalInChunk.Y / TerrainGridSize),
+        FMath::FloorToInt(LocalInChunk.Z / TerrainGridSize)
+    );
+    
+    // Clamp to valid range
+    LocalVoxel.X = FMath::Clamp(LocalVoxel.X, 0, ChunkSize - 1);
+    LocalVoxel.Y = FMath::Clamp(LocalVoxel.Y, 0, ChunkSize - 1);
+    LocalVoxel.Z = FMath::Clamp(LocalVoxel.Z, 0, ChunkSize - 1);
+    
+    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: LocalInChunk: %s, LocalVoxel: %s"), 
+           *LocalInChunk.ToString(), *LocalVoxel.ToString());
+    
+    // Calculate voxel center in world space
+    FVector VoxelCenter = ChunkOrigin + 
+                          FVector(LocalVoxel) * TerrainGridSize + 
+                          FVector(TerrainGridSize * 0.5f);
+    
+    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: VoxelCenter: %s"), *VoxelCenter.ToString());
+    
+    // Draw debug visuals
+    try {
+        // Draw the chunk as a box
+        DrawDebugBox(
+            CurrentWorld,
+            ChunkCenter,
+            ChunkExtent,
+            FColor::Red,
+            false,
+            30.0f,
+            0,
+            2.0f
+        );
+        
+        // Draw chunk coordinates text
+        DrawDebugString(
+            CurrentWorld,
+            ChunkCenter + FVector(0, 0, ChunkExtent.Z + 50.0f),
+            FString::Printf(TEXT("Chunk: %s"), *ChunkCoords.ToString()),
+            nullptr,
+            FColor::Yellow,
+            30.0f
+        );
+        
+        // Draw chunk center
+        DrawDebugSphere(CurrentWorld, ChunkCenter, 30.0f, 16, FColor::Yellow, false, 30.0f);
+        DrawDebugString(
+            CurrentWorld,
+            ChunkCenter + FVector(0, 0, 35.0f),
+            TEXT("Chunk Center"),
+            nullptr,
+            FColor::Yellow,
+            30.0f
+        );
+        
+        // Draw chunk origin (minimum corner)
+        DrawDebugSphere(CurrentWorld, ChunkOrigin, 20.0f, 16, FColor::Orange, false, 30.0f);
+        DrawDebugString(
+            CurrentWorld,
+            ChunkOrigin + FVector(0, 0, 25.0f),
+            TEXT("Chunk Origin"),
+            nullptr,
+            FColor::Orange,
+            30.0f
+        );
+        
+        // Draw a grid of voxels in the chunk
+        for (int32 X = 0; X < ChunkSize; X++)
+        {
+            for (int32 Y = 0; Y < ChunkSize; Y++)
+            {
+                for (int32 Z = 0; Z < ChunkSize; Z++)
+                {
+                    FIntVector VoxelCoord(X, Y, Z);
+                    FVector VoxelPos = ChunkOrigin + 
+                                      FVector(VoxelCoord) * TerrainGridSize + 
+                                      FVector(TerrainGridSize * 0.5f);
+                    
+                    // Only draw voxels at the edges of the chunk
+                    if (X == 0 || X == ChunkSize - 1 || 
+                        Y == 0 || Y == ChunkSize - 1 || 
+                        Z == 0 || Z == ChunkSize - 1)
+                    {
+                        DrawDebugPoint(
+                            CurrentWorld,
+                            VoxelPos,
+                            5.0f,
+                            FColor::Cyan,
+                            false,
+                            30.0f
+                        );
+                    }
+                    
+                    // Draw the selected voxel
+                    if (X == LocalVoxel.X && Y == LocalVoxel.Y && Z == LocalVoxel.Z)
+                    {
+                        DrawDebugBox(
+                            CurrentWorld,
+                            VoxelPos,
+                            FVector(TerrainGridSize * 0.5f),
+                            FColor::Magenta,
+                            false,
+                            30.0f,
+                            0,
+                            2.0f
+                        );
+                    }
+                }
+            }
+        }
+        
+        // Draw a line from click position to voxel center
+        DrawDebugLine(
+            CurrentWorld,
+            ClickPosition,
+            VoxelCenter,
+            FColor::Green,
+            false,
+            30.0f,
+            0,
+            3.0f
+        );
+        
+        // Draw spheres at both positions
+        DrawDebugSphere(CurrentWorld, ClickPosition, 20.0f, 16, FColor::Blue, false, 30.0f);
+        DrawDebugSphere(CurrentWorld, VoxelCenter, 20.0f, 16, FColor::Magenta, false, 30.0f);
+        
+        // Add labels
+        DrawDebugString(
+            CurrentWorld,
+            ClickPosition + FVector(0, 0, 25.0f),
+            TEXT("Click"),
+            nullptr,
+            FColor::White,
+            30.0f
+        );
+        
+        DrawDebugString(
+            CurrentWorld,
+            VoxelCenter + FVector(0, 0, 25.0f),
+            TEXT("Voxel"),
+            nullptr,
+            FColor::White,
+            30.0f
+        );
+        
+        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: Debug visuals drawn successfully"));
+    } catch (...) {
+        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: Exception drawing debug visuals"));
+    }
+    
+    // Log completion
+    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: completed"));
+}
 
 
 

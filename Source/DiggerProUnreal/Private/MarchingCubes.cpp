@@ -372,9 +372,12 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
         return;
     }
 
-    FVector ChunkOrigin = FVector(ChunkPtr->GetWorldPosition());
+    // Use FVoxelConversion to get the chunk's world position
+    FIntVector ChunkCoords = ChunkPtr->GetChunkPosition();
+    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
+    
     FVector UnderSurfaceOffset(0, 0, 0); // Or your actual offset
-    float VoxelSize = DiggerManager->VoxelSize;
+    float VoxelSize = FVoxelConversion::LocalVoxelSize; // Use the consistent voxel size
 
     TArray<FVector> OutVertices;
     TArray<int32> OutTriangles;
@@ -396,10 +399,12 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 
 
 bool UMarchingCubes::IsValidVoxel(const FIntVector& Position) const {
-	return Position.X >= 0 && Position.X < DiggerManager->ChunkSize &&
-		   Position.Y >= 0 && Position.Y < DiggerManager->ChunkSize &&
-		   Position.Z >= 0 && Position.Z < DiggerManager->ChunkSize;
+    int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    return Position.X >= 0 && Position.X < VoxelsPerChunk &&
+           Position.Y >= 0 && Position.Y < VoxelsPerChunk &&
+           Position.Z >= 0 && Position.Z < VoxelsPerChunk;
 }
+
 
 float UMarchingCubes::GetSafeSDFValue(const FIntVector& Position) const {
 	if (!IsValidVoxel(Position)) {
@@ -548,17 +553,46 @@ void UMarchingCubes::GenerateMeshFromGrid(
     TArray<FVector>& OutNormals
 )
 {
-	FVector UnderSurfaceOffset = FVector(0.0f,0.0f,-0.01f);
+    FVector UnderSurfaceOffset = FVector(0.0f,0.0f,-0.01f);
     if (!InVoxelGrid || InVoxelGrid->VoxelData.IsEmpty()) {
         UE_LOG(LogTemp, Warning, TEXT("Invalid or empty VoxelGrid in GenerateMeshFromGrid!"));
         return;
     }
+
+    // Debug visualization of the chunk
+    DrawDebugBox(
+        DiggerManager->GetWorld(),
+        Origin + FVector(FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions * VoxelSize * 0.5f),
+        FVector(FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions * VoxelSize * 0.5f),
+        FQuat::Identity,
+        FColor::Blue,
+        false,
+        10.0f,
+        0,
+        2.0f
+    );
 
     TMap<FVector, int32> VertexCache;
 
     for (const auto& Voxel : InVoxelGrid->VoxelData) {
         FIntVector VoxelCoords = Voxel.Key;
         FVoxelData VoxelValue = Voxel.Value;
+
+        // Debug visualization of each voxel with data
+        FVector VoxelWorldPos = Origin + FVector(
+            VoxelCoords.X * VoxelSize,
+            VoxelCoords.Y * VoxelSize,
+            VoxelCoords.Z * VoxelSize
+        ) + FVector(VoxelSize * 0.5f);
+        
+        DrawDebugPoint(
+            DiggerManager->GetWorld(),
+            VoxelWorldPos,
+            5.0f,
+            FColor::Red,
+            false,
+            10.0f
+        );
 
         FVector CornerWSPositions[8];
         float CornerSDFValues[8];
@@ -609,17 +643,6 @@ void UMarchingCubes::GenerateMeshFromGrid(
             }
         }
     }
-
-	/*// 1. Find rim vertices
-	TArray<int32> RimVertexIndices;
-	FindRimVertices(OutVertices, OutTriangles, RimVertexIndices);
-
-	// 2. Add skirt mesh
-	AddSkirtMesh(RimVertexIndices, OutVertices, OutTriangles, OutNormals);
-
-	// 3. (Optional) Recompute normals for all triangles if you want smooth shading
-	// ... (your normal calculation code)*/
-
 
     // Calculate smooth normals (as in original)
     OutNormals.SetNum(OutVertices.Num(), false);

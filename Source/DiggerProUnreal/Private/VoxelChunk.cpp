@@ -256,6 +256,13 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
     UE_LOG(LogTemp, Warning, TEXT("Voxel Range: X=[%d,%d], Y=[%d,%d], Z=[%d,%d]"), 
            MinX, MaxX, MinY, MaxY, MinZ, MaxZ);
 
+    // Draw debug sphere at brush position
+    DrawDebugSphere(GetWorld(), BrushPosition, Radius, 16, FColor::Red, false, 5.0f);
+    // Draw debug box for chunk bounds
+    DrawDebugBox(GetWorld(), ChunkOrigin + FVector(VoxelsPerChunk * FVoxelConversion::LocalVoxelSize * 0.5f),
+                FVector(VoxelsPerChunk * FVoxelConversion::LocalVoxelSize * 0.5f),
+                FQuat::Identity, FColor::Blue, false, 5.0f);
+
     for (int32 X = MinX; X <= MaxX; ++X)
     for (int32 Y = MinY; Y <= MaxY; ++Y)
     for (int32 Z = MinZ; Z <= MaxZ; ++Z)
@@ -264,9 +271,13 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
         if (X < 0 || X >= VoxelsPerChunk || Y < 0 || Y >= VoxelsPerChunk || Z < 0 || Z >= VoxelsPerChunk)
             continue;
 
+        // Calculate world position of voxel center consistently with LocalVoxelToWorld
         FVector WorldPos = ChunkOrigin
             + FVector(X, Y, Z) * FVoxelConversion::LocalVoxelSize
             + FVector(FVoxelConversion::LocalVoxelSize * 0.5f);
+
+        // Draw debug point for each affected voxel
+        DrawDebugPoint(GetWorld(), WorldPos, 3.0f, FColor::Green, false, 5.0f);
 
         float Distance = FVector::Dist(WorldPos, BrushPosition);
         float SDFValue = Distance - Radius;
@@ -280,6 +291,9 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
             ));
             
             SparseVoxelGrid->SetVoxel(X, Y, Z, SDFValue, bDig);
+            
+            // Draw debug point for each modified voxel
+            DrawDebugPoint(GetWorld(), WorldPos, 5.0f, FColor::Red, false, 5.0f);
         }
     }
 

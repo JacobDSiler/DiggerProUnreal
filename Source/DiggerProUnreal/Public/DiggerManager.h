@@ -138,6 +138,7 @@ class DIGGERPROUNREAL_API ADiggerManager : public AActor
 public:
     ADiggerManager();
     void ApplyBrushToAllChunks(FBrushStroke& BrushStroke);
+    void DebugBrushPlacement(const FVector& ClickPosition);
     UStaticMesh* ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName);
     AIslandActor* SpawnIslandActorFromIslandAtPosition(const FVector& IslandCenter, bool bEnablePhysics);
 

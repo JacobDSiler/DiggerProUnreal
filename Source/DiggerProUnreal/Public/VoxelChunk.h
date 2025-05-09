@@ -69,7 +69,6 @@ public:
     UFUNCTION(BluePrintCallable)
     USparseVoxelGrid* GetSparseVoxelGrid() const;
     UMarchingCubes* GetMarchingCubesGenerator() const { return MarchingCubesGenerator; }
-    int16& GetVoxelSize();
     TMap<FVector, float> GetActiveVoxels() const;
     bool IsDirty() const { return bIsDirty; }
     
