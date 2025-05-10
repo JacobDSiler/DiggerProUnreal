@@ -163,10 +163,14 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
             {
                 EVoxelBrushType BrushType = DiggerToolkit->GetCurrentBrushType();
 
-                // Add verification log
-                UE_LOG(LogTemp, Error, TEXT("Found DiggerManager, calling DebugBrushPlacement with: %s"), *HitLocation.ToString());
+                // Apply brush settings based on selected brush type
+               /* if (BrushType == EVoxelBrushType::Debug)
+                {*/
+                    // Add verification log
+                    UE_LOG(LogTemp, Error, TEXT("Found DiggerManager, calling DebugBrushPlacement with: %s"), *HitLocation.ToString());
                 
-                Digger->DebugBrushPlacement(HitLocation);
+                    Digger->DebugBrushPlacement(HitLocation);
+               // }
                 
                 // Apply brush settings based on selected brush type
                 if (BrushType == EVoxelBrushType::Cone || BrushType == EVoxelBrushType::Cylinder)

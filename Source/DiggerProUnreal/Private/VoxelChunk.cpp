@@ -233,8 +233,11 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
     FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
     int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
 
-    // Compute the AABB of the brush in world space with some padding for smooth transitions
-    float PaddedRadius = Radius + FVoxelConversion::LocalVoxelSize * 2.0f;
+    // SDF transition band for smooth surface
+    const float SDFTransitionBand = FVoxelConversion::LocalVoxelSize * 3.0f;
+
+    // Compute the AABB of the brush in world space with padding for smooth transitions
+    float PaddedRadius = Radius + SDFTransitionBand;
     FVector MinWorld = BrushPosition - FVector(PaddedRadius);
     FVector MaxWorld = BrushPosition + FVector(PaddedRadius);
 
@@ -242,65 +245,39 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
     FVector MinLocal = (MinWorld - ChunkOrigin) / FVoxelConversion::LocalVoxelSize;
     FVector MaxLocal = (MaxWorld - ChunkOrigin) / FVoxelConversion::LocalVoxelSize;
 
-    // Convert to integer indices without clamping to allow proper cross-chunk operations
-    int32 MinX = FMath::FloorToInt(MinLocal.X);
-    int32 MaxX = FMath::CeilToInt(MaxLocal.X);
-    int32 MinY = FMath::FloorToInt(MinLocal.Y);
-    int32 MaxY = FMath::CeilToInt(MaxLocal.Y);
-    int32 MinZ = FMath::FloorToInt(MinLocal.Z);
-    int32 MaxZ = FMath::CeilToInt(MaxLocal.Z);
-
-    // Debug output to help diagnose issues
-    UE_LOG(LogTemp, Warning, TEXT("ApplySphereBrush: BrushPosition=%s, Radius=%f, ChunkOrigin=%s"), 
-           *BrushPosition.ToString(), Radius, *ChunkOrigin.ToString());
-    UE_LOG(LogTemp, Warning, TEXT("Voxel Range: X=[%d,%d], Y=[%d,%d], Z=[%d,%d]"), 
-           MinX, MaxX, MinY, MaxY, MinZ, MaxZ);
-
-    // Draw debug sphere at brush position
-    DrawDebugSphere(GetWorld(), BrushPosition, Radius, 16, FColor::Red, false, 5.0f);
-    // Draw debug box for chunk bounds
-    DrawDebugBox(GetWorld(), ChunkOrigin + FVector(VoxelsPerChunk * FVoxelConversion::LocalVoxelSize * 0.5f),
-                FVector(VoxelsPerChunk * FVoxelConversion::LocalVoxelSize * 0.5f),
-                FQuat::Identity, FColor::Blue, false, 5.0f);
+    // Expand bounds by 1 to ensure all surface voxels are updated (including borders)
+    int32 MinX = FMath::FloorToInt(MinLocal.X) - 1;
+    int32 MaxX = FMath::CeilToInt(MaxLocal.X) + 1;
+    int32 MinY = FMath::FloorToInt(MinLocal.Y) - 1;
+    int32 MaxY = FMath::CeilToInt(MaxLocal.Y) + 1;
+    int32 MinZ = FMath::FloorToInt(MinLocal.Z) - 1;
+    int32 MaxZ = FMath::CeilToInt(MaxLocal.Z) + 1;
 
     for (int32 X = MinX; X <= MaxX; ++X)
     for (int32 Y = MinY; Y <= MaxY; ++Y)
     for (int32 Z = MinZ; Z <= MaxZ; ++Z)
     {
-        // Skip voxels outside this chunk's bounds
-        if (X < 0 || X >= VoxelsPerChunk || Y < 0 || Y >= VoxelsPerChunk || Z < 0 || Z >= VoxelsPerChunk)
+        // Bounds check for chunk-local voxels (including borders)
+        if (X < 0 || X >= VoxelsPerChunk ||
+            Y < 0 || Y >= VoxelsPerChunk ||
+            Z < 0 || Z >= VoxelsPerChunk)
             continue;
 
-        // Calculate world position of voxel center consistently with LocalVoxelToWorld
         FVector WorldPos = ChunkOrigin
             + FVector(X, Y, Z) * FVoxelConversion::LocalVoxelSize
             + FVector(FVoxelConversion::LocalVoxelSize * 0.5f);
 
-        // Draw debug point for each affected voxel
-        DrawDebugPoint(GetWorld(), WorldPos, 3.0f, FColor::Green, false, 5.0f);
+        float SDFValue = FVector::Dist(WorldPos, BrushPosition) - Radius;
+        float ExistingSDF = SparseVoxelGrid->GetVoxel(X, Y, Z);
+        float NewSDF = BlendSDF(SDFValue, ExistingSDF, bDig, SDFTransitionBand);
 
-        float Distance = FVector::Dist(WorldPos, BrushPosition);
-        float SDFValue = Distance - Radius;
-
-        // Only update if within the sphere's influence range
-        if (SDFValue <= FVoxelConversion::LocalVoxelSize * 2.0f) // Increased for better transitions
-        {
-            VoxelLogAggregator::Add(FString::Printf(
-                TEXT("Chunk %s, Local (%d,%d,%d), World %s, SDF %f"),
-                *ChunkCoordinates.ToString(), X, Y, Z, *WorldPos.ToString(), SDFValue
-            ));
-            
-            SparseVoxelGrid->SetVoxel(X, Y, Z, SDFValue, bDig);
-            
-            // Draw debug point for each modified voxel
-            DrawDebugPoint(GetWorld(), WorldPos, 5.0f, FColor::Red, false, 5.0f);
-        }
+        SparseVoxelGrid->SetVoxel(X, Y, Z, NewSDF, bDig);
     }
 
-    VoxelLogAggregator::Flush(TEXT("[ApplySphereBrush Summary]"));
-    
     MarkDirty();
+    SparseVoxelGrid->SynchronizeBordersIfDirty();
 }
+
 
 
 
@@ -361,6 +338,45 @@ float UVoxelChunk::CalculateDiggingSDF(
 }
 
 
+// SDFValue: signed distance (negative inside, positive outside, zero on surface)
+// ExistingSDF: current SDF at this voxel
+// bDig: true = dig (make air), false = add (make solid)
+// TransitionBand: width of the blend zone (in world units)
+float UVoxelChunk::BlendSDF(float SDFValue, float ExistingSDF, bool bDig, float TransitionBand)
+{
+    // SDFValue: negative inside, positive outside
+    if (bDig)
+    {
+        // Digging: make more air (increase SDF)
+        if (SDFValue <= -TransitionBand)
+            return 1.0f; // Air
+        else if (SDFValue <= TransitionBand)
+        {
+            float T = (SDFValue + TransitionBand) / (2.0f * TransitionBand);
+            T = FMath::SmoothStep(0.0f, 1.0f, T);
+            return FMath::Lerp(1.0f, ExistingSDF, T);
+        }
+        else
+            return ExistingSDF;
+    }
+    else
+    {
+        // Adding: make more solid (decrease SDF)
+        if (SDFValue <= -TransitionBand)
+            return -1.0f; // Solid
+        else if (SDFValue <= TransitionBand)
+        {
+            float T = (SDFValue + TransitionBand) / (2.0f * TransitionBand);
+            T = FMath::SmoothStep(0.0f, 1.0f, T);
+            return FMath::Lerp(-1.0f, ExistingSDF, T);
+        }
+        else
+            return ExistingSDF;
+    }
+}
+
+
+
 // Helper function for additive SDF calculation
 float UVoxelChunk::CalculateAdditiveSDF(
     float Distance,
@@ -419,29 +435,52 @@ void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float HalfSize, bool b
     FTransform BrushTransform(Rotation, BrushPosition);
     FTransform InvBrushTransform = BrushTransform.Inverse();
 
-    // Compute bounds in world space (expand for transition)
-    FIntVector VoxelCenter = FVoxelConversion::WorldToLocalVoxel(BrushPosition);
-    int32 MinX = VoxelCenter.X - HalfSize - 2;
-    int32 MaxX = VoxelCenter.X + HalfSize + 2;
-    int32 MinY = VoxelCenter.Y - HalfSize - 2;
-    int32 MaxY = VoxelCenter.Y + HalfSize + 2;
-    int32 MinZ = VoxelCenter.Z - HalfSize - 2;
-    int32 MaxZ = VoxelCenter.Z + HalfSize + 2;
+    // Compute world-space AABB for the cube (with padding for smooth transition)
+    float PaddedHalfSize = HalfSize + FVoxelConversion::LocalVoxelSize * 2.0f;
+    FVector MinWorld = BrushPosition - FVector(PaddedHalfSize);
+    FVector MaxWorld = BrushPosition + FVector(PaddedHalfSize);
+
+    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
+    FVector MinLocal = (MinWorld - ChunkOrigin) / FVoxelConversion::LocalVoxelSize;
+    FVector MaxLocal = (MaxWorld - ChunkOrigin) / FVoxelConversion::LocalVoxelSize;
+
+    int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+
+    int32 MinX = FMath::FloorToInt(MinLocal.X) - 1;
+    int32 MaxX = FMath::CeilToInt(MaxLocal.X) + 1;
+    int32 MinY = FMath::FloorToInt(MinLocal.Y) - 1;
+    int32 MaxY = FMath::CeilToInt(MaxLocal.Y) + 1;
+    int32 MinZ = FMath::FloorToInt(MinLocal.Z) - 1;
+    int32 MaxZ = FMath::CeilToInt(MaxLocal.Z) + 1;
 
     for (int32 X = MinX; X <= MaxX; ++X)
     for (int32 Y = MinY; Y <= MaxY; ++Y)
     for (int32 Z = MinZ; Z <= MaxZ; ++Z)
     {
-        FVector3d WorldPosition = FVoxelConversion::LocalVoxelToWorld(FIntVector(X, Y, Z));
+        if (X < 0 || X >= VoxelsPerChunk ||
+            Y < 0 || Y >= VoxelsPerChunk ||
+            Z < 0 || Z >= VoxelsPerChunk)
+            continue;
+
+        FVector WorldPosition = ChunkOrigin
+            + FVector(X, Y, Z) * FVoxelConversion::LocalVoxelSize
+            + FVector(FVoxelConversion::LocalVoxelSize * 0.5f);
+
         FVector3d LocalPos = InvBrushTransform.TransformPosition(WorldPosition);
-
         float MaxDistance = FMath::Max3(FMath::Abs(LocalPos.X), FMath::Abs(LocalPos.Y), FMath::Abs(LocalPos.Z));
-        float NormalizedDist = MaxDistance / HalfSize;
+        float SDFValue = MaxDistance - HalfSize;
 
-        float SDFValue = ComputeSDFValue(NormalizedDist, bDig, 1.0f, 1.5f);
-        SetVoxel(X, Y, Z, SDFValue, bDig);
+        float ExistingSDF = SparseVoxelGrid->GetVoxel(X, Y, Z);
+        float NewSDF = BlendSDF(SDFValue, ExistingSDF, bDig, FVoxelConversion::LocalVoxelSize * 2.0f);
+
+        SparseVoxelGrid->SetVoxel(X, Y, Z, NewSDF, bDig);
     }
+
+    MarkDirty();
+    SparseVoxelGrid->SynchronizeBordersIfDirty();
 }
+
+
 
 
 void UVoxelChunk::ApplyCylinderBrush(
@@ -599,6 +638,7 @@ void UVoxelChunk::ApplySmoothBrush(const FVector& Center, float Radius, bool bDi
                 }
                 else
                 {
+                    // Border: fetch from chunk system (neighbor chunk) if possible
                     NeighborSDF = GetVoxel(Neighbor.X, Neighbor.Y, Neighbor.Z);
                 }
                 Sum += NeighborSDF;
@@ -633,6 +673,7 @@ void UVoxelChunk::ApplySmoothBrush(const FVector& Center, float Radius, bool bDi
 
     MarkDirty();
 }
+
 
 
 

@@ -81,6 +81,7 @@ private:
     void ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig);
     float CalculateDiggingSDF(float Distance, float InnerRadius, float Radius, float OuterRadius, float TransitionZone,
                               float ExistingSDF, bool bIsAboveTerrain, float HeightDifferenceFromTerrain);
+    float BlendSDF(float SDFValue, float ExistingSDF, bool bDig, float TransitionBand);
     float CalculateAdditiveSDF(float Distance, float InnerRadius, float Radius, float OuterRadius, float TransitionZone,
                                float ExistingSDF, bool bIsAboveTerrain);
     float GetTerrainHeightEfficient(ALandscapeProxy* Landscape, const FVector& WorldPosition);

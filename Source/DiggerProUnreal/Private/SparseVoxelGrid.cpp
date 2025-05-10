@@ -133,12 +133,27 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
         VoxelData.Add(VoxelKey, FVoxelData(BlendedValue));
     }
 
+    // Check if this voxel is on the border
+    if (X == 0 || Y == 0 || Z == 0 ||
+        X == ChunkSize - 1 || Y == ChunkSize - 1 || Z == ChunkSize - 1)
+    {
+        bBorderIsDirty = true;
+    }
+
     // Always mark the parent chunk dirty
     if (ParentChunk)
         ParentChunk->MarkDirty();
 }
 
 
+void USparseVoxelGrid::SynchronizeBordersIfDirty()
+{
+    if (bBorderIsDirty)
+    {
+        SynchronizeBordersWithNeighbors();
+        bBorderIsDirty = false;
+    }
+}
 
 
 bool USparseVoxelGrid::SaveVoxelDataToFile(const FString& FilePath)
@@ -575,6 +590,106 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold /* usuall
     }
 
     return Islands;
+}
+
+
+// In USparseVoxelGrid.cpp
+
+void USparseVoxelGrid::SynchronizeBordersWithNeighbors()
+{
+    if (!ParentChunk || !DiggerManager) return;
+
+    FIntVector ThisChunkCoords = ParentChunkCoordinates;
+    int32 N = ChunkSize * Subdivisions;
+    const float SDFTransitionBand = FVoxelConversion::LocalVoxelSize * 3.0f;
+
+    for (int Axis = 0; Axis < 3; ++Axis)
+    {
+        for (int Dir = -1; Dir <= 1; Dir += 2)
+        {
+            FIntVector NeighborCoords = ThisChunkCoords;
+            NeighborCoords[Axis] += Dir;
+
+            UVoxelChunk* NeighborChunk = DiggerManager->GetOrCreateChunkAtChunk(NeighborCoords);
+            if (!NeighborChunk) continue;
+
+            USparseVoxelGrid* NeighborGrid = NeighborChunk->GetSparseVoxelGrid();
+            if (!NeighborGrid) continue;
+
+            for (int32 i = 0; i < N; ++i)
+            for (int32 j = 0; j < N; ++j)
+            {
+                FIntVector ThisBorder, NeighborBorder;
+                ThisBorder = NeighborBorder = FIntVector::ZeroValue;
+
+                switch (Axis)
+                {
+                    case 0:
+                        ThisBorder.X = (Dir == -1) ? 0 : N-1;
+                        ThisBorder.Y = i;
+                        ThisBorder.Z = j;
+                        NeighborBorder.X = (Dir == -1) ? N-1 : 0;
+                        NeighborBorder.Y = i;
+                        NeighborBorder.Z = j;
+                        break;
+                    case 1:
+                        ThisBorder.X = i;
+                        ThisBorder.Y = (Dir == -1) ? 0 : N-1;
+                        ThisBorder.Z = j;
+                        NeighborBorder.X = i;
+                        NeighborBorder.Y = (Dir == -1) ? N-1 : 0;
+                        NeighborBorder.Z = j;
+                        break;
+                    case 2:
+                        ThisBorder.X = i;
+                        ThisBorder.Y = j;
+                        ThisBorder.Z = (Dir == -1) ? 0 : N-1;
+                        NeighborBorder.X = i;
+                        NeighborBorder.Y = j;
+                        NeighborBorder.Z = (Dir == -1) ? N-1 : 0;
+                        break;
+                }
+
+                bool HasA = VoxelData.Contains(ThisBorder);
+                bool HasB = NeighborGrid->VoxelData.Contains(NeighborBorder);
+
+                // Only synchronize if at least one exists AND is near the surface
+                if (HasA && HasB)
+                {
+                    float SDF_A = GetVoxel(ThisBorder.X, ThisBorder.Y, ThisBorder.Z);
+                    float SDF_B = NeighborGrid->GetVoxel(NeighborBorder.X, NeighborBorder.Y, NeighborBorder.Z);
+
+                    // Only average if at least one is near the surface
+                    if (FMath::Abs(SDF_A) < SDFTransitionBand || FMath::Abs(SDF_B) < SDFTransitionBand)
+                    {
+                        float SeamSDF = 0.5f * (SDF_A + SDF_B);
+                        bool DummyDig = false;
+                        SetVoxel(ThisBorder.X, ThisBorder.Y, ThisBorder.Z, SeamSDF, DummyDig);
+                        NeighborGrid->SetVoxel(NeighborBorder.X, NeighborBorder.Y, NeighborBorder.Z, SeamSDF, DummyDig);
+                    }
+                }
+                else if (HasA)
+                {
+                    float SDF_A = GetVoxel(ThisBorder.X, ThisBorder.Y, ThisBorder.Z);
+                    if (FMath::Abs(SDF_A) < SDFTransitionBand)
+                    {
+                        bool DummyDig = false;
+                        NeighborGrid->SetVoxel(NeighborBorder.X, NeighborBorder.Y, NeighborBorder.Z, SDF_A, DummyDig);
+                    }
+                }
+                else if (HasB)
+                {
+                    float SDF_B = NeighborGrid->GetVoxel(NeighborBorder.X, NeighborBorder.Y, NeighborBorder.Z);
+                    if (FMath::Abs(SDF_B) < SDFTransitionBand)
+                    {
+                        bool DummyDig = false;
+                        SetVoxel(ThisBorder.X, ThisBorder.Y, ThisBorder.Z, SDF_B, DummyDig);
+                    }
+                }
+                // else: neither exists, do nothing (keep both sparse)
+            }
+        }
+    }
 }
 
 
