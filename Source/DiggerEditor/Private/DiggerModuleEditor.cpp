@@ -2,6 +2,11 @@
 #include "Modules/ModuleManager.h"
 #include "EditorModeRegistry.h"
 #include "DiggerEdMode.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+// If you later use UCustomSDFBrushFactory
+// #include "UCustomSDFBrushFactory.h"
+
 
 #define LOCTEXT_NAMESPACE "FDiggerEditorModule"
 

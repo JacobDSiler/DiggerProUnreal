@@ -6,6 +6,7 @@
 #include "Toolkits/BaseToolkit.h"        
 #include "VoxelBrushTypes.h"
 #include "Toolkits/BaseToolkit.h"
+#include "FCustomBrushEntry.h"
 
 struct FIslandData;
 class ADiggerManager;
@@ -20,6 +21,8 @@ public:
 	void AddIsland(const FIslandData& Island);
 	void BindIslandDelegates();
 	virtual void Init(const TSharedPtr<IToolkitHost>& InitToolkitHost) override;
+	bool CanPaintWithCustomBrush() const;
+	void ScanCustomBrushFolder();
 	virtual FName GetToolkitFName() const override;
 	virtual FText GetBaseToolkitName() const override;
 	virtual class FEdMode* GetEditorMode() const override;
@@ -95,6 +98,15 @@ private:
 	bool bShowOffset=false;
 	bool bRotateToSurfaceNormal = false;
 	bool bUseSurfaceNormalRotation = false;
+	float TorusInnerRadius=.2f;
+	float MinTorusInnerRadius=1.f;
+	float MaxTorusInnerRadius=5.f;
+	float MinCubeExtent=1.f;
+	float MaxCubeExtent=12.f;
+	float AdvancedCubeHalfExtentY=2.f;
+	float AdvancedCubeHalfExtentX=.5f;
+	float AdvancedCubeHalfExtentZ=1.f;
+	bool bUseAdvancedCubeBrush = false;
 
 public:
 	[[nodiscard]] bool UseSurfaceNormalRotation() const
@@ -226,6 +238,11 @@ public:
 
 
 private:
+
+	TSharedPtr<SUniformGridPanel> CustomBrushGrid;
+	TArray<FCustomBrushEntry> CustomBrushEntries;
+	int32 SelectedBrushIndex = -1;
+	
 	float BrushRadius = 50.0f;
 	float BrushStrength = 0.8f;
 	float BrushFalloff = 0.2f;
@@ -240,7 +257,6 @@ private:
 	bool bEnableNanite = false;
 	float BakeDetail = 1.0f;
 	bool bShowRotation = false;
-	int32 SelectedBrushIndex = 0;
 	float BrushLength = 200.0f; // Default value, adjust as needed
 	bool bDebugVoxels = false;
 
@@ -259,7 +275,6 @@ private:
 
 	
 	TArray<TSoftObjectPtr<UStaticMesh>> CustomBrushMeshes;
-	TSharedPtr<SUniformGridPanel> CustomBrushGrid;
 	TSharedPtr<SBox> IslandGridContainer; // Add this!
 	TSharedPtr<SUniformGridPanel> IslandGrid;
 	TSharedPtr<FAssetThumbnailPool> AssetThumbnailPool;

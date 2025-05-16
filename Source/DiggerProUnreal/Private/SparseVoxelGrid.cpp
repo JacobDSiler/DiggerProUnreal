@@ -13,7 +13,7 @@ constexpr float SDF_AIR   = 1.0f;
 
 
 
-USparseVoxelGrid::USparseVoxelGrid(): LocalVoxelSize(0), DiggerManager(nullptr), ParentChunk(nullptr), World(nullptr),
+USparseVoxelGrid::USparseVoxelGrid(): DiggerManager(nullptr), ParentChunk(nullptr), World(nullptr),
                                       ParentChunkCoordinates(0, 0, 0),
                                       TerrainGridSize(0),
                                       Subdivisions(0)
@@ -44,7 +44,6 @@ void USparseVoxelGrid::InitializeDiggerManager()
             ChunkSize=DiggerManager->ChunkSize;
             TerrainGridSize=DiggerManager->TerrainGridSize;
             Subdivisions=DiggerManager->Subdivisions;
-            LocalVoxelSize=DiggerManager->VoxelSize;
         }
 }
 
@@ -61,7 +60,6 @@ bool USparseVoxelGrid::EnsureDiggerManager()
             return false;
         }
         //UE_LOG(LogTemp, Warning, TEXT("DiggerManager ensured correctly in an instance of SVG!"));
-        LocalVoxelSize = DiggerManager->VoxelSize;
     }
     return true;
 }
@@ -72,7 +70,7 @@ bool USparseVoxelGrid::EnsureDiggerManager()
 
 bool USparseVoxelGrid::IsPointAboveLandscape(FVector& Point)
 {
-    if(!World) World = DiggerManager->GetWorldFromManager();
+    if(!World) World = GetWorld();
     if (!World) 
     {
         //UE_LOG(LogTemp, Error, TEXT("World is null in IsPointAboveLandscape"));
@@ -108,42 +106,40 @@ void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue, bool &bDig)
 
 // In USparseVoxelGrid, update SetVoxel to use world coordinates comparison
 // Enhanced SetVoxel for better blending and transitions
-void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool &bDig)
+void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig)
 {
     FIntVector VoxelKey(X, Y, Z);
-    FVoxelData* ExistingVoxel = VoxelData.Find(VoxelKey);
 
-    // Compute world position of this voxel
-    FVector WorldPos = ParentChunk->GetWorldPosition(FIntVector(X, Y, Z));
-    float LandscapeHeight = DiggerManager->GetLandscapeHeightAt(FVector(WorldPos.X, WorldPos.Y, 0));
-    float DefaultSDFValue = (WorldPos.Z < LandscapeHeight) ? SDF_SOLID : SDF_AIR;
-
-    if (ExistingVoxel)
+    // If the SDF is air, remove the voxel from the sparse grid
+    if (NewSDFValue >= SDF_AIR)
     {
-        float CurrentValue = ExistingVoxel->SDFValue;
-        ExistingVoxel->SDFValue = bDig
-            ? FMath::Max(CurrentValue, NewSDFValue)
-            : FMath::Min(CurrentValue, NewSDFValue);
+        //VoxelData.Remove(VoxelKey);
     }
     else
     {
-        float BlendedValue = bDig
-            ? FMath::Max(DefaultSDFValue, NewSDFValue)
-            : FMath::Min(DefaultSDFValue, NewSDFValue);
-        VoxelData.Add(VoxelKey, FVoxelData(BlendedValue));
+        // Use FindOrAdd to update existing voxels
+        FVoxelData* ExistingData = VoxelData.Find(VoxelKey);
+        if (ExistingData)
+        {
+            ExistingData->SDFValue = NewSDFValue;
+        }
+        else
+        {
+            VoxelData.Add(VoxelKey, FVoxelData(NewSDFValue));
+        }
     }
 
-    // Check if this voxel is on the border
+    // Border dirty flag
     if (X == 0 || Y == 0 || Z == 0 ||
         X == ChunkSize - 1 || Y == ChunkSize - 1 || Z == ChunkSize - 1)
     {
         bBorderIsDirty = true;
     }
 
-    // Always mark the parent chunk dirty
     if (ParentChunk)
         ParentChunk->MarkDirty();
 }
+
 
 
 void USparseVoxelGrid::SynchronizeBordersIfDirty()
@@ -276,12 +272,12 @@ void USparseVoxelGrid::LogVoxelData() const
     {
         //UE_LOG(LogTemp, Error, TEXT("Voxel Data is empty!"));
     }
-
     /*for (const auto& VoxelPair : VoxelData)
     {
         UE_LOG(LogTemp, Warning, TEXT("Voxel at [%s] has SDF value: %f"), *VoxelPair.Key.ToString(), VoxelPair.Value.SDFValue);
     }*/
 }
+
 
 void USparseVoxelGrid::RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove)
 {
@@ -476,7 +472,7 @@ StopExtraction:
     // Step 4: Create the output grid
     OutTempGrid = NewObject<USparseVoxelGrid>(GetOuter());
     OutTempGrid->VoxelData.Reserve(OutVoxels.Num());
-    OutTempGrid->LocalVoxelSize = this->LocalVoxelSize;
+    OutTempGrid->LocalVoxelSize = FVoxelConversion::LocalVoxelSize;
     OutTempGrid->ParentChunk = this->ParentChunk;
 
     for (const FIntVector& Voxel : OutVoxels)
@@ -594,10 +590,9 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold /* usuall
 
 
 // In USparseVoxelGrid.cpp
-
 void USparseVoxelGrid::SynchronizeBordersWithNeighbors()
 {
-    if (!ParentChunk || !DiggerManager) return;
+/*    if (!ParentChunk || !DiggerManager) return;
 
     FIntVector ThisChunkCoords = ParentChunkCoordinates;
     int32 N = ChunkSize * Subdivisions;
@@ -619,78 +614,61 @@ void USparseVoxelGrid::SynchronizeBordersWithNeighbors()
             for (int32 i = 0; i < N; ++i)
             for (int32 j = 0; j < N; ++j)
             {
-                FIntVector ThisBorder, NeighborBorder;
-                ThisBorder = NeighborBorder = FIntVector::ZeroValue;
+                FIntVector ThisBorder = FIntVector::ZeroValue;
+                FIntVector NeighborBorder = FIntVector::ZeroValue;
 
+                // Correct border mapping for all axes
                 switch (Axis)
                 {
-                    case 0:
-                        ThisBorder.X = (Dir == -1) ? 0 : N-1;
-                        ThisBorder.Y = i;
-                        ThisBorder.Z = j;
-                        NeighborBorder.X = (Dir == -1) ? N-1 : 0;
-                        NeighborBorder.Y = i;
-                        NeighborBorder.Z = j;
+                    case 0: // X axis
+                        ThisBorder.X = (Dir == -1) ? 0 : N - 1;
+                        NeighborBorder.X = (Dir == -1) ? N - 1 : 0;
+                        ThisBorder.Y = NeighborBorder.Y = i;
+                        ThisBorder.Z = NeighborBorder.Z = j;
                         break;
-                    case 1:
-                        ThisBorder.X = i;
-                        ThisBorder.Y = (Dir == -1) ? 0 : N-1;
-                        ThisBorder.Z = j;
-                        NeighborBorder.X = i;
-                        NeighborBorder.Y = (Dir == -1) ? N-1 : 0;
-                        NeighborBorder.Z = j;
+                    case 1: // Y axis
+                        ThisBorder.Y = (Dir == -1) ? 0 : N - 1;
+                        NeighborBorder.Y = (Dir == -1) ? N - 1 : 0;
+                        ThisBorder.X = NeighborBorder.X = i;
+                        ThisBorder.Z = NeighborBorder.Z = j;
                         break;
-                    case 2:
-                        ThisBorder.X = i;
-                        ThisBorder.Y = j;
-                        ThisBorder.Z = (Dir == -1) ? 0 : N-1;
-                        NeighborBorder.X = i;
-                        NeighborBorder.Y = j;
-                        NeighborBorder.Z = (Dir == -1) ? N-1 : 0;
+                    case 2: // Z axis
+                        ThisBorder.Z = (Dir == -1) ? 0 : N - 1;
+                        NeighborBorder.Z = (Dir == -1) ? N - 1 : 0;
+                        ThisBorder.X = NeighborBorder.X = i;
+                        ThisBorder.Y = NeighborBorder.Y = j;
                         break;
                 }
 
                 bool HasA = VoxelData.Contains(ThisBorder);
                 bool HasB = NeighborGrid->VoxelData.Contains(NeighborBorder);
 
-                // Only synchronize if at least one exists AND is near the surface
+                // Only synchronize if both sides have a voxel (i.e., are not air)
                 if (HasA && HasB)
                 {
                     float SDF_A = GetVoxel(ThisBorder.X, ThisBorder.Y, ThisBorder.Z);
                     float SDF_B = NeighborGrid->GetVoxel(NeighborBorder.X, NeighborBorder.Y, NeighborBorder.Z);
 
-                    // Only average if at least one is near the surface
-                    if (FMath::Abs(SDF_A) < SDFTransitionBand || FMath::Abs(SDF_B) < SDFTransitionBand)
+                    if (FMath::Abs(SDF_A - SDF_B) > 0)//KINDA_SMALL_NUMBER)
                     {
-                        float SeamSDF = 0.5f * (SDF_A + SDF_B);
-                        bool DummyDig = false;
-                        SetVoxel(ThisBorder.X, ThisBorder.Y, ThisBorder.Z, SeamSDF, DummyDig);
-                        NeighborGrid->SetVoxel(NeighborBorder.X, NeighborBorder.Y, NeighborBorder.Z, SeamSDF, DummyDig);
+                        if (FMath::Abs(SDF_A) < SDFTransitionBand || FMath::Abs(SDF_B) < SDFTransitionBand)
+                        {
+                            float AverageSDF = 0.5f * (SDF_A + SDF_B);
+
+                            SetVoxel(ThisBorder.X, ThisBorder.Y, ThisBorder.Z, AverageSDF, false);
+                            NeighborGrid->SetVoxel(NeighborBorder.X, NeighborBorder.Y, NeighborBorder.Z, AverageSDF,
+                                                   false);
+
+                            bBorderIsDirty = true;
+                            NeighborGrid->bBorderIsDirty = true;
+                        }
                     }
                 }
-                else if (HasA)
-                {
-                    float SDF_A = GetVoxel(ThisBorder.X, ThisBorder.Y, ThisBorder.Z);
-                    if (FMath::Abs(SDF_A) < SDFTransitionBand)
-                    {
-                        bool DummyDig = false;
-                        NeighborGrid->SetVoxel(NeighborBorder.X, NeighborBorder.Y, NeighborBorder.Z, SDF_A, DummyDig);
-                    }
-                }
-                else if (HasB)
-                {
-                    float SDF_B = NeighborGrid->GetVoxel(NeighborBorder.X, NeighborBorder.Y, NeighborBorder.Z);
-                    if (FMath::Abs(SDF_B) < SDFTransitionBand)
-                    {
-                        bool DummyDig = false;
-                        SetVoxel(ThisBorder.X, ThisBorder.Y, ThisBorder.Z, SDF_B, DummyDig);
-                    }
-                }
-                // else: neither exists, do nothing (keep both sparse)
             }
         }
-    }
+    }*/
 }
+
 
 
 
@@ -723,7 +701,7 @@ void USparseVoxelGrid::RenderVoxels() {
 
         // Convert voxel coordinates to world space
         FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(VoxelCoords);
-        FVector Center = WorldPos + FVector(LocalVoxelSize / 2); // Adjust to the center of the voxel
+        FVector Center = WorldPos + FVector(FVoxelConversion::LocalVoxelSize / 2); // Adjust to the center of the voxel
 
         float SDFValue = VoxelDataValue.SDFValue; // Access the SDF value from the VoxelData
 
@@ -737,7 +715,7 @@ void USparseVoxelGrid::RenderVoxels() {
         }
 
         // Draw the voxel cube with the correct color
-        DrawDebugBox(World, Center, FVector(LocalVoxelSize / 2), FQuat::Identity, VoxelColor, false, 15.f, 0, 2);
+        DrawDebugBox(World, Center, FVector(FVoxelConversion::LocalVoxelSize / 2), FQuat::Identity, VoxelColor, false, 15.f, 0, 2);
 
         // Optionally, draw a point at the center of the voxel
         DrawDebugPoint(World, Center, 2.0f, VoxelColor, false, 15.f, 0);

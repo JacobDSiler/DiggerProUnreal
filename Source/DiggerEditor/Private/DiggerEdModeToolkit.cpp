@@ -1,36 +1,38 @@
 // DiggerEdModeToolkit.cpp
+
 #include "DiggerEdModeToolkit.h"
-#include "ContentBrowserModule.h"
 #include "DiggerEdMode.h"
 #include "DiggerManager.h"
+#include "FCustomSDFBrush.h"
+
+// Unreal Engine - Editor & Engine
 #include "EditorModeManager.h"
 #include "EditorStyleSet.h"
 #include "EngineUtils.h"
-#include "IContentBrowserSingleton.h"
-#include "Behaviors/2DViewportBehaviorTargets.h"
-#include "Behaviors/2DViewportBehaviorTargets.h"
-#include "Brushes/SlateImageBrush.h"
 #include "Engine/StaticMesh.h"
-#include "Experimental/EditorInteractiveToolsFramework/Public/Behaviors/2DViewportBehaviorTargets.h"
-#include "Experimental/EditorInteractiveToolsFramework/Public/Behaviors/2DViewportBehaviorTargets.h"
-#include "Experimental/EditorInteractiveToolsFramework/Public/Behaviors/2DViewportBehaviorTargets.h"
-#include "Experimental/EditorInteractiveToolsFramework/Public/Behaviors/2DViewportBehaviorTargets.h"
+
+// Content Browser
+#include "ContentBrowserModule.h"
+#include "IContentBrowserSingleton.h"
+
+// Editor Interactive Tools Framework
+#include "Behaviors/2DViewportBehaviorTargets.h" // Cleaned duplicates
+
+// Slate UI - Widgets
+#include "BrushAssetEditorUtils.h"
 #include "Widgets/Images/SImage.h"
-#include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SNumericEntryBox.h"
-#include "Widgets/Input/SNumericEntryBox.h"
-#include "Widgets/Input/SSlider.h"
-#include "Widgets/Input/SSlider.h" // <-- Add this line!
+#include "Widgets/Input/SSlider.h" // <- You noted this should be added
 #include "Widgets/Layout/SExpandableArea.h"
 #include "Widgets/Layout/SUniformGridPanel.h"
 #include "Widgets/Text/STextBlock.h"
-#include "Widgets/Text/STextBlock.h"
-
-
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
 
 #define LOCTEXT_NAMESPACE "FDiggerEdModeToolkit"
+
 
 
 // FDiggerEdModeToolkit::Init
@@ -95,7 +97,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         SNew(SBox)
         .Visibility_Lambda([this]() {
             EVoxelBrushType BrushType = GetCurrentBrushType();
-            return (BrushType == EVoxelBrushType::Cylinder || BrushType == EVoxelBrushType::Cone) ? EVisibility::Visible : EVisibility::Collapsed;
+            return (BrushType == EVoxelBrushType::Cylinder || BrushType == EVoxelBrushType::Cube|| BrushType == EVoxelBrushType::Capsule || BrushType == EVoxelBrushType::Cone) ? EVisibility::Visible : EVisibility::Collapsed;
         })
         [
             MakeLabeledSliderRow(
@@ -109,6 +111,141 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             )
         ]
     ]
+
+
+    // --- Advanced Cube Brush Checkbox and Roll-down ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SBox)
+        .Visibility_Lambda([this]()
+        {
+            return (GetCurrentBrushType() == EVoxelBrushType::Cube) ? EVisibility::Visible : EVisibility::Collapsed;
+        })
+        [
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight()
+            [
+                SNew(SCheckBox)
+                .IsChecked_Lambda([this]()
+                {
+                    return bUseAdvancedCubeBrush ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+                })
+                .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+                {
+                    bUseAdvancedCubeBrush = (NewState == ECheckBoxState::Checked);
+                })
+                [
+                    SNew(STextBlock).Text(FText::FromString("Use Advanced Cube Brush"))
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight()
+            [
+                SNew(SBox)
+                .Visibility_Lambda([this]()
+                {
+                    return bUseAdvancedCubeBrush ? EVisibility::Visible : EVisibility::Collapsed;
+                })
+                [
+                    // Roll-down menu for advanced parameters
+                    SNew(SVerticalBox)
+                    // Half Extents X
+                    + SVerticalBox::Slot().AutoHeight().Padding(2)
+                    [
+                        MakeLabeledSliderRow(
+                            FText::FromString("Half Extent X"),
+                            [this]() { return AdvancedCubeHalfExtentX; },
+                            [this](float NewValue)
+                            {
+                                AdvancedCubeHalfExtentX = FMath::Clamp(NewValue, MinCubeExtent, MaxCubeExtent);
+                            },
+                            static_cast<float>(MinCubeExtent), static_cast<float>(MaxCubeExtent),
+                            TArray<float>({
+                                static_cast<float>(MinCubeExtent),
+                                static_cast<float>((MinCubeExtent + MaxCubeExtent) / 2.f),
+                                static_cast<float>(MaxCubeExtent)
+                            }),
+                            static_cast<float>(MinCubeExtent), 1.0f,
+                            false, &DummyFloat
+                        )
+                    ]
+                    // Half Extents Y
+                    + SVerticalBox::Slot().AutoHeight().Padding(2)
+                    [
+                        MakeLabeledSliderRow(
+                            FText::FromString("Half Extent Y"),
+                            [this]() { return AdvancedCubeHalfExtentY; },
+                            [this](float NewValue)
+                            {
+                                AdvancedCubeHalfExtentY = FMath::Clamp(NewValue, MinCubeExtent, MaxCubeExtent);
+                            },
+                            static_cast<float>(MinCubeExtent), static_cast<float>(MaxCubeExtent),
+                            TArray<float>({
+                                static_cast<float>(MinCubeExtent),
+                                static_cast<float>((MinCubeExtent + MaxCubeExtent) / 2.f),
+                                static_cast<float>(MaxCubeExtent)
+                            }),
+                            static_cast<float>(MinCubeExtent), 1.0f,
+                            false, &DummyFloat
+                        )
+                    ]
+                    // Half Extents Z
+                    + SVerticalBox::Slot().AutoHeight().Padding(2)
+                    [
+                        MakeLabeledSliderRow(
+                            FText::FromString("Half Extent Z"),
+                            [this]() { return AdvancedCubeHalfExtentZ; },
+                            [this](float NewValue)
+                            {
+                                AdvancedCubeHalfExtentZ = FMath::Clamp(NewValue, MinCubeExtent, MaxCubeExtent);
+                            },
+                            static_cast<float>(MinCubeExtent), static_cast<float>(MaxCubeExtent),
+                            TArray<float>({
+                                static_cast<float>(MinCubeExtent),
+                                static_cast<float>((MinCubeExtent + MaxCubeExtent) / 2.f),
+                                static_cast<float>(MaxCubeExtent)
+                            }),
+                            static_cast<float>(MinCubeExtent), 1.0f,
+                            false, &DummyFloat
+                        )
+                    ]
+                    // Rotation (if you want to expose it)
+                    // Add more sliders or controls as needed for other parameters
+                ]
+            ]
+        ]
+    ]
+
+
+    // --- Inner Radius UI: Only visible for Torus brush ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SBox)
+        .Visibility_Lambda([this]()
+        {
+            return (GetCurrentBrushType() == EVoxelBrushType::Torus) ? EVisibility::Visible : EVisibility::Collapsed;
+        })
+        [
+            MakeLabeledSliderRow(
+                FText::FromString("Inner Radius"),
+                [this]() { return TorusInnerRadius; },
+                [this](float NewValue)
+                {
+                    TorusInnerRadius = FMath::Clamp(NewValue, MinTorusInnerRadius, MaxTorusInnerRadius);
+                },
+                static_cast<float>(MinTorusInnerRadius), static_cast<float>(MaxTorusInnerRadius),
+                TArray<float>({
+                    static_cast<float>(MinTorusInnerRadius),
+                    static_cast<float>((MinTorusInnerRadius + MaxTorusInnerRadius) / 2.f),
+                    static_cast<float>(MaxTorusInnerRadius)
+                }),
+                static_cast<float>(MinTorusInnerRadius), 1.0f,
+                false, &DummyFloat
+            )
+        ]
+    ]
+
+        
+        
 
     // --- Cone Angle UI: Only visible for Cone brush ---
     + SVerticalBox::Slot().AutoHeight().Padding(4)
@@ -130,6 +267,8 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         ]
     ]
 
+
+        
     // --- Smooth Iterations (Smooth only) ---
     + SVerticalBox::Slot().AutoHeight().Padding(4)
     [
@@ -279,39 +418,96 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
 
 
     // --- Custom Brushes Section ---
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
-    [
-        SNew(STextBlock).Text(FText::FromString("Custom Brushes"))
-    ]
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 4)
-    [
-        SAssignNew(CustomBrushGrid, SUniformGridPanel)
-    ]
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 8)
-    [
-        SNew(SButton)
-        .Text(FText::FromString("Add Custom Brush"))
-        .OnClicked_Lambda([this]() -> FReply
-        {
-            FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
-            FOpenAssetDialogConfig DialogConfig;
-            DialogConfig.DialogTitleOverride = FText::FromString("Select Static Mesh Brush");
-            DialogConfig.AssetClassNames.Add(FTopLevelAssetPath(TEXT("/Script/Engine"), TEXT("StaticMesh")));
-            DialogConfig.bAllowMultipleSelection = true;
-            TArray<FAssetData> SelectedAssets = ContentBrowserModule.Get().CreateModalOpenAssetDialog(DialogConfig);
++ SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
+[
+    SNew(STextBlock).Text(FText::FromString("Custom Brushes"))
+]
 
-            for (const FAssetData& AssetData : SelectedAssets)
+// The grid of custom brushes
++ SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 4)
+[
+    SAssignNew(CustomBrushGrid, SUniformGridPanel)
+]
+
+// The "Add Custom Brush" button
++ SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 4)
+[
+    SNew(SButton)
+    .Text(FText::FromString("Add Custom Brush"))
+    .OnClicked_Lambda([this]() -> FReply
+    {
+        FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
+        FOpenAssetDialogConfig DialogConfig;
+        DialogConfig.DialogTitleOverride = FText::FromString("Select Static Mesh Brush");
+        DialogConfig.AssetClassNames.Add(FTopLevelAssetPath(TEXT("/Script/Engine"), TEXT("StaticMesh")));
+        DialogConfig.bAllowMultipleSelection = true;
+        TArray<FAssetData> SelectedAssets = ContentBrowserModule.Get().CreateModalOpenAssetDialog(DialogConfig);
+
+        for (const FAssetData& AssetData : SelectedAssets)
+        {
+            TSoftObjectPtr<UStaticMesh> MeshPtr = Cast<UStaticMesh>(AssetData.GetAsset());
+            if (MeshPtr.IsValid())
             {
-                TSoftObjectPtr<UStaticMesh> MeshPtr = Cast<UStaticMesh>(AssetData.GetAsset());
-                if (MeshPtr.IsValid())
+                // Create thumbnail
+                TSharedPtr<FAssetThumbnail> AssetThumbnail = MakeShareable(new FAssetThumbnail(AssetData, 64, 64, AssetThumbnailPool));
+                FCustomBrushEntry Entry;
+                Entry.Mesh = MeshPtr;
+                Entry.SDFBrushFilePath = TEXT("");
+                Entry.Thumbnail = AssetThumbnail;
+                CustomBrushEntries.Add(Entry);
+            }
+        }
+        RebuildCustomBrushGrid();
+        return FReply::Handled();
+    })
+]
+
+// The centralized "Convert to SDF Brush" button
++ SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 8)
+[
+    SNew(SButton)
+    .Text(FText::FromString("Convert to SDF Brush"))
+    .IsEnabled_Lambda([this]() {
+        return SelectedBrushIndex >= 0
+            && CustomBrushEntries.IsValidIndex(SelectedBrushIndex)
+            && CustomBrushEntries[SelectedBrushIndex].IsMesh()
+            && !CustomBrushEntries[SelectedBrushIndex].IsSDF();
+    })
+    .OnClicked_Lambda([this]() -> FReply
+    {
+        if (SelectedBrushIndex >= 0 && CustomBrushEntries.IsValidIndex(SelectedBrushIndex))
+        {
+            auto& Entry = CustomBrushEntries[SelectedBrushIndex];
+            if (Entry.IsMesh() && !Entry.IsSDF())
+            {
+                FCustomSDFBrush SDFBrush;
+                FTransform MeshTransform = FTransform::Identity; // Or user-specified
+                float VoxelSize = 2.0f; // Or user-specified
+                if (FBrushAssetEditorUtils::GenerateSDFBrushFromStaticMesh(Entry.Mesh.Get(), MeshTransform, VoxelSize, SDFBrush))
                 {
-                    CustomBrushMeshes.AddUnique(MeshPtr);
+                    FString DiggerBrushesDir = FPaths::ProjectContentDir() / TEXT("DiggerCustomBrushes");
+                    IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+                    if (!PlatformFile.DirectoryExists(*DiggerBrushesDir))
+                        PlatformFile.CreateDirectory(*DiggerBrushesDir);
+
+                    FString BrushFileName = Entry.Mesh->GetName() + TEXT(".sdfbrush");
+                    FString BrushFilePath = DiggerBrushesDir / BrushFileName;
+
+                    if (FBrushAssetEditorUtils::SaveSDFBrushToFile(SDFBrush, BrushFilePath))
+                    {
+                        Entry.SDFBrushFilePath = BrushFilePath;
+                        Entry.Mesh = nullptr; // Now it's an SDF brush
+                        // Optionally: update grid UI
+                        RebuildCustomBrushGrid();
+                    }
                 }
             }
-            RebuildCustomBrushGrid();
-            return FReply::Handled();
-        })
-    ]
+        }
+        return FReply::Handled();
+    })
+]
+
+
 
     // --- Build/Export Settings Section (roll-down) ---
     + SVerticalBox::Slot().AutoHeight().Padding(8, 16, 8, 4)
@@ -375,15 +571,49 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         MakeIslandsSection()
     ];
 
-    if (CustomBrushGrid.IsValid())
+    ScanCustomBrushFolder();
+    
+   /* if (CustomBrushGrid.IsValid())
     {
         RebuildCustomBrushGrid();
-    }
+    }*/
 
     FModeToolkit::Init(InitToolkitHost);
 }
 
+bool FDiggerEdModeToolkit::CanPaintWithCustomBrush() const
+{
+    return CurrentBrushType == EVoxelBrushType::Custom
+        && SelectedBrushIndex >= 0
+        && CustomBrushEntries.IsValidIndex(SelectedBrushIndex)
+        && CustomBrushEntries[SelectedBrushIndex].IsSDF();
+}
 
+
+
+void FDiggerEdModeToolkit::ScanCustomBrushFolder()
+{
+    FString BrushDir = FPaths::ProjectContentDir() / TEXT("DiggerCustomBrushes");
+    TArray<FString> BrushFiles;
+    IFileManager::Get().FindFiles(BrushFiles, *(BrushDir / TEXT("*.sdfbrush")), true, false);
+
+    CustomBrushEntries.Empty();
+
+    for (const FString& FileName : BrushFiles)
+    {
+        FString FullPath = BrushDir / FileName;
+
+        // Optionally, load the SDF brush here to get dimensions, etc.
+        FCustomBrushEntry Entry;
+        Entry.SDFBrushFilePath = FullPath;
+        Entry.Mesh = nullptr;
+        // Optionally, set a thumbnail (e.g., a default icon or a generated preview)
+        // Entry.Thumbnail = ...;
+        CustomBrushEntries.Add(Entry);
+    }
+
+    RebuildCustomBrushGrid();
+}
 
 
 
@@ -648,14 +878,20 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
     };
 
     TArray<FBrushTypeInfo> BrushTypes = {
-        { EVoxelBrushType::Sphere,   TEXT("Sphere"),   TEXT("Sphere Brush") },
-        { EVoxelBrushType::Cube,     TEXT("Cube"),     TEXT("Cube Brush") },
-        { EVoxelBrushType::Cylinder, TEXT("Cylinder"), TEXT("Cylinder Brush") },
-        { EVoxelBrushType::Cone,     TEXT("Cone"),     TEXT("Cone Brush") },
-        { EVoxelBrushType::Smooth,   TEXT("Smooth"),   TEXT("Smooth Brush") },
-        { EVoxelBrushType::Debug,   TEXT("Debug"),   TEXT("Debug Clicked Chunk Brush") },
-        { EVoxelBrushType::Custom,   TEXT("Custom"),   TEXT("Custom Mesh Brush") }
+        { EVoxelBrushType::Sphere,       TEXT("Sphere"),        TEXT("Sphere Brush") },
+        { EVoxelBrushType::Cube,         TEXT("Cube"),          TEXT("Cube Brush") },
+        { EVoxelBrushType::Cylinder,     TEXT("Cylinder"),      TEXT("Cylinder Brush") },
+        { EVoxelBrushType::Capsule,     TEXT("Capsule"),      TEXT("Capsule Brush") },
+        { EVoxelBrushType::Cone,         TEXT("Cone"),          TEXT("Cone Brush") },
+        { EVoxelBrushType::Torus,        TEXT("Torus"),         TEXT("Torus Brush") },
+        { EVoxelBrushType::Pyramid,      TEXT("Pyramid"),       TEXT("Pyramid Brush") },
+        { EVoxelBrushType::Icosphere,    TEXT("Icosphere"),     TEXT("Icosphere Brush") },
+        { EVoxelBrushType::Stairs,       TEXT("Stairs"),        TEXT("Stairs Brush") },
+        { EVoxelBrushType::Custom,       TEXT("Custom"),        TEXT("Custom Mesh Brush") },
+        { EVoxelBrushType::Smooth,       TEXT("Smooth"),        TEXT("Smooth Brush") },
+        { EVoxelBrushType::Debug,        TEXT("Debug"),         TEXT("Debug Clicked Chunk Brush") }
     };
+
 
     // Number of columns in the grid (adjust as needed)
     const int32 NumColumns = 3;
@@ -1183,20 +1419,18 @@ void FDiggerEdModeToolkit::RebuildCustomBrushGrid()
     if (!CustomBrushGrid.IsValid()) return;
     CustomBrushGrid->ClearChildren();
     int32 Cols = 4;
-    for (int32 i = 0; i < CustomBrushMeshes.Num(); ++i)
+    for (int32 i = 0; i < CustomBrushEntries.Num(); ++i)
     {
-        TSoftObjectPtr<UStaticMesh> MeshPtr = CustomBrushMeshes[i];
+        auto& Entry = CustomBrushEntries[i];
         TSharedPtr<SWidget> ThumbWidget;
 
-        if (MeshPtr.IsValid())
+        if (Entry.Thumbnail.IsValid())
         {
-            FAssetData AssetData(MeshPtr.Get());
-            TSharedPtr<FAssetThumbnail> AssetThumbnail = MakeShareable(new FAssetThumbnail(AssetData, 64, 64, AssetThumbnailPool));
             ThumbWidget = SNew(SBox)
                 .WidthOverride(64)
                 .HeightOverride(64)
                 [
-                    AssetThumbnail->MakeThumbnailWidget()
+                    Entry.Thumbnail->MakeThumbnailWidget()
                 ];
         }
         else
@@ -1215,7 +1449,7 @@ void FDiggerEdModeToolkit::RebuildCustomBrushGrid()
             .ButtonStyle(FAppStyle::Get(), "HoverHintOnly")
             .OnClicked_Lambda([this, i]() {
                 SelectedBrushIndex = i;
-                UE_LOG(LogTemp, Log, TEXT("Custom brush %d selected"), i);
+                // Optionally: update UI to reflect selection
                 return FReply::Handled();
             })
             [
@@ -1224,6 +1458,7 @@ void FDiggerEdModeToolkit::RebuildCustomBrushGrid()
         ];
     }
 }
+
 
 
 

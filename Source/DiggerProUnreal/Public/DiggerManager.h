@@ -17,6 +17,7 @@
 #include "StaticMeshAttributes.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "FCustomSDFBrush.h"
 #include "IAssetTools.h"
 #include "VoxelConversion.h"
 #include "UObject/Package.h"
@@ -78,6 +79,31 @@ struct FBrushStroke
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
     FVector BrushOffset;
 
+    // The flag for using the advanced cube brush
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    bool bUseAdvancedCubeBrush;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    float AdvancedCubeHalfExtentX;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    float AdvancedCubeHalfExtentY;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    float AdvancedCubeHalfExtentZ;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    float TorusInnerRadius;
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    bool bSpiral=false;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    int32 NumSteps=10;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
+    float StepDepth;
+
     // Optional: allow pressure sensitivity in the future?
     // float Intensity = 1.0f;
 
@@ -138,6 +164,10 @@ class DIGGERPROUNREAL_API ADiggerManager : public AActor
 public:
     ADiggerManager();
     void ApplyBrushToAllChunks(FBrushStroke& BrushStroke);
+    bool SaveSDFBrushToFile(const FCustomSDFBrush& Brush, const FString& FilePath);
+    bool LoadSDFBrushFromFile(const FString& FilePath, FCustomSDFBrush& OutBrush);
+    bool GenerateSDFBrushFromStaticMesh(UStaticMesh* Mesh, FTransform MeshTransform, float VoxelSize,
+                                        FCustomSDFBrush& OutBrush);
     void DebugBrushPlacement(const FVector& ClickPosition);
     UStaticMesh* ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName);
     AIslandActor* SpawnIslandActorFromIslandAtPosition(const FVector& IslandCenter, bool bEnablePhysics);
@@ -227,7 +257,7 @@ public:
     FVector EditorBrushOffset;
 
     UFUNCTION(CallInEditor, Category="Digger Brush|Actions")
-    void ApplyBrushInEditor();
+    void ApplyBrushInEditor(bool bDig);
 
     AIslandActor* SpawnIslandActorWithMeshData(
         const FVector& SpawnLocation,
@@ -350,10 +380,34 @@ public:
 
     void InitializeChunks();  // Initialize all chunks
     void InitializeSingleChunk(UVoxelChunk* Chunk);  // Initialize a single chunk
+    void UpdateLandscapeProxies();
 
     //The world map of the voxel chunks
     UPROPERTY()
     TMap<FIntVector, UVoxelChunk*> ChunkMap;
+
+    // Cache map from proxy pointer to boolean flag (just for example—can be more complex if needed later)
+    UPROPERTY()
+    TMap<ALandscapeProxy*, bool> CachedLandscapeProxies;
+
+    UPROPERTY()
+    ALandscapeProxy* LastUsedLandscape = nullptr;
+
+
+/*
+    // Key is world-space X,Y location snapped to voxel grid
+    UPROPERTY()
+    TMap<FIntPoint, float> TerrainHeightCache;
+
+    // Top-level cache by Landscape Proxy
+    UPROPERTY()
+    TMap<ALandscapeProxy*, TSharedPtr<TMap<FIntPoint, float>>> LandscapeHeightCaches;
+
+    //LoadingCache flag to determine if the height cache on a specific proxy exists. This prevents duplicate async jobs from starting for the same proxy.
+    UPROPERTY()
+    TSet<ALandscapeProxy*> HeightCacheLoadingSet;
+
+*/
 
 private:
     std::mutex ChunkProcessingMutex;
@@ -388,6 +442,8 @@ private:
         const TArray<FProcMeshTangent>& Tangents
     );
 
+    /*float GetCachedLandscapeHeightAt(const FVector& WorldPos);
+    void PopulateLandscapeHeightCache(ALandscapeProxy* Landscape);*/
 
 public:
     [[nodiscard]] UMaterial* GetTerrainMaterial() const
@@ -412,6 +468,12 @@ public:
     }
     UFUNCTION(BlueprintCallable, Category = "Landscape Tools")
     float GetLandscapeHeightAt(FVector WorldPosition);
+    void PopulateLandscapeHeightCacheAsync(ALandscapeProxy* Landscape);
+    ALandscapeProxy* GetLandscapeProxyAt(const FVector& WorldPos);
+    TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos);
+    float GetSmartLandscapeHeightAt(const FVector& WorldPos);
+    float GetSmartLandscapeHeightAt(const FVector& WorldPos, bool bForcePrecise);
+    bool IsNearLandscapeEdge(const FVector& WorldPos, float Threshold);
     bool GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector& Location, float& OutHeight);
     FVector GetLandscapeNormalAt(const FVector& WorldPosition);
 

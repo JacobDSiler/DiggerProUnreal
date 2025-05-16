@@ -164,13 +164,13 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
                 EVoxelBrushType BrushType = DiggerToolkit->GetCurrentBrushType();
 
                 // Apply brush settings based on selected brush type
-               /* if (BrushType == EVoxelBrushType::Debug)
-                {*/
+                if (BrushType == EVoxelBrushType::Debug)
+                {
                     // Add verification log
                     UE_LOG(LogTemp, Error, TEXT("Found DiggerManager, calling DebugBrushPlacement with: %s"), *HitLocation.ToString());
                 
                     Digger->DebugBrushPlacement(HitLocation);
-               // }
+                }
                 
                 // Apply brush settings based on selected brush type
                 if (BrushType == EVoxelBrushType::Cone || BrushType == EVoxelBrushType::Cylinder)
@@ -198,7 +198,9 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
 
                 // Apply brush settings
                 Digger->EditorBrushRadius = DiggerToolkit->GetBrushRadius();
-                Digger->EditorBrushDig = bFinalBrushDig;
+                // Do NOT set Digger->EditorBrushDig here!
+                // Instead, pass bFinalBrushDig to the brush application:
+                Digger->ApplyBrushInEditor(bFinalBrushDig); // <-- pass as parameter
                 Digger->EditorBrushRotation = FinalRotation;
                 Digger->EditorBrushAngle = DiggerToolkit->GetBrushAngle();
 
@@ -220,7 +222,7 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
                 // Set final brush position
                 Digger->EditorBrushOffset = FinalOffset;
                 Digger->EditorBrushPosition = HitLocation;// * 0.5f;  // Adjust the location if needed
-                Digger->ApplyBrushInEditor();
+                Digger->ApplyBrushInEditor(DiggerToolkit->IsDigMode());
 
                 // Temporary override UI display for visual feedback
                 if (bRightClick)

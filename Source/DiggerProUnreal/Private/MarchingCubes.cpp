@@ -553,58 +553,83 @@ void UMarchingCubes::GenerateMeshFromGrid(
     TArray<FVector>& OutNormals
 )
 {
-    FVector UnderSurfaceOffset = FVector(0.0f,0.0f,-0.01f);
-    if (!InVoxelGrid || InVoxelGrid->VoxelData.IsEmpty()) {
-        UE_LOG(LogTemp, Warning, TEXT("Invalid or empty VoxelGrid in GenerateMeshFromGrid!"));
+    if (!InVoxelGrid) {
+        UE_LOG(LogTemp, Warning, TEXT("Invalid VoxelGrid in GenerateMeshFromGrid!"));
         return;
     }
 
-    // Debug visualization of the chunk
-    DrawDebugBox(
-        DiggerManager->GetWorld(),
-        Origin + FVector(FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions * VoxelSize * 0.5f),
-        FVector(FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions * VoxelSize * 0.5f),
-        FQuat::Identity,
-        FColor::Blue,
-        false,
-        10.0f,
-        0,
-        2.0f
-    );
+    int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+
+    if (IsDebugging()) {
+        DrawDebugBox(
+            DiggerManager->GetWorld(),
+            Origin + FVector(N * VoxelSize * 0.5f),
+            FVector(N * VoxelSize * 0.5f),
+            FQuat::Identity,
+            FColor::Blue,
+            false,
+            10.0f,
+            0,
+            2.0f
+        );
+    }
 
     TMap<FVector, int32> VertexCache;
 
-    for (const auto& Voxel : InVoxelGrid->VoxelData) {
-        FIntVector VoxelCoords = Voxel.Key;
-        FVoxelData VoxelValue = Voxel.Value;
-
-        // Debug visualization of each voxel with data
-        FVector VoxelWorldPos = Origin + FVector(
-            VoxelCoords.X * VoxelSize,
-            VoxelCoords.Y * VoxelSize,
-            VoxelCoords.Z * VoxelSize
-        ) + FVector(VoxelSize * 0.5f);
-        
-        DrawDebugPoint(
-            DiggerManager->GetWorld(),
-            VoxelWorldPos,
-            5.0f,
-            FColor::Red,
-            false,
-            10.0f
-        );
+    for (int32 x = 0; x < N; ++x)
+    for (int32 y = 0; y < N; ++y)
+    for (int32 z = 0; z < N; ++z)
+    {
+        FVector CellOrigin = Origin + FVector(x * VoxelSize, y * VoxelSize, z * VoxelSize);
 
         FVector CornerWSPositions[8];
         float CornerSDFValues[8];
 
         for (int32 i = 0; i < 8; i++) {
-            FIntVector CornerCoords = VoxelCoords + GetCornerOffset(i);
+            FIntVector CornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
             CornerWSPositions[i] = Origin + FVector(
                 CornerCoords.X * VoxelSize,
                 CornerCoords.Y * VoxelSize,
                 CornerCoords.Z * VoxelSize
             );
-            CornerSDFValues[i] = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
+            // Use +1.0f (air) if not present in sparse grid
+            CornerSDFValues[i] = InVoxelGrid->VoxelData.Contains(CornerCoords)
+                ? InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z)
+                : 1.0f;
+
+        	/*
+        	*            // If not present in sparse grid
+        	// Use +1.0f (air) if above the Landscape
+        	// Use -1.0f (Solid) if below the Landscape
+        	if (InVoxelGrid->VoxelData.Contains(CornerCoords))
+        	{
+        	CornerSDFValues[i] = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
+        	}
+        	else
+        	{
+        	// World-space position of the voxel corner
+        	FVector CornerWS = CornerWSPositions[i];
+
+        	// Get landscape height at this X, Y position
+        	float LandscapeHeight = DiggerManager->GetLandscapeHeightAt(FVector(CornerWS.X, CornerWS.Y,CornerCoords.Z));
+
+        	// If above landscape, treat as air (SDF = +1.0), else solid (SDF = -1.0)
+        	CornerSDFValues[i] = (CornerWS.Z > LandscapeHeight) ? 1.0f : -1.0f;
+        	}
+        	*/
+        }
+
+        if (IsDebugging()) {
+            for (int32 i = 0; i < 8; ++i) {
+                DrawDebugPoint(
+                    DiggerManager->GetWorld(),
+                    CornerWSPositions[i] + FVector(VoxelSize * 0.5f),
+                    5.0f,
+                    FColor::Red,
+                    false,
+                    10.0f
+                );
+            }
         }
 
         TArray<float> SDFValuesArray;
@@ -626,8 +651,7 @@ void UMarchingCubes::GenerateMeshFromGrid(
                     CornerSDFValues[EdgeConnection[EdgeIndex][0]],
                     CornerSDFValues[EdgeConnection[EdgeIndex][1]]
                 );
-                // Apply offset and transition as in original
-                FVector AdjustedVertex = ApplyLandscapeTransition(Vertex + UnderSurfaceOffset);
+                FVector AdjustedVertex = ApplyLandscapeTransition(Vertex + FVector(0.0f, 0.0f, -0.01f));
                 Vertices[j] = AdjustedVertex;
             }
 
@@ -644,7 +668,7 @@ void UMarchingCubes::GenerateMeshFromGrid(
         }
     }
 
-    // Calculate smooth normals (as in original)
+    // Calculate smooth normals
     OutNormals.SetNum(OutVertices.Num(), false);
     for (int32 i = 0; i < OutNormals.Num(); ++i) {
         OutNormals[i] = FVector::ZeroVector;
@@ -665,7 +689,9 @@ void UMarchingCubes::GenerateMeshFromGrid(
         OutNormals[i].Normalize();
     }
 
-    UE_LOG(LogTemp, Log, TEXT("Mesh generated from grid: %d vertices, %d triangles."), OutVertices.Num(), OutTriangles.Num());
+    if (IsDebugging()) {
+        UE_LOG(LogTemp, Log, TEXT("Mesh generated from grid: %d vertices, %d triangles."), OutVertices.Num(), OutTriangles.Num());
+    }
 }
 
 

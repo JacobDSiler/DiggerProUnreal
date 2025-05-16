@@ -6,6 +6,7 @@ public class DiggerProUnreal : ModuleRules
 {
     public DiggerProUnreal(ReadOnlyTargetRules Target) : base(Target)
     {
+        PrivateDependencyModuleNames.AddRange(new string[] { "DiggerEditor" });
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
         PublicDependencyModuleNames.AddRange(new string[] { 

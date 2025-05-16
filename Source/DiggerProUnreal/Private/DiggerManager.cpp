@@ -1,35 +1,62 @@
 #include "DiggerManager.h"
 #include "CoreMinimal.h"
+
+// Voxel & Mesh Systems
+#include "FCustomSDFBrush.h"
+#include "MarchingCubes.h"
+#include "SparseVoxelGrid.h"
+#include "VoxelChunk.h"
+#include "VoxelConversion.h"
+
+// Landscape & Island
+#include "IslandActor.h"
 #include "LandscapeEdit.h"
 #include "LandscapeInfo.h"
 #include "LandscapeProxy.h"
-#include "MarchingCubes.h"
+
+// Procedural & Static Meshes
 #include "ProceduralMeshComponent.h"
-#include "SparseVoxelGrid.h"
-#include "TimerManager.h"
-#include "VoxelChunk.h"
-#include "Async/Async.h"
-#include "Engine/World.h"
-#include "Kismet/GameplayStatics.h"
-#include "UObject/ConstructorHelpers.h"
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "AssetToolsModule.h"
-#include "IAssetTools.h"
-#include "IslandActor.h"
-#include "Engine/StaticMesh.h"
-#include "Misc/PackageName.h"
-#include "Misc/Paths.h"
-#include "UObject/Package.h"
 #include "MeshDescription.h"
 #include "StaticMeshAttributes.h"
-#include "VoxelConversion.h"
+#include "StaticMeshResources.h"
 #include "Engine/StaticMesh.h"
 
+// Engine Systems
+#include "Engine/World.h"
+#include "TimerManager.h"
 
+// Async & Performance
+#include "Async/Async.h"
+#include "Async/ParallelFor.h"
 
-//Editor Tool Specific Includes
+// Asset Management
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+
+// File & Path Management
+#include "HAL/PlatformFilemanager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/PackageName.h"
+#include "Misc/Paths.h"
+
+// Kismet & Helpers
+#include "Kismet/GameplayStatics.h"
+#include "Kismet/KismetMathLibrary.h"
+
+// Rendering
+#include "Rendering/PositionVertexBuffer.h"
+#include "Rendering/StaticMeshVertexBuffer.h"
+
+// UObject Utilities
+#include "EngineUtils.h"
+#include "UObject/ConstructorHelpers.h"
+#include "UObject/Package.h"
+
+// Editor Tool Specific Includes
 #if WITH_EDITOR
-#include "DiggerEditor/DiggerEdModeToolkit.h"
+#include "DiggerEdModeToolkit.h"
+
 class Editor;
 class FDiggerEdModeToolkit;
 class FDiggerEdMode;
@@ -39,43 +66,36 @@ class StaticMeshAttributes;
 
 
 
-void ADiggerManager::ApplyBrushInEditor()
+void ADiggerManager::ApplyBrushInEditor(bool bDig)
 {
     FBrushStroke BrushStroke;
     BrushStroke.BrushPosition = EditorBrushPosition + EditorBrushOffset;
     BrushStroke.BrushRadius = EditorBrushRadius;
-   // UE_LOG(LogTemp, Error, TEXT("[DiggerManager] BrushRadius set to: %f"), EditorBrushRadius);
     BrushStroke.BrushRotation = EditorBrushRotation;
-    //UE_LOG(LogTemp, Error, TEXT("[ApplyBrushInEditor] Using rotation: %s"), *EditorBrushRotation.ToString());
     BrushStroke.BrushType = EditorBrushType;
-    BrushStroke.bDig = EditorBrushDig; // or expose as property
-    BrushStroke.BrushLength = EditorBrushLength; // or expose as property
-    BrushStroke.BrushAngle = EditorBrushAngle; // or expose as property
-    
+    BrushStroke.bDig = bDig; // Use the parameter, not EditorBrushDig
+    BrushStroke.BrushLength = EditorBrushLength;
+    BrushStroke.BrushAngle = EditorBrushAngle;
 
     UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushInEditor] EditorBrushPosition (World): %s"), *EditorBrushPosition.ToString());
 
     ApplyBrushToAllChunks(BrushStroke);
-    //MarkNearbyChunksDirty(EditorBrushPosition, EditorBrushRadius);
     ProcessDirtyChunks();
 
-    
-    
     if (GEditor)
     {
         GEditor->RedrawAllViewports();
     }
 
     // Update islands for the UI/toolkit
-   TArray<FIslandData> DetectedIslands = GetAllIslands();
-    
+    TArray<FIslandData> DetectedIslands = GetAllIslands();
 }
 
 
 
 
-#endif
 
+#endif
 void ADiggerManager::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);
@@ -181,6 +201,7 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
 }
 
 
+
 void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
 {
     // Verify this instance is valid
@@ -223,6 +244,12 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
         FMath::FloorToInt(ClickPosition.Y / ChunkWorldSize),
         FMath::FloorToInt(ClickPosition.Z / ChunkWorldSize)
     );
+
+    UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords);
+    if (Chunk)
+    {
+        Chunk->GetSparseVoxelGrid()->RenderVoxels();
+    }
     
     UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: ChunkCoords: %s"), *ChunkCoords.ToString());
     
@@ -915,39 +942,84 @@ void ADiggerManager::InitializeSingleChunk(UVoxelChunk* Chunk)
     }
 }
 
-float ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
+void ADiggerManager::UpdateLandscapeProxies()
 {
-    // Get all landscape actors in the level
+    CachedLandscapeProxies.Empty();
     TArray<AActor*> FoundLandscapes;
     UGameplayStatics::GetAllActorsOfClass(GetWorld(), ALandscapeProxy::StaticClass(), FoundLandscapes);
 
-    if (FoundLandscapes.Num() == 0)
+    for (AActor* Actor : FoundLandscapes)
     {
-        UE_LOG(LogTemp, Warning, TEXT("No landscape found in level"));
-        return 0.0f;
+        if (ALandscapeProxy* Proxy = Cast<ALandscapeProxy>(Actor))
+        {
+            CachedLandscapeProxies.Add(Proxy);
+        }
+    }
+}
+
+
+float ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
+{
+    ALandscapeProxy* LandscapeProxy = nullptr;
+
+    // Use the last used proxy if it's still valid and encompasses the position
+    if (LastUsedLandscape && LastUsedLandscape->GetRootComponent() &&
+        LastUsedLandscape->GetComponentsBoundingBox().IsInsideXY(WorldPosition))
+    {
+        LandscapeProxy = LastUsedLandscape;
+    }
+    else
+    {
+        // Look through cached proxies to find one that fits the position
+        for (auto& Elem : CachedLandscapeProxies)
+        {
+            ALandscapeProxy* Candidate = Elem.Key;
+            if (Candidate && Candidate->GetRootComponent() &&
+                Candidate->GetComponentsBoundingBox().IsInsideXY(WorldPosition))
+            {
+                LandscapeProxy = Candidate;
+                break;
+            }
+        }
+
+        // If none found, do an expensive search ONCE and cache
+        if (!LandscapeProxy)
+        {
+            TArray<AActor*> FoundLandscapes;
+            UGameplayStatics::GetAllActorsOfClass(GetWorld(), ALandscapeProxy::StaticClass(), FoundLandscapes);
+
+            for (AActor* Actor : FoundLandscapes)
+            {
+                ALandscapeProxy* Candidate = Cast<ALandscapeProxy>(Actor);
+                if (Candidate && Candidate->GetRootComponent() &&
+                    Candidate->GetComponentsBoundingBox().IsInsideXY(WorldPosition))
+                {
+                    CachedLandscapeProxies.Add(Candidate, true);
+                    LandscapeProxy = Candidate;
+                    break;
+                }
+            }
+        }
+
+        LastUsedLandscape = LandscapeProxy;
     }
 
-    // Cast the first found landscape to ALandscapeProxy
-    ALandscapeProxy* LandscapeProxy = Cast<ALandscapeProxy>(FoundLandscapes[0]);
     if (!LandscapeProxy)
     {
-        UE_LOG(LogTemp, Warning, TEXT("Failed to cast landscape actor"));
+        UE_LOG(LogTemp, Warning, TEXT("No landscape found at location %s"), *WorldPosition.ToString());
         return 0.0f;
     }
 
     // Try getting height using different sources in order of complexity
     TOptional<float> HeightResult;
 
-    // Try Simple first as it's most efficient
     HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Simple);
 
-    // If Simple fails, try Complex
     if (!HeightResult.IsSet())
     {
         HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Complex);
     }
 
-    // If Complex fails and we're in editor, try Editor source
     if (!HeightResult.IsSet() && GIsEditor)
     {
         HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Editor);
@@ -955,12 +1027,187 @@ float ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
 
     if (!HeightResult.IsSet())
     {
-        UE_LOG(LogTemp, Warning, TEXT("Failed to get height at location: %s"), *WorldPosition.ToString());
+        UE_LOG(LogTemp, Error, TEXT("Failed to get height at location: %s"), *WorldPosition.ToString());
         return 0.0f;
     }
 
-    return static_cast<float>(HeightResult.GetValue());
+    return HeightResult.GetValue();
 }
+
+
+/*void ADiggerManager::PopulateLandscapeHeightCacheAsync(ALandscapeProxy* Landscape)
+{
+    if (!Landscape) return;
+
+    const float LocalVoxelSize = VoxelSize;
+    FBox Bounds = Landscape->GetComponentsBoundingBox();
+
+    // Prepare data for async task
+    FVector Min = Bounds.Min;
+    FVector Max = Bounds.Max;
+    TWeakObjectPtr<ALandscapeProxy> WeakLandscape = Landscape;
+    TWeakObjectPtr<ADiggerManager> WeakSelf = this;
+
+    AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [WeakSelf, WeakLandscape, Min, Max, LocalVoxelSize]()
+    {
+        if (!WeakSelf.IsValid() || !WeakLandscape.IsValid()) return;
+
+        TMap<FIntPoint, float> LocalMap;
+
+        for (float X = Min.X; X < Max.X; X += LocalVoxelSize)
+        {
+            for (float Y = Min.Y; Y < Max.Y; Y += LocalVoxelSize)
+            {
+                FVector SamplePos(X, Y, 0);
+                TOptional<float> Sampled = WeakSelf->SampleLandscapeHeight(WeakLandscape.Get(), SamplePos);
+                if (Sampled.IsSet())
+                {
+                    int32 GridX = FMath::FloorToInt(X / LocalVoxelSize);
+                    int32 GridY = FMath::FloorToInt(Y / LocalVoxelSize);
+                    FIntPoint Key(GridX, GridY);
+                    LocalMap.Add(Key, Sampled.GetValue());
+                }
+            }
+        }
+
+        // Copy back on game thread
+        AsyncTask(ENamedThreads::GameThread, [WeakSelf, WeakLandscape, LocalMap = MoveTemp(LocalMap)]()
+        {
+            if (!WeakSelf.IsValid() || !WeakLandscape.IsValid()) return;
+
+            WeakSelf->LandscapeHeightCaches.FindOrAdd(WeakLandscape.Get()) = LocalMap;
+            WeakSelf->HeightCacheLoadingSet.Remove(WeakLandscape.Get());
+
+            UE_LOG(LogTemp, Warning, TEXT("Async height cache complete for landscape: %s (%d entries)"), *WeakLandscape->GetName(), LocalMap.Num());
+        });
+    });
+}
+
+
+
+float ADiggerManager::GetCachedLandscapeHeightAt(const FVector& WorldPos)
+{
+    ALandscapeProxy* Landscape = GetLandscapeProxyAt(WorldPos);
+    if (!Landscape) return 0.0f;
+
+    const int32 GridX = FMath::FloorToInt(WorldPos.X / VoxelSize);
+    const int32 GridY = FMath::FloorToInt(WorldPos.Y / VoxelSize);
+    FIntPoint Key(GridX, GridY);
+
+    if (!LandscapeHeightCaches.Contains(Landscape))
+    {
+        LandscapeHeightCaches.Add(Landscape, TMap<FIntPoint, float>());
+    }
+
+    TMap<FIntPoint, float>& HeightMap = LandscapeHeightCaches[Landscape];
+
+    if (!HeightCacheLoadingSet.Contains(Landscape))
+    {
+        HeightCacheLoadingSet.Add(Landscape);
+        PopulateLandscapeHeightCacheAsync(Landscape);
+    }
+
+    // Return cached value if available
+    if (float* Cached = HeightMap.Find(Key))
+    {
+        return *Cached;
+    }
+
+    // Fallback: single-sample (slower, only used once)
+    TOptional<float> SampledHeight = SampleLandscapeHeight(Landscape, WorldPos);
+    if (SampledHeight.IsSet())
+    {
+        float Height = SampledHeight.GetValue();
+        HeightMap.Add(Key, Height);
+        return Height;
+    }
+
+    return 0.0f;
+}
+
+
+void ADiggerManager::PopulateLandscapeHeightCache(ALandscapeProxy* Landscape)
+{
+    if (!Landscape || LandscapeHeightCaches.Contains(Landscape)) return;
+
+    UE_LOG(LogTemp, Warning, TEXT("Populating height cache for landscape proxy: %s"), *Landscape->GetName());
+
+    TMap<FIntPoint, float>& HeightMap = LandscapeHeightCaches.FindOrAdd(Landscape);
+
+    FBox Bounds = Landscape->GetComponentsBoundingBox();
+    FVector Min = Bounds.Min;
+    FVector Max = Bounds.Max;
+
+    for (float X = Min.X; X < Max.X; X += VoxelSize)
+    {
+        for (float Y = Min.Y; Y < Max.Y; Y += VoxelSize)
+        {
+            FVector SamplePos(X, Y, 0);
+            TOptional<float> Sampled = SampleLandscapeHeight(Landscape, SamplePos);
+            if (Sampled.IsSet())
+            {
+                int32 GridX = FMath::FloorToInt(X / VoxelSize);
+                int32 GridY = FMath::FloorToInt(Y / VoxelSize);
+                FIntPoint Key(GridX, GridY);
+                HeightMap.Add(Key, Sampled.GetValue());
+            }
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("Completed height cache for landscape proxy: %s. Cached %d entries."), *Landscape->GetName(), HeightMap.Num());
+}
+*/
+
+
+ALandscapeProxy* ADiggerManager::GetLandscapeProxyAt(const FVector& WorldPos)
+{
+    for (TActorIterator<ALandscapeProxy> It(GetWorld()); It; ++It)
+    {
+        ALandscapeProxy* Proxy = *It;
+        if (Proxy && Proxy->GetComponentsBoundingBox().IsInsideXY(WorldPos))
+        {
+            return Proxy;
+        }
+    }
+
+    return nullptr;
+}
+
+TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos)
+{
+    FVector LandscapeLocal = Landscape->GetTransform().InverseTransformPosition(WorldPos);
+    return Landscape->GetHeightAtLocation(LandscapeLocal);
+}
+
+float ADiggerManager::GetSmartLandscapeHeightAt(const FVector& WorldPos)
+{
+    return GetSmartLandscapeHeightAt(WorldPos, false);
+}
+
+float ADiggerManager::GetSmartLandscapeHeightAt(const FVector& WorldPos, bool bForcePrecise)
+{
+    //const float HeightTolerance = VoxelSize * 0.5f; // Allowable vertical margin for refinement
+
+   // float CachedHeight = GetCachedLandscapeHeightAt(WorldPos);
+
+   // if (bForcePrecise)
+    //{
+        return GetLandscapeHeightAt(WorldPos);
+   /* }
+
+    // Compare Z difference (height) only, not full vector
+    float VerticalDifference = FMath::Abs(WorldPos.Z - CachedHeight);
+
+    if (VerticalDifference <= HeightTolerance)
+    {
+        // We're close enough — use precise sample
+        return GetLandscapeHeightAt(WorldPos);
+    }
+
+    return CachedHeight;*/
+}
+
+
 
 bool ADiggerManager::GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector& Location, float& OutHeight)
 {

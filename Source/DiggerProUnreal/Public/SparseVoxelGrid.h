@@ -61,7 +61,7 @@ public:
 	
 	// Adds a voxel at the given coordinates with the provided SDF value
 	void SetVoxel(FIntVector Position, float SDFValue, bool& bDig);
-	void SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool& bDig);
+	void SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig);
 	void SynchronizeBordersIfDirty();
 
 	// Retrieves the voxel's SDF value; returns true if the voxel exists
@@ -130,7 +130,7 @@ private:
 	UVoxelChunk* ParentChunk;
 
 public:
-	[[nodiscard]] UVoxelChunk* ParentChunk1() const
+	[[nodiscard]] UVoxelChunk* GetParentChunk() const
 	{
 		return ParentChunk;
 	}
@@ -148,12 +148,6 @@ public:
 private:
 	FIntVector WorldToChunkSpace(float x, float y, float z) const
 	{/* Calculate chunk space coordinates*/ return FIntVector(x, y, z) / (ChunkSize * TerrainGridSize);}
-
-public:
-	[[nodiscard]] UVoxelChunk* GetParentChunk() const
-	{
-		return ParentChunk;
-	}
 
 private:
 	UPROPERTY()

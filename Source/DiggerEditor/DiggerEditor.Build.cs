@@ -7,6 +7,16 @@ public class DiggerEditor : ModuleRules
     public DiggerEditor(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+        
+        PublicIncludePaths.AddRange(
+            new string[] {
+                "DiggerEditor/Public"
+            });
+
+        PrivateIncludePaths.AddRange(
+            new string[] {
+                "DiggerEditor/Private"
+            });
 
         PublicDependencyModuleNames.AddRange(
             new string[]
@@ -36,7 +46,10 @@ public class DiggerEditor : ModuleRules
                 "ContentBrowser",
                 "MeshDescription",
                 "StaticMeshDescription",
+                "PropertyEditor",  // <-- NEW
+                "Projects"         // <-- NEW
             }
         );
+
     }
 }

@@ -22,6 +22,9 @@ public:
 
 	// Generate the mesh based on the voxel grid
 	void GenerateMesh(const UVoxelChunk* ChunkPtr);
+
+
+	bool IsDebugging() {return bIsDebugging;}
 	
 	void GenerateMeshFromGrid(
 		USparseVoxelGrid* VoxelGrid,
@@ -84,6 +87,15 @@ private:
 	UPROPERTY()
 	USparseVoxelGrid* VoxelGrid;
 
+	bool bIsDebugging;
+
+public:
+	void SetIsDebugging(bool bWillDebug)
+	{
+		this->bIsDebugging = bWillDebug;
+	}
+
+private:
 	bool IsValidVoxel(const FIntVector& Position) const;
 	float GetSafeSDFValue(const FIntVector& Position) const;
 	void ValidateAndResizeBuffers(FIntVector& Size, TArray<FVector>& Vertices, TArray<int32>& Triangles);
