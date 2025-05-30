@@ -4,6 +4,8 @@
 #include "HLSLTypeAliases.h"
 #include "MarchingCubes.h"
 #include "SparseVoxelGrid.h"
+#include "DiggerProUnreal/Public/Voxel/VoxelBrushHelpers.h" // or wherever you put SetDigShellVoxels
+#include "VoxelBrushShape.h"
 #include "VoxelBrushTypes.h"
 #include "VoxelConversion.h"
 #include "VoxelLogAggregator.h"
@@ -183,128 +185,179 @@ bool UVoxelChunk::LoadChunkData(const FString& FilePath)
 }
 
 
-void UVoxelChunk::ApplyBrushStroke(FBrushStroke& Stroke)
+// UVoxelChunk.cpp
+
+void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrushShape* BrushShape)
 {
-	
-	if (!DiggerManager)
-	{
-		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in UVoxelChunk::ApplyBrushStroke"));
-		return;
-	}
-	
-	UE_LOG(LogTemp, Warning, TEXT("Applying Brush Stroke. Chunk ID: %d, Dirty: %d"), SectionIndex, bIsDirty);
-	UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushStroke] BrushPosition (World): %s, Chunk SectionIndex: %d"), *Stroke.BrushPosition.ToString(), SectionIndex);
-	
+    if (!DiggerManager || !BrushShape)
+    {
+        UE_LOG(LogTemp, Error, TEXT("DiggerManager or BrushShape is null in UVoxelChunk::ApplyBrushStroke"));
+        return;
+    }
 	
 
-switch (Stroke.BrushType)
-{
-    case EVoxelBrushType::Cube:
-        if (Stroke.bUseAdvancedCubeBrush)
+
+    // Get chunk origin and voxel size
+    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
+    VoxelSize = FVoxelConversion::LocalVoxelSize;
+    
+    // CRITICAL FIX: Convert brush radius from world units to voxel units
+    float VoxelSpaceRadius = Stroke.BrushRadius / VoxelSize;
+    float VoxelSpaceFalloff = Stroke.BrushFalloff / VoxelSize;
+    float TotalVoxelRadius = VoxelSpaceRadius + VoxelSpaceFalloff;
+    
+    // Calculate the affected voxel bounds
+    FIntVector VoxelCenter = FVoxelConversion::WorldToLocalVoxel(Stroke.BrushPosition);
+    
+    // Define the bounding box using voxel-space radius
+    int32 MinX = FMath::FloorToInt(VoxelCenter.X - TotalVoxelRadius);
+    int32 MaxX = FMath::CeilToInt(VoxelCenter.X + TotalVoxelRadius);
+    int32 MinY = FMath::FloorToInt(VoxelCenter.Y - TotalVoxelRadius);
+    int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + TotalVoxelRadius);
+    int32 MinZ = FMath::FloorToInt(VoxelCenter.Z - TotalVoxelRadius);
+    int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + TotalVoxelRadius);
+    
+    // Clamp to chunk bounds
+    int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    MinX = FMath::Max(0, MinX);
+    MaxX = FMath::Min(VoxelsPerChunk - 1, MaxX);
+    MinY = FMath::Max(0, MinY);
+    MaxY = FMath::Min(VoxelsPerChunk - 1, MaxY);
+    MinZ = FMath::Max(0, MinZ);
+    MaxZ = FMath::Min(VoxelsPerChunk - 1, MaxZ);
+
+    int32 ModifiedVoxels = 0;
+
+    for (int32 X = MinX; X <= MaxX; ++X)
+    {
+        for (int32 Y = MinY; Y <= MaxY; ++Y)
         {
-            // Use the advanced cube brush with custom half extents
-            ApplyAdvancedCubeBrush(
-                Stroke.BrushPosition,
-                FVector(Stroke.AdvancedCubeHalfExtentX, Stroke.AdvancedCubeHalfExtentY, Stroke.AdvancedCubeHalfExtentZ),
-                Stroke.BrushRotation,
-                Stroke.bDig
-            );
-        }
-        else
-        {
-            // Use the regular cube brush (uniform half extent)
-            ApplyCubeBrush(
-                Stroke.BrushPosition,
-                Stroke.BrushRadius / 2,
-                Stroke.bDig,
-                Stroke.BrushRotation
-            );
-        }
-        break;
+            for (int32 Z = MinZ; Z <= MaxZ; ++Z)
+            {
+                // Convert voxel coordinates to world position
+                FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(FIntVector(X, Y, Z));
 
-    case EVoxelBrushType::Sphere:
-        ApplySphereBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig);
-        break;
+                // Skip voxels outside the brush's true shape (including falloff)
+                float Distance = FVector::Dist(WorldPos, Stroke.BrushPosition);
+                if (Distance > Stroke.BrushRadius + Stroke.BrushFalloff)
+                    continue;
 
-    case EVoxelBrushType::Cylinder:
-        ApplyCylinderBrush(Stroke.BrushPosition, Stroke.BrushRadius * 0.5f, Stroke.BrushLength, Stroke.BrushRotation, Stroke.bDig, false/*add a Filed Brush Paramter and connect to the UI*/);
-        break;
+                // Get terrain height at this position
+                float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
+                bool bAboveTerrain = WorldPos.Z >= TerrainHeight;
+
+                // Calculate the SDF value for this voxel using the brush shape
+                float SDF = BrushShape->CalculateSDF(
+                    WorldPos,
+                    Stroke.BrushPosition,
+                    Stroke.BrushRadius,
+                    Stroke.BrushStrength,
+                    Stroke.BrushFalloff,
+                    TerrainHeight,
+                    Stroke.bDig
+                );
+
+                // Skip if SDF is not changing anything
+                if (FMath::IsNearlyZero(SDF))
+                    continue;
+
+                // IMPORTANT: Special handling for digging below terrain
+                if (Stroke.bDig && !bAboveTerrain)
+                {
+                    // For digging below terrain, explicitly set to air
+                    // This is crucial for creating cavities below terrain
+                    SparseVoxelGrid->SetVoxel(X, Y, Z, FVoxelConversion::SDF_AIR * Stroke.BrushStrength, true);
+                }
+                else if (!Stroke.bDig || bAboveTerrain)
+                {
+                    // For adding (anywhere) or digging above terrain, use normal SDF
+                    SparseVoxelGrid->SetVoxel(X, Y, Z, SDF, Stroke.bDig);
+                }
+                
+                ModifiedVoxels++;
+            }
+        }
+    }
+
+    // ... your triple-for loop as before ...
+
+    // After setting air voxels, add the shell for dig brushes
+    if (Stroke.bDig)
+    {
+	    FBox BrushBounds = FBox::BuildAABB(
+		    Stroke.BrushPosition,
+		    FVector(Stroke.BrushRadius + Stroke.BrushFalloff)
+	    );
+
+    	//Make a copy of stroke to use after the auto helper
+    	FBrushStroke StrokeCopy = Stroke;
+
+	    auto IsAir = [&](const FVector& WorldPos) -> bool
+	    {
+		    if (!DiggerManager || !BrushShape)
+		    {
+			    return false;
+		    }
+		    float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
+		    float SDF = BrushShape->CalculateSDF(
+			    WorldPos,
+			    Stroke.BrushPosition,
+			    Stroke.BrushRadius,
+			    Stroke.BrushStrength,
+			    Stroke.BrushFalloff,
+			    TerrainHeight,
+			    true // bDig
+		    );
+		    return SDF > 0.0f;
+	    };
+
+
+	    if (!DiggerManager)
+	    {
+		    UE_LOG(LogTemp, Error, TEXT("DiggerManager is null! Cannot spawn hole."));
+	    }
+	    if (!StrokeCopy.IsValid())
+	    {
+		    UE_LOG(LogTemp, Error, TEXT("Stroke is null! Cannot spawn hole."));
+	    }
+
+    	if (!DiggerManager)
+    	{
+    		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null! Cannot spawn hole."));
+    	}
+    	else if (!Stroke.IsValid())
+    	{
+    		UE_LOG(LogTemp, Error, TEXT("Stroke is not valid! Cannot spawn hole."));
+    	}
+    	else if (!BrushShape)
+    	{
+    		UE_LOG(LogTemp, Error, TEXT("BrushShape is null! Cannot spawn hole."));
+    	}
+    	else
+    	{
+    		//All pointers has been checked now and we can spawn a terrain hole blueprint with the specified stroke.
+    		DiggerManager->HandleHoleSpawn(StrokeCopy);
+    	}
+	    
+
+    	
+    	SetDigShellVoxels_Generic(
+			SparseVoxelGrid,
+			BrushBounds,
+			VoxelSize,
+			[&](const FVector& WorldPos) { return DiggerManager->GetLandscapeHeightAt(WorldPos); },
+			IsAir
+		);
+    }
+
+
 	
-	case EVoxelBrushType::Capsule:
-		ApplyCapsuleBrush(Stroke.BrushPosition, Stroke.BrushRadius * 0.5f, Stroke.BrushLength, Stroke.BrushRotation, Stroke.bDig);
-		break;
+    MarkDirty();
 
-    case EVoxelBrushType::Cone:
-        ApplyConeBrush(Stroke.BrushPosition, Stroke.BrushLength, Stroke.BrushAngle, true, Stroke.bDig, Stroke.BrushRotation);
-        break;
-
-    case EVoxelBrushType::Smooth:
-        ApplySmoothBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.bDig, 1);
-        break;
-
-    case EVoxelBrushType::Debug:
-        UE_LOG(LogTemp, Warning, TEXT("Debug brush not implemented."));
-        break;
-
-    case EVoxelBrushType::Custom:
-        UE_LOG(LogTemp, Warning, TEXT("Custom brush not implemented."));
-        break;
-
-    case EVoxelBrushType::AdvancedCube:
-        ApplyAdvancedCubeBrush(Stroke.BrushPosition, FVector(Stroke.BrushRadius / 2), Stroke.BrushRotation, Stroke.bDig);
-        break;
-
-    case EVoxelBrushType::Torus:
-        ApplyTorusBrush(Stroke.BrushPosition, Stroke.BrushRadius, Stroke.TorusInnerRadius, Stroke.BrushRotation, Stroke.bDig);
-        break;
-
-case EVoxelBrushType::Pyramid:
-    // For a square-based pyramid, use BrushLength as height and BrushRadius as base half-extent
-    ApplyPyramidBrush(
-        Stroke.BrushPosition,
-        Stroke.BrushLength,           // Height
-        Stroke.BrushRadius / 2.0f,    // Base half-extent
-        Stroke.bDig,
-        Stroke.BrushRotation
-    );
-    break;
-
-case EVoxelBrushType::Icosphere:
-    // Use BrushRadius for the icosphere
-    ApplyIcosphereBrush(
-	    Stroke.BrushPosition,
-	    Stroke.BrushRadius,
-	    Stroke.BrushRotation,
-	    Stroke.bDig
-    );
-    break;
-
-case EVoxelBrushType::Stairs:
-    // Example: Use BrushRadius for width, BrushLength for height, and BrushAngle for depth.
-    // You may want to expose NumSteps and bSpiral in your UI/toolkit.
-    ApplyStairsBrush(
-	    Stroke.BrushPosition,
-	    Stroke.BrushRadius,           // Width
-	    Stroke.BrushLength,           // Height
-	    Stroke.BrushAngle,            // Depth (or use another parameter)
-	    Stroke.NumSteps,                     // Set this from your UI/toolkit
-	    Stroke.bSpiral,                      // Set this from your UI/toolkit
-	    Stroke.bDig,
-	    Stroke.BrushRotation
-    );
-    break;
-
-    default:
-        UE_LOG(LogTemp, Warning, TEXT("Invalid BrushType: %d"), (int32)Stroke.BrushType);
-        break;
+    UE_LOG(LogTemp, Log, TEXT("ApplyBrushStroke: Modified %d voxels in Chunk %d"), ModifiedVoxels, SectionIndex);
 }
 
 
-
-	MarkDirty();
-
-	UE_LOG(LogTemp, Warning, TEXT("BrushStroke applied successfully. Chunk ID: %d"), SectionIndex);
-}
 
 void UVoxelChunk::BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction,
 	const FString& String)
@@ -320,7 +373,7 @@ void UVoxelChunk::ApplyCubeBrush(FVector3d BrushPosition, float HalfSize, bool b
 }
 
 
-void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig)
+void UVoxelChunk::ApplySphereBrush(FVector BrushPosition, float Radius, bool bDig)
 {
     FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
     int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
@@ -346,17 +399,35 @@ void UVoxelChunk::ApplySphereBrush(FVector3d BrushPosition, float Radius, bool b
         FVector WorldPos = ChunkOrigin + FVector(X, Y, Z) * FVoxelConversion::LocalVoxelSize
                          + FVector(FVoxelConversion::LocalVoxelSize * 0.5f);
 
-        float SDFValue = FVector::Dist(WorldPos, BrushPosition) - Radius;
+        float Distance = FVector::Dist(WorldPos, BrushPosition);
+        float BrushSDF = Distance - Radius;
 
-        if (FMath::Abs(SDFValue) < SDFTransitionBand)
+        float Existing = SparseVoxelGrid->GetVoxel(X, Y, Z);
+        float NewValue;
+
+        if (Distance < Radius - SDFTransitionBand)
         {
-            ModifyVoxel(FIntVector(X, Y, Z), SDFValue, SDFTransitionBand, bDig);
+            // Fully inside sphere: assign hard value
+            NewValue = bDig ? FVoxelConversion::SDF_AIR : FVoxelConversion::SDF_SOLID;
         }
+        else if (Distance < Radius + SDFTransitionBand)
+        {
+            // Blending zone
+            NewValue = BlendSDF(BrushSDF, Existing, bDig, SDFTransitionBand);
+        }
+        else
+        {
+            continue; // Outside brush influence
+        }
+
+        SparseVoxelGrid->SetVoxel(X, Y, Z, NewValue, bDig);
     }
 
     MarkDirty();
     SparseVoxelGrid->SynchronizeBordersIfDirty();
 }
+
+
 
 
 void UVoxelChunk::ApplyAdvancedCubeBrush(FVector3d BrushPosition, FVector HalfExtents, FRotator Rotation, bool bDig)
@@ -814,7 +885,7 @@ float UVoxelChunk::BlendSDF(float SDFValue, float ExistingSDF, bool bDig, float 
 */
 
 
-float UVoxelChunk::BlendSDF(float SDFValue, float ExistingSDF, bool bDig, float TransitionBand)
+/*float UVoxelChunk::BlendSDF(float SDFValue, float ExistingSDF, bool bDig, float TransitionBand)
 {
     // Standard SDF blending: min for add, max for dig
     if (bDig)
@@ -826,6 +897,23 @@ float UVoxelChunk::BlendSDF(float SDFValue, float ExistingSDF, bool bDig, float 
     {
         // Adding: make more solid (decrease SDF)
         return FMath::Min(ExistingSDF, SDFValue);
+    }
+}*/
+
+
+// In your UVoxelChunk or as a static helper
+float UVoxelChunk::BlendSDF(float ExistingSDF, float NewSDF, bool bDig, float Strength)
+{
+    // Example logic (replace with your actual blending logic)
+    if (bDig)
+    {
+        // For digging, air wins (max)
+        return FMath::Lerp(ExistingSDF, FMath::Max(ExistingSDF, NewSDF), Strength);
+    }
+    else
+    {
+        // For adding, solid wins (min)
+        return FMath::Lerp(ExistingSDF, FMath::Min(ExistingSDF, NewSDF), Strength);
     }
 }
 
@@ -1144,7 +1232,7 @@ void UVoxelChunk::ApplySmoothBrush(const FVector& Center, float Radius, bool bDi
 	TMap<FIntVector, float> CurrentSDF;
 	for (const FIntVector& Voxel : VoxelsToSmooth)
 	{
-		CurrentSDF.Add(Voxel, GetVoxel(Voxel.X, Voxel.Y, Voxel.Z));
+		CurrentSDF.Add(Voxel, SparseVoxelGrid->GetVoxel(Voxel.X, Voxel.Y, Voxel.Z));
 	}
 
 	for (int Iter = 0; Iter < NumIterations; ++Iter)
@@ -1159,7 +1247,7 @@ void UVoxelChunk::ApplySmoothBrush(const FVector& Center, float Radius, bool bDi
 					for (int dz = -1; dz <= 1; ++dz)
 					{
 						FIntVector N = Voxel + FIntVector(dx, dy, dz);
-						float V = CurrentSDF.Contains(N) ? CurrentSDF[N] : GetVoxel(N.X, N.Y, N.Z);
+						float V = CurrentSDF.Contains(N) ? CurrentSDF[N] : SparseVoxelGrid->GetVoxel(N.X, N.Y, N.Z);
 						Sum += V;
 						++Count;
 					}
@@ -1223,52 +1311,6 @@ if (SparseVoxelGrid)
 }
 }
 
-bool UVoxelChunk::IsValidChunkLocalCoordinate(FVector Position) const
-{
-	float LocalX = Position.X;
-	float LocalY = Position.Y;
-	float LocalZ = Position.Z;
-
-	return IsValidChunkLocalCoordinate(LocalX, LocalY, LocalZ);
-}
-
-FVector UVoxelChunk::GetWorldPosition(const FIntVector& VoxelCoordinates) const
-{
-	// Assuming ChunkPosition is the position of this chunk in the world (in chunk coordinates)
-	// and LocalVoxelSize is the size of each voxel in world units.
-	UE_LOG(LogTemp, Warning, TEXT("GetWorldPosition 0 called"));
-	
-	FVector ChunkWorldPosition =  FVoxelConversion::ChunkToWorld(ChunkCoordinates);// Get chunk world position
-
-	// Calculate the world position by converting the voxel coordinates relative to this chunk
-	FVector VoxelWorldPosition = FVector(VoxelCoordinates) * FVoxelConversion::LocalVoxelSize;
-
-	// Add the chunk's world position to the voxel's local position to get the final world position
-	return ChunkWorldPosition + VoxelWorldPosition;
-}
-
-FVector UVoxelChunk::GetWorldPosition() const
-{
-	// Convert chunk coordinates to world space
-	return FVector(
-		ChunkCoordinates.X * ChunkSize * FVoxelConversion::LocalVoxelSize,
-		ChunkCoordinates.Y * ChunkSize * FVoxelConversion::LocalVoxelSize,
-		ChunkCoordinates.Z * ChunkSize * FVoxelConversion::LocalVoxelSize
-	);
-}
-
-// Check if the coordinates are within valid bounds
-bool UVoxelChunk::IsValidChunkLocalCoordinate(int32 LocalX, int32 LocalY, int32 LocalZ) const
-{
-	int32 HalfChunkExtent = (ChunkSize * TerrainGridSize / Subdivisions) / 2;
-	FVector ChunkPosition = FVector(GetChunkPosition()) * ChunkSize;
-
-	return (LocalX >= ChunkPosition.X - HalfChunkExtent && LocalX < ChunkPosition.X + HalfChunkExtent) &&
-		   (LocalY >= ChunkPosition.Y - HalfChunkExtent && LocalY < ChunkPosition.Y + HalfChunkExtent) &&
-		   (LocalZ >= ChunkPosition.Z - HalfChunkExtent && LocalZ < ChunkPosition.Z + HalfChunkExtent);
-}
-
-
 
 void UVoxelChunk::SetVoxel(int32 X, int32 Y, int32 Z, const float SDFValue, bool &bDig) const
 {
@@ -1287,43 +1329,6 @@ void UVoxelChunk::SetVoxel(const FVector& Position, const float SDFValue, bool &
 	SetVoxel(X, Y, Z, SDFValue, bDig);
 }
 
-float UVoxelChunk::GetVoxel(int32 X, int32 Y, int32 Z) const
-{
-	// Check if the coordinate is out of bounds
-	/*if (!IsValidChunkLocalCoordinate(X, Y, Z))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("Attempt to access out-of-bounds voxel at X=%d, Y=%d, Z=%d"), X, Y, Z);
-		return 1.0f;  // Return default air value for out-of-bounds voxels
-	}*/
-
-	// Otherwise, proceed to check the sparse grid
-	if (SparseVoxelGrid)
-	{
-		return SparseVoxelGrid->GetVoxel(X, Y, Z);
-	}
-	return 1.0f;  // Return default air if grid doesn't exist
-}
-
-float UVoxelChunk::GetVoxel(const FVector& Position) const
-{
-	int32 X = Position.X;
-	int32 Y = Position.Y;
-	int32 Z = Position.Z;
-	
-	// Check if the coordinate is out of bounds
-	if (!IsValidChunkLocalCoordinate(X, Y, Z))
-	{
-		UE_LOG(LogTemp, Error, TEXT("Attempt to access out-of-bounds voxel at X=%d, Y=%d, Z=%d"), X, Y, Z);
-		return 1.0f;  // Return default air value for out-of-bounds voxels
-	}
-
-	// Otherwise, proceed to check the sparse grid
-	if (SparseVoxelGrid)
-	{
-		return SparseVoxelGrid->GetVoxel(X, Y, Z);
-	}
-	return 1.0f;  // Return default air if grid doesn't exist
-}
 
 USparseVoxelGrid* UVoxelChunk::GetSparseVoxelGrid() const
 {

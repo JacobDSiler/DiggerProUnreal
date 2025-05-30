@@ -12,17 +12,19 @@
 #include "VoxelBrushTypes.h"
 #include "Engine/StaticMeshActor.h"
 #include "GameFramework/Actor.h"
+// Define the FBrushStroke struct
+#include "C:\Users\serpe\Documents\Unreal Projects\DiggerProUnreal\Source\DiggerProUnreal\Private\FBrushStroke.h"
 
-#include "Engine/StaticMesh.h"
-#include "StaticMeshAttributes.h"
-#include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
 #include "FCustomSDFBrush.h"
 #include "IAssetTools.h"
+#include "StaticMeshAttributes.h"
 #include "VoxelConversion.h"
-#include "UObject/Package.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Engine/StaticMesh.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "UObject/Package.h"
 
 
 #include "DiggerManager.generated.h"
@@ -36,13 +38,35 @@ struct FIsland
     TArray<FIntVector> Voxels;
 };
 
+// Structure to save island data for PIE
+USTRUCT()
+struct FIslandSaveData
+{
+    GENERATED_BODY()
+    
+    UPROPERTY()
+    FVector MeshOrigin;
+    
+    UPROPERTY()
+    TArray<FVector> Vertices;
+    
+    UPROPERTY()
+    TArray<int32> Triangles;
+    
+    UPROPERTY()
+    TArray<FVector> Normals;
+    
+    UPROPERTY()
+    bool bEnablePhysics;
+};
+
 class UTerrainHoleComponent;
 #if WITH_EDITOR
 class FDiggerEdModeToolkit;
 #endif
 
 // Define the FBrushStroke struct
-USTRUCT(BlueprintType)
+/*USTRUCT(BlueprintType)
 struct FBrushStroke
 {
     GENERATED_BODY()
@@ -103,6 +127,8 @@ struct FBrushStroke
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
     float StepDepth;
+    float BrushStrength;
+    float BrushFalloff;
 
     // Optional: allow pressure sensitivity in the future?
     // float Intensity = 1.0f;
@@ -118,7 +144,7 @@ struct FBrushStroke
           , BrushLength(0), BrushAngle(0)
     {
     }
-};
+};*/
 
 USTRUCT(BlueprintType)
 struct FIslandData
@@ -130,6 +156,7 @@ struct FIslandData
         , IslandID(-1)
         , VoxelCount(0)
         , Voxels()
+        , ReferenceVoxel(FIntVector::ZeroValue)
     {}
 
     UPROPERTY(BlueprintReadWrite)
@@ -143,6 +170,10 @@ struct FIslandData
 
     UPROPERTY(BlueprintReadWrite)
     TArray<FIntVector> Voxels;
+    
+    // Store a reference voxel for this island
+    UPROPERTY()
+    FIntVector ReferenceVoxel;
 };
 
 struct FIslandMeshData
@@ -163,6 +194,8 @@ class DIGGERPROUNREAL_API ADiggerManager : public AActor
 
 public:
     ADiggerManager();
+    void InitializeBrushShapes();
+    UVoxelBrushShape* GetActiveBrushShape(EVoxelBrushType BrushType) const;
     void ApplyBrushToAllChunks(FBrushStroke& BrushStroke);
     bool SaveSDFBrushToFile(const FCustomSDFBrush& Brush, const FString& FilePath);
     bool LoadSDFBrushFromFile(const FString& FilePath, FCustomSDFBrush& OutBrush);
@@ -172,9 +205,15 @@ public:
     UStaticMesh* ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName);
     AIslandActor* SpawnIslandActorFromIslandAtPosition(const FVector& IslandCenter, bool bEnablePhysics);
 
+    FIntVector FindNearestSurfaceVoxel(USparseVoxelGrid* VoxelGrid, FIntVector IntVector, int SurfaceSearchRadius);
     FIslandMeshData ExtractAndGenerateIslandMesh(const FVector& IslandCenter);
+    void SaveIslandData(AIslandActor* IslandActor, const FIslandMeshData& MeshData);
     void ConvertIslandAtPositionToPhysicsObject(const FVector& Vector);
     void ConvertIslandAtPositionToStaticMesh(const FVector& Vector);
+    void ConvertIslandAtPositionToActor(const FVector& IslandCenter, bool bEnablePhysics, FIntVector ReferenceVoxel);
+    FIslandMeshData ExtractAndGenerateIslandMeshFromVoxel(UVoxelChunk* Chunk, const FIntVector& StartVoxel);
+    void ClearAllIslandActors();
+    void DestroyIslandActor(AIslandActor* IslandActor);
 
     template<typename TIn, typename TOut>
     TArray<TOut> ConvertArray(const TArray<TIn>& InArray)
@@ -194,6 +233,7 @@ public:
     // Native C++ delegates (not UObject/Blueprint)
     DECLARE_MULTICAST_DELEGATE(FIslandsDetectionStartedEvent);
     FIslandsDetectionStartedEvent OnIslandsDetectionStarted;
+    
 
     DECLARE_MULTICAST_DELEGATE_OneParam(FIslandDetectedEvent, const FIslandData&);
     FIslandDetectedEvent OnIslandDetected;
@@ -215,22 +255,34 @@ public:
     UPROPERTY(EditAnywhere, Category="Digger System")
     bool bNeverCull = true;
 
+    UPROPERTY()
+    TArray<AIslandActor*> IslandActors;
+
+    UPROPERTY(EditAnywhere, Category = "Digger|Islands")
+    UMaterialInterface* IslandMaterial;
+
+    UPROPERTY(SaveGame)
+    TArray<FIslandSaveData> SavedIslands;
+
     
     bool EnsureWorldReference();
 
     UFUNCTION(BlueprintCallable, CallInEditor, Category = "Export")
     void BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction);
 
+    UPROPERTY(EditAnywhere, Category="Digger Brush")
+    UVoxelBrushShape* BrushShape;
         
     // Reference to the terrain hole Blueprint
     UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Holes")
     TSubclassOf<AActor> HoleBP;
-
-    UFUNCTION(BlueprintCallable, Category="Holes")
-    void SpawnTerrainHole(const FVector& Location);
+    
 
     UFUNCTION(BlueprintCallable, Category = "Custom")
     void DuplicateLandscape(ALandscapeProxy* Landscape);
+
+    UPROPERTY()
+    TArray<UProceduralMeshComponent*> IslandMeshes;
 
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
     FVector EditorBrushPosition;
@@ -292,7 +344,9 @@ public:
 
     
 protected:
+    void RecreateIslandFromSaveData(const FIslandSaveData& SavedIsland);
     virtual void BeginPlay() override;
+    void PostInitProperties();
     void UpdateVoxelSize();
     void ProcessDirtyChunks();
 
@@ -312,6 +366,7 @@ public:
     void EditorRebuildAllChunks();
     TArray<FIslandData> GetAllIslands() const;
     //void UpdateIslandsFromChunk(UVoxelChunk* Chunk);
+
 
 
 #endif
@@ -382,6 +437,10 @@ public:
     void InitializeSingleChunk(UVoxelChunk* Chunk);  // Initialize a single chunk
     void UpdateLandscapeProxies();
 
+    // In ADiggerManager.h
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel System")
+    TMap<EVoxelBrushType, UVoxelBrushShape*> BrushShapeMap;
+    
     //The world map of the voxel chunks
     UPROPERTY()
     TMap<FIntVector, UVoxelChunk*> ChunkMap;
@@ -394,20 +453,20 @@ public:
     ALandscapeProxy* LastUsedLandscape = nullptr;
 
 
-/*
+
     // Key is world-space X,Y location snapped to voxel grid
     UPROPERTY()
     TMap<FIntPoint, float> TerrainHeightCache;
 
     // Top-level cache by Landscape Proxy
-    UPROPERTY()
+    //UPROPERTY()
     TMap<ALandscapeProxy*, TSharedPtr<TMap<FIntPoint, float>>> LandscapeHeightCaches;
 
     //LoadingCache flag to determine if the height cache on a specific proxy exists. This prevents duplicate async jobs from starting for the same proxy.
     UPROPERTY()
     TSet<ALandscapeProxy*> HeightCacheLoadingSet;
 
-*/
+
 
 private:
     std::mutex ChunkProcessingMutex;
@@ -442,10 +501,11 @@ private:
         const TArray<FProcMeshTangent>& Tangents
     );
 
-    /*float GetCachedLandscapeHeightAt(const FVector& WorldPos);
-    void PopulateLandscapeHeightCache(ALandscapeProxy* Landscape);*/
 
 public:
+    float GetCachedLandscapeHeightAt(const FVector& WorldPos);
+    void PopulateLandscapeHeightCache(ALandscapeProxy* Landscape);
+    
     [[nodiscard]] UMaterial* GetTerrainMaterial() const
     {
         return TerrainMaterial;
@@ -468,6 +528,7 @@ public:
     }
     UFUNCTION(BlueprintCallable, Category = "Landscape Tools")
     float GetLandscapeHeightAt(FVector WorldPosition);
+    TSharedPtr<TMap<FIntPoint, float>> GetOrCreateLandscapeHeightCache(ALandscapeProxy* Landscape);
     void PopulateLandscapeHeightCacheAsync(ALandscapeProxy* Landscape);
     ALandscapeProxy* GetLandscapeProxyAt(const FVector& WorldPos);
     TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos);
@@ -476,6 +537,10 @@ public:
     bool IsNearLandscapeEdge(const FVector& WorldPos, float Threshold);
     bool GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector& Location, float& OutHeight);
     FVector GetLandscapeNormalAt(const FVector& WorldPosition);
+    UWorld* GetSafeWorld() const;
+
+    UFUNCTION(BlueprintCallable, Category="Holes")
+    void HandleHoleSpawn(const FBrushStroke& Stroke);
 
 private:
 

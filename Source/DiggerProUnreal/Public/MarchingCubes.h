@@ -36,14 +36,18 @@ public:
 		// Add TArray<FVector2D>& OutUVs, TArray<FColor>& OutColors, TArray<FProcMeshTangent>& OutTangents if needed
 	);
 
-	void GenerateMeshForIsland(
-		USparseVoxelGrid* IslandGrid,
+	void GenerateMeshForIsland(USparseVoxelGrid* IslandGrid, const FVector& Origin, float VoxelSize, int32 IslandId);
+
+	void CreateIslandProceduralMesh(
+		const TArray<FVector>& Vertices,
+		const TArray<int32>& Triangles,
+		const TArray<FVector>& Normals,
 		const FVector& Origin,
-		float VoxelSize,
-		TArray<FVector>& OutVertices,
-		TArray<int32>& OutTriangles,
-		TArray<FVector>& OutNormals
+		int32 IslandId
 	);
+
+
+	
 
 	void AddSkirtMesh(
 	const TArray<int32>& RimVertexIndices,

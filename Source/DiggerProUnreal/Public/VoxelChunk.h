@@ -5,8 +5,10 @@
 #include "UObject/NoExportTypes.h"
 #include "VoxelChunk.generated.h"
 
+class UVoxelBrushShape;
 struct FBrushStroke;
 class ADiggerManager;
+class VoxelBrushShape;
 class USparseVoxelGrid;
 class UMarchingCubes;
 class UProceduralMeshComponent;
@@ -31,7 +33,7 @@ public:
     void DebugPrintVoxelData() const;
 
     // Brush application
-    void ApplyBrushStroke(FBrushStroke& Stroke);
+    void ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrushShape* BrushShape);
 
     // Update functions
     UFUNCTION(BlueprintCallable, Category  =Custom)
@@ -46,17 +48,7 @@ public:
     // Voxel manipulation
     void SetVoxel(int32 X, int32 Y, int32 Z, const float SDFValue, bool& bDig) const;
     void SetVoxel(const FVector& Position, const float SDFValue, bool& bDig) const;
-    float GetVoxel(const FVector& Position) const;
-    float GetVoxel(int32 X, int32 Y, int32 Z) const;
-
-    // Coordinate conversion
-
-    bool IsValidChunkLocalCoordinate(FVector Position) const;
-    bool IsValidChunkLocalCoordinate(int32 LocalX, int32 LocalY, int32 LocalZ) const;
-    FVector GetWorldPosition(const FIntVector& VoxelCoordinates) const;
-    FVector GetWorldPosition() const;
-
-
+    
 
     // Mesh generation
     void GenerateMesh() const;
@@ -77,6 +69,8 @@ public:
     void SetMarchingCubesGenerator(UMarchingCubes* InMarchingCubesGenerator) { MarchingCubesGenerator = InMarchingCubesGenerator; }
     void BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction, const FString& String);
 
+    float BlendSDF(float SDFValue, float ExistingSDF, bool bDig, float TransitionBand);
+
 private:
     void ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig);
     void ApplyIcosphereBrush(FVector3d BrushPosition, float Radius, FRotator Rotation, bool bDig);
@@ -84,7 +78,7 @@ private:
                           bool bSpiral, bool bDig, const FRotator& Rotation);
     float CalculateDiggingSDF(float Distance, float InnerRadius, float Radius, float OuterRadius, float TransitionZone,
                               float ExistingSDF, bool bIsAboveTerrain, float HeightDifferenceFromTerrain);
-    float BlendSDF(float SDFValue, float ExistingSDF, bool bDig, float TransitionBand);
+
     float CalculateAdditiveSDF(float Distance, float InnerRadius, float Radius, float OuterRadius, float TransitionZone,
                                float ExistingSDF, bool bIsAboveTerrain);
     void ModifyVoxel(FIntVector Index,float SDFValue, float TransitionBand, bool bDig);

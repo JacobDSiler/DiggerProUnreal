@@ -22,13 +22,27 @@ public:
 	// Initialize the brush
 	void InitializeBrush(EVoxelBrushType InBrushType, float InSize, FVector InLocation, ADiggerManager* DiggerManagerRef);
 	UVoxelChunk* GetTargetChunkFromBrushPosition(const FVector3d& BrushPosition);
+	UWorld* GetSafeWorld() const;
 
-	// Apply the brush to the SDF in the chunk
-	void ApplyBrushToChunk(UVoxelChunk* BrushChunk, FVector3d BrushPosition, float BrushSize);
-
-	// Debug the brush in the world
-	UFUNCTION(BlueprintCallable, Category = "Brush")
-	void DebugBrush();
+	// Use virtual, not pure virtual
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Voxel")
+	float CalculateSDF(
+		const FVector& WorldPos,
+		const FVector& BrushCenter,
+		float Radius,
+		float Strength,
+		float Falloff,
+		float TerrainHeight,
+		bool bDig
+	) const;
+	virtual float CalculateSDF_Implementation(
+		const FVector& WorldPos,
+		const FVector& BrushCenter,
+		float Radius,
+		float Strength,
+		float Falloff, float TerrainHeight, bool bDig
+	) const { return 0.0f; } // Default implementation
+	
 	
 	UFUNCTION(BlueprintCallable, Category = "Brush")
 	EVoxelBrushType GetBrushType() const
@@ -65,29 +79,18 @@ public:
 	{
 		this->BrushLocation = NewBrushLocation;
 	}
-
-	UFUNCTION(BlueprintCallable, Category = "Brush")
-	float SdfChange() const
-	{
-		return SDFChange;
-	}
-
-	UFUNCTION(BlueprintCallable, Category = "Brush")
-	void SetSdfChange(float NewSdfChange)
-	{
-		SDFChange = NewSdfChange;
-	}
+	
 
 	UFUNCTION(BlueprintCallable, Category = "Brush")
 	bool GetDig() const
 	{
-		return bDig;
+		return bIsDigging;
 	}
 	
 	UFUNCTION(BlueprintCallable, Category = "Brush")
 	void SetDig(bool setBDig)
 	{
-		this->bDig = setBDig;
+		this->bIsDigging = setBDig;
 	}
 
 protected:
@@ -99,25 +102,10 @@ protected:
 	float SDFChange;
 	
 	//Dig Setting
-	bool bDig;
-	
-	//Debug Brush Timer
-	FTimerHandle DebugBrushTimerHandle;
+	bool bIsDigging;
 
 	UFUNCTION(BlueprintCallable, Category = "Brush")
 	FHitResult GetCameraHitLocation();
-
-	// Cube brush logic
-	void ApplyCubeBrush(FBrushStroke* BrushStroke);
-	// Sphere brush logic
-	void ApplySphereBrush(FBrushStroke* BrushStroke);
-	// Cone brush logic
-	void ApplyConeBrush(FBrushStroke* BrushStroke);
-	// Custom brush logic
-	void ApplyCustomBrush(FVector3d BrushPosition);
-
-	bool IsVoxelWithinBounds(const FVector3d& VoxelPosition, const FVector3d& MinBounds, const FVector3d& MaxBounds);
-	bool IsVoxelWithinSphere(const FVector3d& VoxelPosition, const FVector3d& SphereCenter, double Radius);
 
 private:
 	//World
@@ -126,13 +114,13 @@ private:
 	FRotator BrushRotation;
 	float BrushLength;
 	float BrushAngle;
-
+public:
 	FHitResult PerformComplexTrace(const FVector& Start, const FVector& End, AActor* IgnoredActor);
 	bool IsHoleBPActor(AActor* Actor) const;
 	FHitResult TraceThroughHole(const FHitResult& HoleHit, const FVector& End, AActor* IgnoredActor);
 	FHitResult TraceBehindLandscape(const FHitResult& LandscapeHit, const FVector& End, AActor* IgnoredActor, AActor* HoleActor);
 
-public:
+
 	void SetWorld(UWorld* SetWorld)
 	{
 		this->World = SetWorld;
@@ -150,6 +138,5 @@ private:
 	// Brush type
 	UPROPERTY()
 	EVoxelBrushType BrushType;
-
 	
 };

@@ -1106,6 +1106,34 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, floa
     );
 }
 
+void FDiggerEdModeToolkit::OnConvertToPhysicsActorClicked()
+{
+    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Add Physics to Selected Island button pressed."));
+    
+    if (SelectedIslandIndex != INDEX_NONE && Islands.IsValidIndex(SelectedIslandIndex))
+    {
+        const FIslandData& Island = Islands[SelectedIslandIndex];
+        
+        // Check if there's actually an island at this position
+        if (ADiggerManager* Manager = GetDiggerManager())
+        {
+            // Use the reference voxel if available
+            if (Island.ReferenceVoxel != FIntVector::ZeroValue)
+            {
+                Manager->ConvertIslandAtPositionToActor(Island.Location, true, Island.ReferenceVoxel);
+                UE_LOG(LogTemp, Log, TEXT("Island Location: %s, Reference Voxel: %s"), 
+                    *Island.Location.ToString(), *Island.ReferenceVoxel.ToString());
+            }
+            else
+            {
+                //Manager->ConvertIslandAtPositionToActor(Island.Location, true);
+                UE_LOG(LogTemp, Log, TEXT("Island Location: %s (no reference voxel)"), *Island.Location.ToString());
+            }
+        }
+    }
+}
+
+
 
 //Make Island Section
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
@@ -1123,7 +1151,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                 + SHorizontalBox::Slot().AutoWidth().Padding(2)
                 [
                     SNew(SButton)
-                    .Text(FText::FromString("Convert To Physics Object"))
+                    .Text(FText::FromString("Convert To Physics Actor"))
                     .IsEnabled_Lambda([this]() { return SelectedIslandIndex != INDEX_NONE; })
                     .OnClicked_Lambda([this]()
                     {
@@ -1132,8 +1160,24 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                         if (SelectedIslandIndex != INDEX_NONE && Islands.IsValidIndex(SelectedIslandIndex))
                         {
                             const FIslandData& Island = Islands[SelectedIslandIndex];
-                            GetDiggerManager()->ConvertIslandAtPositionToPhysicsObject(Island.Location);
-                            UE_LOG(LogTemp, Error, TEXT("Island Location: %s"), *Island.Location.ToString());
+                            // Check if there's actually an island at this position
+                            if (ADiggerManager* Manager = GetDiggerManager())
+                            {
+                                // Use the reference voxel if available
+                                if (Island.ReferenceVoxel != FIntVector::ZeroValue)
+                                {
+                                    Manager->ConvertIslandAtPositionToActor(
+                                        Island.Location, true, Island.ReferenceVoxel);
+                                    UE_LOG(LogTemp, Log, TEXT("Island Location: %s, Reference Voxel: %s"),
+                                           *Island.Location.ToString(), *Island.ReferenceVoxel.ToString());
+                                }
+                                else
+                                {
+                                    //Manager->ConvertIslandAtPositionToActor(Island.Location, true);
+                                    UE_LOG(LogTemp, Error, TEXT("Island Location: %s (no reference voxel)"),
+                                           *Island.Location.ToString());
+                                }
+                            }
                         }
                         return FReply::Handled();
                     })
@@ -1141,7 +1185,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                 + SHorizontalBox::Slot().AutoWidth().Padding(2)
                 [
                     SNew(SButton)
-                    .Text(FText::FromString("Convert/Save as Static Mesh"))
+                    .Text(FText::FromString("Convert/Save as Scene Actor"))
                     .IsEnabled_Lambda([this]() { return SelectedIslandIndex != INDEX_NONE; })
                     .OnClicked_Lambda([this]()
                     {
@@ -1150,12 +1194,24 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                         if (SelectedIslandIndex != INDEX_NONE && Islands.IsValidIndex(SelectedIslandIndex))
                         {
                             const FIslandData& Island = Islands[SelectedIslandIndex];
-                            FString AssetName = FString::Printf(TEXT("Island_%d_StaticMesh"), Island.IslandID);
-                            GetDiggerManager()->ConvertIslandAtPositionToStaticMesh(Island.Location);
-                            Islands.RemoveAt(SelectedIslandIndex);
-                            SelectedIslandIndex = INDEX_NONE;
-                            // Call your UI refresh/update method here
-                           
+                            // Check if there's actually an island at this position
+                            if (ADiggerManager* Manager = GetDiggerManager())
+                            {
+                                // Use the reference voxel if available
+                                if (Island.ReferenceVoxel != FIntVector::ZeroValue)
+                                {
+                                    Manager->ConvertIslandAtPositionToActor(
+                                        Island.Location, false, Island.ReferenceVoxel);
+                                    UE_LOG(LogTemp, Log, TEXT("Island Location: %s, Reference Voxel: %s"),
+                                           *Island.Location.ToString(), *Island.ReferenceVoxel.ToString());
+                                }
+                                else
+                                {
+                                    //Manager->ConvertIslandAtPositionToActor(Island.Location, true);
+                                    UE_LOG(LogTemp, Error, TEXT("Island Location: %s (no reference voxel)"),
+                                           *Island.Location.ToString());
+                                }
+                            }
                         }
                         return FReply::Handled();
                     })

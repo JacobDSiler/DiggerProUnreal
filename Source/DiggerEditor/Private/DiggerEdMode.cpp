@@ -140,7 +140,6 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
         // Log the hit location for debugging
         UE_LOG(LogTemp, Log, TEXT("Click Location: %s"), *HitLocation.ToString());
 
-
         const bool bCtrlPressed = Click.IsControlDown();
         const bool bRightClick = Click.GetKey() == EKeys::RightMouseButton;
 
@@ -187,20 +186,24 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
                     FinalRotation = (AlignRotation * FinalRotation.Quaternion()).Rotator();
                 }
 
-                // Brush digging/building state from UI
-                bool bFinalBrushDig = Digger->EditorBrushDig;
+                // Determine brush dig mode - base from UI setting
+                bool bFinalBrushDig = DiggerToolkit->IsDigMode();
 
                 // Override based on right-click
                 if (bRightClick)
                 {
                     bFinalBrushDig = !bFinalBrushDig;
+                    // Temporary override UI display for visual feedback
+                    DiggerToolkit->SetTemporaryDigOverride(bFinalBrushDig);
+                }
+                else
+                {
+                    DiggerToolkit->SetTemporaryDigOverride(TOptional<bool>());
                 }
 
                 // Apply brush settings
                 Digger->EditorBrushRadius = DiggerToolkit->GetBrushRadius();
-                // Do NOT set Digger->EditorBrushDig here!
-                // Instead, pass bFinalBrushDig to the brush application:
-                Digger->ApplyBrushInEditor(bFinalBrushDig); // <-- pass as parameter
+                Digger->EditorBrushDig = bFinalBrushDig; // Explicitly set the dig mode
                 Digger->EditorBrushRotation = FinalRotation;
                 Digger->EditorBrushAngle = DiggerToolkit->GetBrushAngle();
 
@@ -221,49 +224,15 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
 
                 // Set final brush position
                 Digger->EditorBrushOffset = FinalOffset;
-                Digger->EditorBrushPosition = HitLocation;// * 0.5f;  // Adjust the location if needed
-                Digger->ApplyBrushInEditor(DiggerToolkit->IsDigMode());
-
-                // Temporary override UI display for visual feedback
-                if (bRightClick)
-                {
-                    DiggerToolkit->SetTemporaryDigOverride(bFinalBrushDig);
-                }
-                else
-                {
-                    DiggerToolkit->SetTemporaryDigOverride(TOptional<bool>());
-                }
+                Digger->EditorBrushPosition = HitLocation;
+                
+                // Apply brush ONCE with the correct dig mode
+                Digger->ApplyBrushInEditor(bFinalBrushDig);
 
                 // Now use the location from the click to perform chunk operations
-                // Convert world position (HitLocation) to chunk coordinates
                 FVector ChunkPosition = HitLocation / (Digger->TerrainGridSize * Digger->ChunkSize);
                 ChunkPosition = FVector(FMath::FloorToInt(ChunkPosition.X), FMath::FloorToInt(ChunkPosition.Y), FMath::FloorToInt(ChunkPosition.Z));
-
-                /*
-                // Now use ChunkPosition to retrieve the correct chunk from the manager
-                if (DiggerToolkit->GetDetailedDebug())
-                {
-                    // Get the chunk at this hit location and call the debug method
-                    if (ADiggerManager* Manager = FindDiggerManager())
-                    {
-                        if (UVoxelChunk* Chunk = Manager->GetOrCreateChunkAtChunk(ChunkPosition))
-                        {
-                            Chunk->DebugPrintVoxelData(); // Show detailed debug
-                        }
-                    }
-                }
-                else
-                {
-                    // Use the basic chunk debug drawing
-                    if (ADiggerManager* Manager = FindDiggerManager())
-                    {
-                        if (UVoxelChunk* Chunk = Manager->GetOrCreateChunkAtChunk(ChunkPosition))
-                        {
-                            Chunk->DebugDrawChunk(); // Show basic chunk debug
-                        }
-                    }
-                }*/
-
+                
                 return true;
             }
         }
@@ -271,7 +240,6 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
 
     return false;
 }
-
 
 
 

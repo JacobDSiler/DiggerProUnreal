@@ -12,6 +12,15 @@ struct FIslandData;
 class ADiggerManager;
 class SUniformGridPanel;
 
+UENUM(BlueprintType)
+enum class EIslandOriginMode : uint8
+{
+	Center UMETA(DisplayName = "Center"),
+	Base UMETA(DisplayName = "Base"),
+	Top UMETA(DisplayName = "Top")
+};
+
+
 class FDiggerEdModeToolkit : public FModeToolkit
 {
 public:
@@ -171,6 +180,7 @@ private:
 	TSharedRef<SWidget> MakeRotationRow(const FText& Label, float& Value);
 	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, double& Value);
 	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, float& Value);
+	void OnConvertToPhysicsActorClicked();
 	TSharedRef<SWidget> MakeIslandsSection();
 
 	TSharedRef<SWidget> MakeLabeledSliderRow(

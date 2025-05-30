@@ -8,6 +8,7 @@ class ADiggerManager;
 // Forward declaration
 class UVoxelChunk;
 
+
 // Struct to hold SDF value and possibly other data like voxel material, etc.
 USTRUCT()
 struct FVoxelData
@@ -39,6 +40,7 @@ public:
 	bool EnsureDiggerManager();
 	bool IsPointAboveLandscape(FVector& Point);
 	float GetLandscapeHeightAtPoint(FVector Position);
+	bool FindNearestSetVoxel(const FIntVector& Start, FIntVector& OutFound);
 
 	// Add this flag for when a border voxel is set
 	bool bBorderIsDirty = false;
@@ -50,6 +52,7 @@ public:
 
 	// Load voxel data from disk into the current grid
 	bool LoadVoxelDataFromFile(const FString& FilePath);
+	float GetVoxel(FIntVector Vector);
 
 	// Delegate to broadcast when a new island is detected
 	UPROPERTY(BlueprintAssignable, Category = "Island Detection")
@@ -66,7 +69,9 @@ public:
 
 	// Retrieves the voxel's SDF value; returns true if the voxel exists
 	float GetVoxel(int32 X, int32 Y, int32 Z);
+	bool HasVoxelAt(const FIntVector& Key) const;
 
+	bool HasVoxelAt(int32 X, int32 Y, int32 Z) const;
 	// Method to get all voxel data
 	TMap<FVector, float> GetVoxels() const;
 	
@@ -89,8 +94,11 @@ public:
 	{
 		this->ParentChunkCoordinates = NewParentChunkPosition;
 	}
+
 	
-	TArray<FIslandData> DetectIslands(float SDFThreshold /* usually 0.0f */) const;
+	UFUNCTION(BlueprintCallable, Category = "Voxel")
+	TArray<FIslandData> DetectIslands(float SDFThreshold = 0.0f);
+	
 	void SynchronizeBordersWithNeighbors();
 
 	FVector3d GetParentChunkCoordinatesV3D() const
