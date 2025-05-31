@@ -14,8 +14,6 @@ float UConeBrushShape::CalculateSDF_Implementation(
     bool bDig
 ) const
 {
-    const float SDF_SOLID = FVoxelConversion::SDF_SOLID;
-    const float SDF_AIR   = FVoxelConversion::SDF_AIR;
 
     // Interpret bFilled from bFilledParam (0.0 = false, >0.5 = true)
     bool bFilled = bFilledParam > 0.5f;
@@ -49,7 +47,7 @@ float UConeBrushShape::CalculateSDF_Implementation(
     // Smooth falloff
     float t = FMath::Clamp((Distance + Falloff) / FMath::Max(Falloff, 0.0001f), 0.0f, 1.0f);
 
-    float TargetSDF = bDig ? SDF_AIR : SDF_SOLID;
+    float TargetSDF = bDig ? FVoxelConversion::SDF_AIR : FVoxelConversion::SDF_SOLID;
     float SDF = FMath::Lerp(TargetSDF, 0.0f, t);
 
     return SDF;

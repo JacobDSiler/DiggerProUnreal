@@ -14,8 +14,6 @@ float UCubeBrushShape::CalculateSDF_Implementation(
     bool bDig
 ) const
 {
-    const float SDF_SOLID = FVoxelConversion::SDF_SOLID;
-    const float SDF_AIR   = FVoxelConversion::SDF_AIR;
 
     FVector HalfSize(SizeX * 0.5f, SizeY * 0.5f, SizeZ * 0.5f);
     FVector Local = WorldPos - BrushCenter;
@@ -37,7 +35,7 @@ float UCubeBrushShape::CalculateSDF_Implementation(
     float Falloff = FMath::Max(TerrainHeight, 0.0001f);
     float t = FMath::Clamp((Distance + Falloff) / Falloff, 0.0f, 1.0f);
 
-    float TargetSDF = bDig ? SDF_AIR : SDF_SOLID;
+    float TargetSDF = bDig ? FVoxelConversion::SDF_AIR : FVoxelConversion::SDF_SOLID;
     float SDF = FMath::Lerp(TargetSDF, 0.0f, t);
 
     // Use bDig as a strength multiplier if needed, or always 1.0

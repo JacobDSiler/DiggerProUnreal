@@ -12,9 +12,6 @@ float USphereBrushShape::CalculateSDF_Implementation(
     bool bDig
 ) const
 {
-    // SDF conventions
-    const float SDF_SOLID = FVoxelConversion::SDF_SOLID; // e.g., -1.0f
-    const float SDF_AIR   = FVoxelConversion::SDF_AIR;   // e.g., 1.0f
 
     // Calculate distance from brush center
     float Distance = FVector::Dist(WorldPos, BrushCenter);
@@ -37,7 +34,7 @@ float USphereBrushShape::CalculateSDF_Implementation(
         if (Distance <= Radius)
         {
             // Inside the main radius: full air value
-            SDFValue = SDF_AIR;
+            SDFValue = FVoxelConversion::SDF_AIR;
         }
         else
         {
@@ -49,12 +46,12 @@ float USphereBrushShape::CalculateSDF_Implementation(
             {
                 // Below terrain, digging: blend from air (SDF_AIR) to solid (SDF_SOLID) in the falloff.
                 // This explicitly creates a solid boundary at the edge of the brush below terrain.
-                SDFValue = FMath::Lerp(SDF_AIR, SDF_SOLID, t);
+                SDFValue = FMath::Lerp(FVoxelConversion::SDF_AIR, FVoxelConversion::SDF_SOLID, t);
             }
             else
             {
                 // Above terrain, digging: blend from air (SDF_AIR) to zero.
-                SDFValue = FMath::Lerp(SDF_AIR, 0.0f, t);
+                SDFValue = FMath::Lerp(FVoxelConversion::SDF_AIR, 0.0f, t);
             }
         }
     }
@@ -64,7 +61,7 @@ float USphereBrushShape::CalculateSDF_Implementation(
         if (Distance <= Radius)
         {
             // Inside the main radius: full solid value
-            SDFValue = SDF_SOLID;
+            SDFValue = FVoxelConversion::SDF_SOLID;
         }
         else
         {
@@ -72,7 +69,7 @@ float USphereBrushShape::CalculateSDF_Implementation(
             // This behavior is generally fine regardless of terrain height for adding.
             float t = (Distance - Radius) / Falloff;
             t = FMath::SmoothStep(0.0f, 1.0f, t);
-            SDFValue = FMath::Lerp(SDF_SOLID, 0.0f, t);
+            SDFValue = FMath::Lerp(FVoxelConversion::SDF_SOLID, 0.0f, t);
         }
     }
 
