@@ -239,222 +239,427 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
 
 void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
 {
-    // Verify this instance is valid
-    if (!IsValid(this))
-    {
-        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement called on invalid ADiggerManager instance!"));
-        return;
-    }
-
-    // Verify we're in the game thread
     if (!IsInGameThread())
     {
-        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: not called from game thread!"));
+        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: Not called from game thread!"));
         return;
     }
-    
-    // Confirm method is called
-    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: called with position: %s"), *ClickPosition.ToString());
-    
-    // Check if World is valid
-    UWorld* CurrentWorld = GetSafeWorld();
-    if (!CurrentWorld) 
-    {
-        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: GetSafeWorld() returned null in DebugBrushPlacement!"));
-        return;
-    }
-    
-    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: World is valid, proceeding with calculations"));
-    
-    // Calculate sizes
-    TerrainGridSize = 100.0f; // Hardcoded for now since the log shows it as 0.0
-    float ChunkWorldSize = ChunkSize * TerrainGridSize;
-    
-    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: ChunkSize=%d, TerrainGridSize=%d, ChunkWorldSize=%f"), 
-           ChunkSize, TerrainGridSize, ChunkWorldSize);
-    
-    // Calculate chunk coordinates
-    FIntVector ChunkCoords = FIntVector(
-        FMath::FloorToInt(ClickPosition.X / ChunkWorldSize),
-        FMath::FloorToInt(ClickPosition.Y / ChunkWorldSize),
-        FMath::FloorToInt(ClickPosition.Z / ChunkWorldSize)
-    );
 
+    UWorld* CurrentWorld = GetSafeWorld();
+    if (!CurrentWorld)
+    {
+        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: GetSafeWorld() returned null!"));
+        return;
+    }
+
+    // Ensure parameters are valid
+    if (TerrainGridSize <= 0.0f || Subdivisions <= 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: Invalid TerrainGridSize or Subdivisions!"));
+        return;
+    }
+
+    VoxelSize = TerrainGridSize / Subdivisions;
+    float ChunkWorldSize = ChunkSize * TerrainGridSize;
+
+    UE_LOG(LogTemp, Display, TEXT("ChunkSize=%d, Subdivisions=%d, VoxelSize=%.2f, ChunkWorldSize=%.2f"),
+        ChunkSize, Subdivisions, VoxelSize, ChunkWorldSize);
+
+    // Compute chunk coordinates from world position
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(ClickPosition);
+
+
+    UE_LOG(LogTemp, Display, TEXT("ClickPos: %s → ChunkCoords: %s"),
+        *ClickPosition.ToString(), *ChunkCoords.ToString());
+
+    // Fetch or create the relevant chunk
     if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
     {
         Chunk->GetSparseVoxelGrid()->RenderVoxels();
+        Chunk->DebugDrawChunk();
     }
-    
-    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: ChunkCoords: %s"), *ChunkCoords.ToString());
-    
-    // Calculate chunk center and origin
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Failed to get or create chunk at %s"), *ChunkCoords.ToString());
+        return;
+    }
+
+    // Compute chunk origin and extent
     FVector ChunkCenter = FVector(ChunkCoords) * ChunkWorldSize;
-    FVector ChunkOrigin = ChunkCenter - FVector(ChunkWorldSize * 0.5f);
     FVector ChunkExtent = FVector(ChunkWorldSize * 0.5f);
-    
-    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: ChunkCenter: %s, ChunkOrigin: %s, ChunkExtent: %s"), 
-           *ChunkCenter.ToString(), *ChunkOrigin.ToString(), *ChunkExtent.ToString());
-    
-    // Calculate local position within the chunk
+    FVector ChunkOrigin = ChunkCenter - ChunkExtent;
+
+
     FVector LocalInChunk = ClickPosition - ChunkOrigin;
-    
-    // Calculate local voxel coordinates
-    FIntVector LocalVoxel = FIntVector(
-        FMath::FloorToInt(LocalInChunk.X / TerrainGridSize),
-        FMath::FloorToInt(LocalInChunk.Y / TerrainGridSize),
-        FMath::FloorToInt(LocalInChunk.Z / TerrainGridSize)
+
+    // Convert to local voxel coordinates using VoxelSize
+    FIntVector LocalVoxel(
+        FMath::FloorToInt(LocalInChunk.X / VoxelSize),
+        FMath::FloorToInt(LocalInChunk.Y / VoxelSize),
+        FMath::FloorToInt(LocalInChunk.Z / VoxelSize)
     );
-    
-    // Clamp to valid range
+
     LocalVoxel.X = FMath::Clamp(LocalVoxel.X, 0, ChunkSize - 1);
     LocalVoxel.Y = FMath::Clamp(LocalVoxel.Y, 0, ChunkSize - 1);
     LocalVoxel.Z = FMath::Clamp(LocalVoxel.Z, 0, ChunkSize - 1);
+
+    UE_LOG(LogTemp, Display, TEXT("LocalInChunk: %s, LocalVoxel: %s"),
+        *LocalInChunk.ToString(), *LocalVoxel.ToString());
+
+    // World-space center of the voxel
+    FVector VoxelCenter = ChunkOrigin +
+                          FVector(LocalVoxel) * VoxelSize +
+                          FVector(VoxelSize * 0.5f);
+
+    UE_LOG(LogTemp, Display, TEXT("VoxelCenter: %s"), *VoxelCenter.ToString());
     
-    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: LocalInChunk: %s, LocalVoxel: %s"), 
-           *LocalInChunk.ToString(), *LocalVoxel.ToString());
     
-    // Calculate voxel center in world space
-    FVector VoxelCenter = ChunkOrigin + 
-                          FVector(LocalVoxel) * TerrainGridSize + 
-                          FVector(TerrainGridSize * 0.5f);
-    
-    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: VoxelCenter: %s"), *VoxelCenter.ToString());
-    
-    // Draw debug visuals
-    try {
-        // Draw the chunk as a box
-        DrawDebugBox(
-            CurrentWorld,
-            ChunkCenter,
-            ChunkExtent,
-            FColor::Red,
-            false,
-            30.0f,
-            0,
-            2.0f
-        );
-        
-        // Draw chunk coordinates text
-        DrawDebugString(
-            CurrentWorld,
-            ChunkCenter + FVector(0, 0, ChunkExtent.Z + 50.0f),
+    try
+    {
+        //const float ChunkWorldSize = ChunkSize * TerrainGridSize;
+        //const FVector ChunkExtent = FVector(ChunkWorldSize * 0.5f);
+        //const FVector ChunkCenter = FVector(ChunkCoords) * ChunkWorldSize;
+        //const FVector ChunkOrigin = ChunkCenter - ChunkExtent;
+
+        // Draw the chunk bounding box
+        DrawDebugBox(CurrentWorld, ChunkCenter, ChunkExtent, FColor::Red, false, 30.0f, 0, 2.0f);
+
+        // Label: Chunk coordinates
+        DrawDebugString(CurrentWorld, ChunkCenter + FVector(0, 0, ChunkExtent.Z + 50.0f),
             FString::Printf(TEXT("Chunk: %s"), *ChunkCoords.ToString()),
-            nullptr,
-            FColor::Yellow,
-            30.0f
-        );
-        
+            nullptr, FColor::Yellow, 30.0f);
+
         // Draw chunk center
         DrawDebugSphere(CurrentWorld, ChunkCenter, 30.0f, 16, FColor::Yellow, false, 30.0f);
-        DrawDebugString(
-            CurrentWorld,
-            ChunkCenter + FVector(0, 0, 35.0f),
-            TEXT("Chunk Center"),
-            nullptr,
-            FColor::Yellow,
-            30.0f
-        );
-        
+        DrawDebugString(CurrentWorld, ChunkCenter + FVector(0, 0, 35.0f), TEXT("Chunk Center"), nullptr, FColor::Yellow, 30.0f);
+
         // Draw chunk origin (minimum corner)
         DrawDebugSphere(CurrentWorld, ChunkOrigin, 20.0f, 16, FColor::Orange, false, 30.0f);
-        DrawDebugString(
-            CurrentWorld,
-            ChunkOrigin + FVector(0, 0, 25.0f),
-            TEXT("Chunk Origin"),
-            nullptr,
-            FColor::Orange,
-            30.0f
-        );
-        
-        // Draw a grid of voxels in the chunk
-        for (int32 X = 0; X < ChunkSize; X++)
+        DrawDebugString(CurrentWorld, ChunkOrigin + FVector(0, 0, 25.0f), TEXT("Chunk Origin"), nullptr, FColor::Orange, 30.0f);
+
+        const int32 ChunkVoxels = ChunkSize * Subdivisions;
+        FVector SelectedVoxelCenter = FVector::ZeroVector;
+
+        // Draw voxel grid (only outer shell + selected voxel)
+        for (int32 X = 0; X < ChunkVoxels; X++)
         {
-            for (int32 Y = 0; Y < ChunkSize; Y++)
+            for (int32 Y = 0; Y < ChunkVoxels; Y++)
             {
-                for (int32 Z = 0; Z < ChunkSize; Z++)
+                for (int32 Z = 0; Z < ChunkVoxels; Z++)
                 {
                     FIntVector VoxelCoord(X, Y, Z);
-                    FVector VoxelPos = ChunkOrigin + 
-                                      FVector(VoxelCoord) * TerrainGridSize + 
-                                      FVector(TerrainGridSize * 0.5f);
-                    
-                    // Only draw voxels at the edges of the chunk
-                    if (X == 0 || X == ChunkSize - 1 || 
-                        Y == 0 || Y == ChunkSize - 1 || 
-                        Z == 0 || Z == ChunkSize - 1)
+                   // FVector VoxelCenter = ChunkOrigin + FVector(VoxelCoord) * VoxelSize + FVector(VoxelSize * 0.5f);
+
+                    // Highlight edge voxels
+                    if (X == 0 || X == ChunkVoxels - 1 ||
+                        Y == 0 || Y == ChunkVoxels - 1 ||
+                        Z == 0 || Z == ChunkVoxels - 1)
                     {
-                        DrawDebugPoint(
-                            CurrentWorld,
-                            VoxelPos,
-                            5.0f,
-                            FColor::Cyan,
-                            false,
-                            30.0f
-                        );
+                        DrawDebugPoint(CurrentWorld, VoxelCenter, 5.0f, FColor::Cyan, false, 30.0f);
                     }
-                    
-                    // Draw the selected voxel
-                    if (X == LocalVoxel.X && Y == LocalVoxel.Y && Z == LocalVoxel.Z)
+
+                    // Highlight the selected voxel
+                    if (VoxelCoord == LocalVoxel)
                     {
-                        DrawDebugBox(
-                            CurrentWorld,
-                            VoxelPos,
-                            FVector(TerrainGridSize * 0.5f),
-                            FColor::Magenta,
-                            false,
-                            30.0f,
-                            0,
-                            2.0f
-                        );
+                        SelectedVoxelCenter = VoxelCenter;
+
+                        DrawDebugBox(CurrentWorld, SelectedVoxelCenter, FVector(VoxelSize * 0.5f),
+                            FColor::Magenta, false, 30.0f, 0, 2.0f);
+
+                        DrawDebugString(CurrentWorld, SelectedVoxelCenter + FVector(0, 0, 25.0f),
+                            TEXT("Selected Voxel"), nullptr, FColor::Magenta, 30.0f);
                     }
                 }
             }
         }
-        
-        // Draw a line from click position to voxel center
-        DrawDebugLine(
-            CurrentWorld,
-            ClickPosition,
-            VoxelCenter,
-            FColor::Green,
-            false,
-            30.0f,
-            0,
-            3.0f
-        );
-        
-        // Draw spheres at both positions
+
+        // Draw interaction line and key points
+        DrawDebugLine(CurrentWorld, ClickPosition, SelectedVoxelCenter, FColor::Green, false, 30.0f, 0, 3.0f);
         DrawDebugSphere(CurrentWorld, ClickPosition, 20.0f, 16, FColor::Blue, false, 30.0f);
-        DrawDebugSphere(CurrentWorld, VoxelCenter, 20.0f, 16, FColor::Magenta, false, 30.0f);
-        
-        // Add labels
-        DrawDebugString(
-            CurrentWorld,
-            ClickPosition + FVector(0, 0, 25.0f),
-            TEXT("Click"),
-            nullptr,
-            FColor::White,
-            30.0f
-        );
-        
-        DrawDebugString(
-            CurrentWorld,
-            VoxelCenter + FVector(0, 0, 25.0f),
-            TEXT("Voxel"),
-            nullptr,
-            FColor::White,
-            30.0f
-        );
-        
-        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: Debug visuals drawn successfully"));
-    } catch (...) {
+        DrawDebugString(CurrentWorld, ClickPosition + FVector(0, 0, 25.0f), TEXT("Click"), nullptr, FColor::White, 30.0f);
+
+        DrawDebugSphere(CurrentWorld, SelectedVoxelCenter, 20.0f, 16, FColor::Magenta, false, 30.0f);
+        DrawDebugString(CurrentWorld, SelectedVoxelCenter + FVector(0, 0, 25.0f), TEXT("Voxel"), nullptr, FColor::White, 30.0f);
+
+        UE_LOG(LogTemp, Warning, TEXT("DebugBrushPlacement: Debug visuals drawn successfully"));
+    }
+    catch (...)
+    {
         UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: Exception drawing debug visuals"));
     }
+
+    // Diagonal marker boxes
+    //DrawVoxelDebugBounds(ChunkOrigin, 30);
+    DrawDiagonalDebugVoxels(ChunkCoords);
+    //DrawDebugChunkWithOverflow(ChunkCoords);
     
-    // Log completion
-    UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: completed"));
+    UE_LOG(LogTemp, Warning, TEXT("DebugBrushPlacement: completed"));
 }
 
+void ADiggerManager::DrawDebugChunkWithOverflow(FIntVector ChunkCoords)
+{
+    const float DebugDuration = 30.0f;
+
+    // Derived values
+    const float ChunkWorldSize = ChunkSize * Subdivisions * VoxelSize;
+    const FVector ChunkExtent = FVector(ChunkWorldSize * 0.5f);
+
+    // Calculate world origin based on chunk coordinates
+    const FVector ChunkOrigin = FVector(ChunkCoords) * ChunkWorldSize;
+    const FVector ChunkCenter = ChunkOrigin;
+
+    // Main Chunk (Red)
+    DrawDebugBox(GetWorld(), ChunkCenter, ChunkExtent, FColor::Red, false, DebugDuration, 0, 2.5f);
+
+    // Label: ChunkCoords : WorldCoords
+    const FString Label = FString::Printf(TEXT("%d, %d, %d : %.0f, %.0f, %.0f"),
+        ChunkCoords.X, ChunkCoords.Y, ChunkCoords.Z,
+        ChunkOrigin.X, ChunkOrigin.Y, ChunkOrigin.Z);
+
+    const FVector LabelOffset(0, 0, ChunkExtent.Z + 50.0f);
+    DrawDebugString(GetWorld(), ChunkCenter + LabelOffset, Label, nullptr, FColor::White, DebugDuration, false);
+
+    // Overflow thickness (1 voxel)
+    const float OverflowThickness = VoxelSize;
+    const float HalfOverflow = OverflowThickness * 0.5f;
+
+    // -X Overflow
+    {
+        FVector Extent = FVector(HalfOverflow, ChunkExtent.Y, ChunkExtent.Z);
+        FVector Center = ChunkCenter - FVector(ChunkExtent.X + HalfOverflow, 0, 0);
+        DrawDebugBox(GetWorld(), Center, Extent, FColor::Blue, false, DebugDuration, 0, 1.5f);
+    }
+
+    // -Y Overflow
+    {
+        FVector Extent = FVector(ChunkExtent.X, HalfOverflow, ChunkExtent.Z);
+        FVector Center = ChunkCenter - FVector(0, ChunkExtent.Y + HalfOverflow, 0);
+        DrawDebugBox(GetWorld(), Center, Extent, FColor::Blue, false, DebugDuration, 0, 1.5f);
+    }
+
+    // -Z Overflow
+    {
+        FVector Extent = FVector(ChunkExtent.X, ChunkExtent.Y, HalfOverflow);
+        FVector Center = ChunkCenter - FVector(0, 0, ChunkExtent.Z + HalfOverflow);
+        DrawDebugBox(GetWorld(), Center, Extent, FColor::Blue, false, DebugDuration, 0, 1.5f);
+    }
+}
+
+
+
+void ADiggerManager::DrawVoxelDebugBounds(const FVector& ChunkOrigin, float DebugDuration)
+{
+    // --- CONFIG ---
+    const int32 Overflow = 1; // One extra row of voxels for seamless chunk stitching
+    const bool bShowCoreBounds = true; // Toggle to draw core chunk without overflow
+    const float OverflowLineThickness = 2.5f;
+    const float CoreLineThickness = 1.5f;
+
+    // --- CALCULATE BOUNDS ---
+
+    // 1. Full grid size including overflow voxels
+    const int32 GridSize = ChunkSize * Subdivisions + Overflow;
+
+    // 2. World space size of full grid (with overflow)
+    const FVector FullSize = FVector(GridSize) * VoxelSize;
+    const FVector FullCenter = ChunkOrigin + FullSize * 0.5f;
+
+    // --- DRAW FULL CHUNK BOUNDS (including overflow) ---
+    DrawDebugBox(GetWorld(), FullCenter, FullSize * 0.5f, FColor::Red, false, DebugDuration, 0, OverflowLineThickness);
+
+    // --- DRAW CORE CHUNK BOUNDS (optional) ---
+    if (bShowCoreBounds)
+    {
+        const FVector CoreSize = FVector(ChunkSize * Subdivisions) * VoxelSize;
+        const FVector CoreCenter = ChunkOrigin + CoreSize * 0.5f;
+
+        DrawDebugBox(GetWorld(), CoreCenter, CoreSize * 0.5f, FColor::Yellow, false, DebugDuration, 0, CoreLineThickness);
+    }
+}
+
+void ADiggerManager::DrawDiagonalDebugVoxels(FIntVector ChunkCoords)
+{
+    // Calculate chunk dimensions
+    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const float DebugDuration = 30.0f;
+    
+    // Get the chunk center using the conversion method
+    FVector ChunkCenter = FVoxelConversion::ChunkToWorld(ChunkCoords);
+    FVector ChunkExtent = FVector(FVoxelConversion::ChunkSize * FVoxelConversion::TerrainGridSize / 2.0f);
+    
+    // Calculate the minimum corner based on the center and extent
+    FVector ChunkMinCorner = ChunkCenter - ChunkExtent;
+    
+    UE_LOG(LogTemp, Warning, TEXT("DrawDiagonalDebugVoxels - ChunkCoords: %s"), *ChunkCoords.ToString());
+    UE_LOG(LogTemp, Warning, TEXT("ChunkCenter: %s, ChunkMinCorner: %s"), 
+           *ChunkCenter.ToString(), *ChunkMinCorner.ToString());
+    UE_LOG(LogTemp, Warning, TEXT("VoxelsPerChunk: %d, LocalVoxelSize: %f"),
+           VoxelsPerChunk, FVoxelConversion::LocalVoxelSize);
+    
+    // Draw diagonal voxels from minimum corner to maximum corner
+    for (int32 i = 0; i < VoxelsPerChunk; i++)
+    {
+        // Calculate world position for the voxel at position (i, i, i) from the minimum corner
+        FVector VoxelCenter = ChunkMinCorner + 
+                             FVector(i + 0.5f, i + 0.5f, i + 0.5f) * FVoxelConversion::LocalVoxelSize;
+        
+        // Draw debug box at the voxel center
+        DrawDebugBox(
+            World, 
+            VoxelCenter, 
+            FVector(FVoxelConversion::LocalVoxelSize * 0.45f), // Slightly smaller for visibility
+            FColor::Green, 
+            false, 
+            DebugDuration, 
+            0, 
+            1.5f
+        );
+    }
+    
+    // Draw overflow voxels in the negative direction (1 voxel outside the chunk boundary)
+    FVector overflowPositions[] = {
+        FVector(-1, -1, -1),  // Corner overflow
+        FVector(-1, 0, 0),    // X-axis overflow
+        FVector(0, -1, 0),    // Y-axis overflow
+        FVector(0, 0, -1)     // Z-axis overflow
+    };
+    
+    for (const FVector& offset : overflowPositions)
+    {
+        // Calculate world position for overflow voxel - these are just outside the minimum corner
+        FVector VoxelCenter = ChunkMinCorner + 
+                             (offset + FVector(0.5f)) * FVoxelConversion::LocalVoxelSize;
+        
+        // Draw debug box at the overflow voxel center in purple
+        DrawDebugBox(
+            World, 
+            VoxelCenter, 
+            FVector(FVoxelConversion::LocalVoxelSize * 0.45f),
+            FColor::Purple, // Different color for overflow voxels
+            false, 
+            DebugDuration, 
+            0, 
+            2.0f  // Thicker lines for overflow voxels
+        );
+        
+        UE_LOG(LogTemp, Warning, TEXT("Overflow voxel at local position %s, world position %s"),
+               *offset.ToString(), *VoxelCenter.ToString());
+    }
+    
+    // Draw red box for chunk bounds
+    DrawDebugBox(
+        World, 
+        ChunkCenter, 
+        ChunkExtent, 
+        FColor::Red, 
+        false, 
+        DebugDuration, 
+        0, 
+        2.5f
+    );
+    
+    // Draw yellow box at the chunk minimum corner for reference
+    DrawDebugBox(
+        World,
+        ChunkMinCorner,
+        FVector(FVoxelConversion::LocalVoxelSize * 0.75f),
+        FColor::Yellow,
+        false,
+        DebugDuration,
+        0,
+        3.0f
+    );
+    
+    // Draw blue box at the chunk maximum corner for reference
+    FVector ChunkMaxCorner = ChunkCenter + ChunkExtent;
+    DrawDebugBox(
+        World,
+        ChunkMaxCorner,
+        FVector(FVoxelConversion::LocalVoxelSize * 0.75f),
+        FColor::Blue,
+        false,
+        DebugDuration,
+        0,
+        3.0f
+    );
+    
+    // Draw a magenta box at the world origin for reference
+    DrawDebugBox(
+        World,
+        FVector::ZeroVector,
+        FVector(FVoxelConversion::LocalVoxelSize * 1.5f),
+        FColor::Magenta,
+        false,
+        DebugDuration,
+        0,
+        3.0f
+    );
+    
+    // Draw overflow regions on the minimum sides
+    
+    // 1. X-axis overflow region (full face)
+    {
+        FVector OverflowCenter = ChunkMinCorner - FVector(FVoxelConversion::LocalVoxelSize * 0.5f, 0, 0);
+        FVector OverflowExtent = FVector(
+            FVoxelConversion::LocalVoxelSize * 0.5f,
+            ChunkExtent.Y,
+            ChunkExtent.Z
+        );
+        
+        DrawDebugBox(
+            World,
+            OverflowCenter,
+            OverflowExtent,
+            FColor(255, 128, 255, 64), // Light purple with transparency
+            false,
+            DebugDuration,
+            0,
+            1.0f
+        );
+    }
+    
+    // 2. Y-axis overflow region (full face)
+    {
+        FVector OverflowCenter = ChunkMinCorner - FVector(0, FVoxelConversion::LocalVoxelSize * 0.5f, 0);
+        FVector OverflowExtent = FVector(
+            ChunkExtent.X,
+            FVoxelConversion::LocalVoxelSize * 0.5f,
+            ChunkExtent.Z
+        );
+        
+        DrawDebugBox(
+            World,
+            OverflowCenter,
+            OverflowExtent,
+            FColor(255, 128, 255, 64), // Light purple with transparency
+            false,
+            DebugDuration,
+            0,
+            1.0f
+        );
+    }
+    
+    // 3. Z-axis overflow region (full face)
+    {
+        FVector OverflowCenter = ChunkMinCorner - FVector(0, 0, FVoxelConversion::LocalVoxelSize * 0.5f);
+        FVector OverflowExtent = FVector(
+            ChunkExtent.X,
+            ChunkExtent.Y,
+            FVoxelConversion::LocalVoxelSize * 0.5f
+        );
+        
+        DrawDebugBox(
+            World,
+            OverflowCenter,
+            OverflowExtent,
+            FColor(255, 128, 255, 64), // Light purple with transparency
+            false,
+            DebugDuration,
+            0,
+            1.0f
+        );
+    }
+}
 
 
 UStaticMesh* ADiggerManager::ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName)
@@ -2075,6 +2280,8 @@ UVoxelChunk* ADiggerManager::GetOrCreateChunkAtChunk(const FIntVector& ChunkCoor
 {
     //Run Init on the static FVoxelCoversion struct so all of our conversions work properly even if the settings have changed!
     FVoxelConversion::InitFromConfig(ChunkSize,Subdivisions,TerrainGridSize, GetActorLocation());
+
+    UE_LOG(LogTemp, Warning, TEXT("➡️ Attempting chunk at coords: %s"), *ChunkCoords.ToString());
     
     if (UVoxelChunk** ExistingChunk = ChunkMap.Find(ChunkCoords))
     {

@@ -116,14 +116,19 @@ void UVoxelChunk::DebugDrawChunk()
 	if (!World) World = DiggerManager->GetWorldFromManager();
 	if (!World) return;
 
-	FVector ChunkCenter = FVector(ChunkCoordinates) * ChunkSize * TerrainGridSize;
-	FVector ChunkExtent = FVector(ChunkSize * TerrainGridSize / 2.0f);
+	const float DebugDuration = 35.0f;
 
-	UE_LOG(LogTemp, Warning, TEXT("DebugDrawChunk: World is valid, continuing to render the chunk bounds. ChunkCenter: %s, ChunkExtent: %s"),
-	   *ChunkCenter.ToString(), *ChunkExtent.ToString());
+	// Core chunk bounds
+	const FVector ChunkCenter = FVector(ChunkCoordinates) * ChunkSize * TerrainGridSize;
+	const FVector ChunkExtent = FVector(ChunkSize * TerrainGridSize / 2.0f);
 	
-	DrawDebugBox(World, ChunkCenter, ChunkExtent, FColor::Red, false, 15.0f);
+
+	// Draw core chunk (red)
+	DrawDebugBox(World, ChunkCenter, ChunkExtent, FColor::Red, false, DebugDuration);
 }
+
+
+
 
 void UVoxelChunk::DebugPrintVoxelData() const
 {

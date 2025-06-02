@@ -202,6 +202,10 @@ public:
     bool GenerateSDFBrushFromStaticMesh(UStaticMesh* Mesh, FTransform MeshTransform, float VoxelSize,
                                         FCustomSDFBrush& OutBrush);
     void DebugBrushPlacement(const FVector& ClickPosition);
+    void DrawDebugChunkWithOverflow(FIntVector ChunkCoords);
+    void DrawVoxelDebugBounds(const FVector& ChunkOrigin,
+                              float DebugDuration);
+    void DrawDiagonalDebugVoxels(FIntVector ChunkCoords);
     UStaticMesh* ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName);
     AIslandActor* SpawnIslandActorFromIslandAtPosition(const FVector& IslandCenter, bool bEnablePhysics);
 
