@@ -55,7 +55,6 @@ public:
 
     // Getters
     FIntVector GetChunkPosition() const { return ChunkCoordinates; }
-    int32 GetChunkSize() const { return ChunkSize; }
     ADiggerManager* GetDiggerManager() const { return DiggerManager; }
     int32 GetSectionIndex() const { return SectionIndex; }
     UFUNCTION(BluePrintCallable)

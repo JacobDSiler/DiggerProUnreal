@@ -40,15 +40,16 @@ void USparseVoxelGrid::Initialize(UVoxelChunk* ParentChunkReference)
 
 void USparseVoxelGrid::InitializeDiggerManager()
 {
-    if (!GetWorld())
+    // Find and assign DiggerManager if not already assigned and set the member variables from it
+    EnsureDiggerManager();
+    if (!DiggerManager->GetSafeWorld())
     {
-        //UE_LOG(LogTemp, Warning, TEXT("World is null in InitializeDiggerManager."));
+        UE_LOG(LogTemp, Warning, TEXT("World is null in InitializeDiggerManager."));
         return; // Ensure we have a valid world context
     }
 
     //UE_LOG(LogTemp, Warning, TEXT("World is not null in InitializeDiggerManager. Grabbing the DiggerManager."));
-    // Find and assign DiggerManager if not already assigned and set the member variables from it
-    EnsureDiggerManager();
+
         if (DiggerManager)
         {
             ChunkSize=DiggerManager->ChunkSize;
@@ -66,21 +67,30 @@ bool USparseVoxelGrid::EnsureDiggerManager()
         
         if (!DiggerManager)
         {
-            //UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in VoxelToWorldSpace"));
+            UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in VoxelToWorldSpace"));
             return false;
         }
-        //UE_LOG(LogTemp, Warning, TEXT("DiggerManager ensured correctly in an instance of SVG!"));
+        UE_LOG(LogTemp, Warning, TEXT("DiggerManager ensured correctly in an instance of SVG!"));
     }
     return true;
 }
 
 
-
+UWorld* USparseVoxelGrid::GetSafeWorld() const
+{
+#if WITH_EDITOR
+    if (GIsEditor && GEditor)
+    {
+        return GEditor->GetEditorWorldContext().World();
+    }
+#endif
+    return GetWorld();
+}
 
 
 bool USparseVoxelGrid::IsPointAboveLandscape(FVector& Point)
 {
-    if(!World) World = GetWorld();
+    if(!World) World = GetSafeWorld();
     if (!World) 
     {
         //UE_LOG(LogTemp, Error, TEXT("World is null in IsPointAboveLandscape"));
@@ -107,7 +117,7 @@ float USparseVoxelGrid::GetLandscapeHeightAtPoint(FVector Position)
 
 
 
-void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue, bool &bDig)
+void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue, bool bDig)
 {
     SetVoxel(Position.X, Position.Y, Position.Z, SDFValue, bDig);
 }
@@ -388,16 +398,16 @@ void USparseVoxelGrid::LogVoxelData() const
 {
     if(!VoxelData.IsEmpty())
     {
-        //UE_LOG(LogTemp, Warning, TEXT("Voxel Data isn't empty!"));
+        UE_LOG(LogTemp, Warning, TEXT("Voxel Data isn't empty!"));
     }
     else
     {
-        //UE_LOG(LogTemp, Error, TEXT("Voxel Data is empty!"));
+        UE_LOG(LogTemp, Error, TEXT("Voxel Data is empty!"));
     }
-    /*for (const auto& VoxelPair : VoxelData)
+    for (const auto& VoxelPair : VoxelData)
     {
         UE_LOG(LogTemp, Warning, TEXT("Voxel at [%s] has SDF value: %f"), *VoxelPair.Key.ToString(), VoxelPair.Value.SDFValue);
-    }*/
+    }
 }
 
 
@@ -811,48 +821,52 @@ void USparseVoxelGrid::SynchronizeBordersWithNeighbors()
 
 
 void USparseVoxelGrid::RenderVoxels() {
-
     if (!EnsureDiggerManager()) {
-        //UE_LOG(LogTemp, Error, TEXT("DiggerManager is null or invalid in SparseVoxelGrid RenderVoxels()!!"));
+        UE_LOG(LogTemp, Error, TEXT("DiggerManager is null or invalid in SparseVoxelGrid RenderVoxels()!!"));
         return;
     }
 
-    World = DiggerManager->GetWorldFromManager();
+    World = DiggerManager->GetSafeWorld();
     if (!World) {
-        //UE_LOG(LogTemp, Error, TEXT("World is null within SparseVoxelGrid RenderVoxels()!!"));
+        UE_LOG(LogTemp, Error, TEXT("World is null within SparseVoxelGrid RenderVoxels()!!"));
         return;
     }
 
     if (VoxelData.IsEmpty()) {
-       // UE_LOG(LogTemp, Warning, TEXT("VoxelData is empty, no voxels to render!"));
+        UE_LOG(LogTemp, Warning, TEXT("VoxelData is empty, no voxels to render!"));
         return;
     } else {
-        //UE_LOG(LogTemp, Warning, TEXT("VoxelData contains %d voxels."), VoxelData.Num());
+        UE_LOG(LogTemp, Warning, TEXT("VoxelData contains %d voxels."), VoxelData.Num());
     }
 
+    const float HalfVoxelSize = FVoxelConversion::LocalVoxelSize / 2.0f;
+
     for (const auto& Voxel : VoxelData) {
-        FIntVector VoxelCoords = Voxel.Key;
-        FVoxelData VoxelDataValue = Voxel.Value;
+        const FIntVector VoxelCoords = Voxel.Key;
+        const FVoxelData& VoxelDataValue = Voxel.Value;
 
-        // Convert voxel coordinates to world space
-        FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(VoxelCoords);
-        FVector Center = WorldPos + FVector(FVoxelConversion::LocalVoxelSize / 2); // Adjust to the center of the voxel
+        // Convert voxel coordinates to world space using the voxel conversion utility
+        const FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(VoxelCoords);
 
-        float SDFValue = VoxelDataValue.SDFValue; // Access the SDF value from the VoxelData
+        // Draw at the center of the voxel (half size offset from min corner)
+        FVector Center = FVoxelConversion::ChunkToWorld(GetParentChunkCoordinates()) +FVoxelConversion::LocalVoxelToWorld(VoxelCoords) + FVector(FVoxelConversion::LocalVoxelSize / 2) + DebugRenderOffset;
 
-        FColor VoxelColor;
-        if (SDFValue > 0) {
-            VoxelColor = FColor::Green; // Air (SDF > 0)
-        } else if (SDFValue < 0) {
-            VoxelColor = FColor::Red; // Solid (SDF < 0)
+        const float SDFValue = VoxelDataValue.SDFValue;
+
+        FColor VoxelColor = FColor::White;
+        if (SDFValue > 0.0f) {
+            VoxelColor = FColor::Green; // Air
+        } else if (SDFValue < 0.0f) {
+            VoxelColor = FColor::Red;   // Solid
         } else {
-            VoxelColor = FColor::Yellow; // Surface (SDF == 0)
+            VoxelColor = FColor::Yellow; // Surface
         }
 
-        // Draw the voxel cube with the correct color
-        DrawDebugBox(World, Center, FVector(FVoxelConversion::LocalVoxelSize / 2), FQuat::Identity, VoxelColor, false, 15.f, 0, 2);
+        // Draw the debug cube for the voxel
+        DrawDebugBox(World, Center, FVector(HalfVoxelSize), FQuat::Identity, VoxelColor, false, 15.f, 0, 2);
 
-        // Optionally, draw a point at the center of the voxel
+        // Optionally draw a point at the center of the voxel
         DrawDebugPoint(World, Center, 2.0f, VoxelColor, false, 15.f, 0);
     }
 }
+

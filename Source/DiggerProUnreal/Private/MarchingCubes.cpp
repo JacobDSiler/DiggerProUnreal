@@ -365,26 +365,30 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
     UE_LOG(LogTemp, Error, TEXT("Generating Mesh for Section with Section ID: %i"), SectionIndex);
 
     USparseVoxelGrid* InVoxelGrid = ChunkPtr->GetSparseVoxelGrid();
-    if (!InVoxelGrid || InVoxelGrid->VoxelData.IsEmpty()) {
+    if (!InVoxelGrid) {
         UE_LOG(LogTemp, Warning, TEXT("No InVoxelGrid and/or data to generate mesh! InVoxelGrid: %s, VoxelData.Num(): %d"),
             InVoxelGrid ? TEXT("Valid") : TEXT("Invalid"),
-            InVoxelGrid ? InVoxelGrid->VoxelData.Num() : 0);
+            InVoxelGrid ? InVoxelGrid->VoxelData.Num() : 0)
         return;
     }
-
+	if(InVoxelGrid->VoxelData.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("InVoxelGrid MarchingCubes.cpp, LN 373 : VoxelData is empty!"))
+		return;
+	}
+	
     // Use FVoxelConversion to get the chunk's world position
     FIntVector ChunkCoords = ChunkPtr->GetChunkPosition();
     FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
     
-    FVector UnderSurfaceOffset(0, 0, 0); // Or your actual offset
-    float VoxelSize = FVoxelConversion::LocalVoxelSize; // Use the consistent voxel size
+	float VoxelSize = FVoxelConversion::LocalVoxelSize; // Use the consistent voxel size
 
     TArray<FVector> OutVertices;
     TArray<int32> OutTriangles;
     TArray<FVector> OutNormals;
 
     // Call the modular function, passing the offset
-    GenerateMeshFromGrid(InVoxelGrid, ChunkOrigin, VoxelSize, OutVertices, OutTriangles, OutNormals);
+    GenerateMeshFromGrid(InVoxelGrid, ChunkOrigin , VoxelSize, OutVertices, OutTriangles, OutNormals);
 
     if (OutVertices.Num() > 0 && OutTriangles.Num() > 0 && OutNormals.Num() > 0) {
         AsyncTask(ENamedThreads::GameThread, [this, SectionIndex, OutVertices, OutTriangles, OutNormals]()
@@ -398,17 +402,11 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 
 
 
-bool UMarchingCubes::IsValidVoxel(const FIntVector& Position) const {
-    int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
-    return Position.X >= 0 && Position.X < VoxelsPerChunk &&
-           Position.Y >= 0 && Position.Y < VoxelsPerChunk &&
-           Position.Z >= 0 && Position.Z < VoxelsPerChunk;
-}
 
 
 float UMarchingCubes::GetSafeSDFValue(const FIntVector& Position) const {
-	if (!IsValidVoxel(Position)) {
-		return 1.0f; // Default to solid outside bounds
+	if (!FVoxelConversion::IsValidVoxelIndex(Position)) { 
+		return 1.0f; // Default  outside bounds
 	}
     
 	const float SDFValue = VoxelGrid->GetVoxel(Position.X, Position.Y, Position.Z);
@@ -558,11 +556,14 @@ void UMarchingCubes::GenerateMeshFromGrid(
         return;
     }
 
+    // WorldSpaceOffset for proper alignment for center aligned chunk schema.
+    FVector TotalOffset = FVector(FVoxelConversion::LocalVoxelSize * 0.25F - FVoxelConversion::ChunkWorldSize * 0.25f);
+    
     int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
 
     if (IsDebugging()) {
         DrawDebugBox(
-            DiggerManager->GetWorld(),
+            DiggerManager->GetSafeWorld(),
             Origin + FVector(N * VoxelSize * 0.5f),
             FVector(N * VoxelSize * 0.5f),
             FQuat::Identity,
@@ -754,6 +755,7 @@ void UMarchingCubes::GenerateMeshFromGrid(
                 else
                 {
                     // For uninitialized voxels, check if they're below terrain
+                    // Fixed: Removed incorrect WorldOffset usage here
                     FVector WorldPos = CornerWSPositions[i];
                     bool bCornerBelowTerrain = WorldPos.Z < TerrainHeight;
                     
@@ -868,12 +870,15 @@ void UMarchingCubes::GenerateMeshFromGrid(
                 }
 
                 for (int32 j = 0; j < 3; ++j) {
-                    int32* CachedIndex = VertexCache.Find(Vertices[j]);
+                    // Apply offset to vertex before caching/lookup
+                    FVector OffsetVertex = Vertices[j] + TotalOffset;
+                    
+                    int32* CachedIndex = VertexCache.Find(OffsetVertex);
                     if (CachedIndex) {
                         OutTriangles.Add(*CachedIndex);
                     } else {
-                        int32 NewIndex = OutVertices.Add(Vertices[j]);
-                        VertexCache.Add(Vertices[j], NewIndex);
+                        int32 NewIndex = OutVertices.Add(OffsetVertex);
+                        VertexCache.Add(OffsetVertex, NewIndex);
                         OutTriangles.Add(NewIndex);
                     }
                 }
@@ -902,6 +907,11 @@ void UMarchingCubes::GenerateMeshFromGrid(
         OutNormals[i].Normalize();
     }
 
+    // Apply world space offset to all vertices after mesh generation is complete
+    for (int32 i = 0; i < OutVertices.Num(); ++i) {
+        OutVertices[i] += TotalOffset;
+    }
+
     if (IsDebugging()) {
         UE_LOG(LogTemp, Log, TEXT("Mesh generated from grid: %d vertices, %d triangles."), OutVertices.Num(), OutTriangles.Num());
         UE_LOG(LogTemp, Log, TEXT("Cells with explicit voxels: %d"), CellsWithExplicitVoxels.Num());
@@ -924,7 +934,6 @@ void UMarchingCubes::GenerateMeshFromGrid(
         }
     }
 }
-
 
 
 void UMarchingCubes::GenerateMeshForIsland(

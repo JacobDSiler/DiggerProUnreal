@@ -103,7 +103,67 @@ FHitResult UVoxelBrushShape::GetCameraHitLocation()
     }
     FVector End = WorldLocation + (WorldDirection * 10000.0f);
 
-    return PerformComplexTrace(WorldLocation, End, PlayerController->GetPawn());
+    // Perform initial simple trace
+    FHitResult HitResult;
+    FCollisionQueryParams QueryParams;
+    QueryParams.bTraceComplex = false; // Simple trace first
+    QueryParams.AddIgnoredActor(PlayerController->GetPawn());
+
+    bool bHit = World->LineTraceSingleByChannel(
+        HitResult,
+        WorldLocation,
+        End,
+        ECC_Visibility, // or whatever channel you use
+        QueryParams
+    );
+
+    if (!bHit)
+    {
+        return FHitResult(); // No hit at all
+    }
+
+    // Check if the hit actor is a hole blueprint
+    AActor* HitActor = HitResult.GetActor();
+    if (!HitActor)
+    {
+        return HitResult; // Hit something but no actor, return simple trace result
+    }
+
+    // Check if this is a hole blueprint - adjust this condition to match your hole BP detection
+    // Option 1: Check by class name
+    if (git status
+        IsHoleBPActor(HitActor))
+    {
+        // This is a hole blueprint, perform complex trace
+        return PerformComplexTrace(WorldLocation, End, PlayerController->GetPawn());
+    }
+
+    // Option 2: Check by tag (if your hole BPs have a specific tag)
+    /*
+    if (HitActor->Tags.Contains(FName("HoleBlueprint")))
+    {
+        return PerformComplexTrace(WorldLocation, End, PlayerController->GetPawn());
+    }
+    */
+
+    // Option 3: Check by interface or component (if your hole BPs implement a specific interface)
+    /*
+    if (HitActor->GetClass()->ImplementsInterface(UYourHoleInterface::StaticClass()))
+    {
+        return PerformComplexTrace(WorldLocation, End, PlayerController->GetPawn());
+    }
+    */
+
+    // Option 4: Check by component (if your hole BPs have a specific component)
+    /*
+    if (HitActor->FindComponentByClass<UYourHoleComponent>())
+    {
+        return PerformComplexTrace(WorldLocation, End, PlayerController->GetPawn());
+    }
+    */
+
+    // Not a hole blueprint, return the simple trace result
+    return HitResult;
 }
 
 FHitResult UVoxelBrushShape::PerformComplexTrace(const FVector& Start, const FVector& End, AActor* IgnoredActor)

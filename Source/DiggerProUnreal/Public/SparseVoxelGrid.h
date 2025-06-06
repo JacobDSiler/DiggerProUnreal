@@ -38,6 +38,7 @@ public:
 	void Initialize(UVoxelChunk* ParentChunkReference);
 	void InitializeDiggerManager();
 	bool EnsureDiggerManager();
+	UWorld* GetSafeWorld() const;
 	bool IsPointAboveLandscape(FVector& Point);
 	float GetLandscapeHeightAtPoint(FVector Position);
 	bool FindNearestSetVoxel(const FIntVector& Start, FIntVector& OutFound);
@@ -63,7 +64,7 @@ public:
 	const TMap<FIntVector, FVoxelData>& GetVoxelData() const { return VoxelData; }
 	
 	// Adds a voxel at the given coordinates with the provided SDF value
-	void SetVoxel(FIntVector Position, float SDFValue, bool& bDig);
+	void SetVoxel(FIntVector Position, float SDFValue, bool bDig);
 	void SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig);
 	void SynchronizeBordersIfDirty();
 
@@ -98,6 +99,9 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category = "Voxel")
 	TArray<FIslandData> DetectIslands(float SDFThreshold = 0.0f);
+
+	UPROPERTY(EditAnywhere, Category="Debug")
+	FVector DebugRenderOffset = FVector(- FVoxelConversion::ChunkWorldSize*0.5f,- FVoxelConversion::ChunkWorldSize*0.5f,- FVoxelConversion::ChunkWorldSize*0.5f);
 	
 	void SynchronizeBordersWithNeighbors();
 

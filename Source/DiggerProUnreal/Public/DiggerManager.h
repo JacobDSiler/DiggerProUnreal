@@ -202,6 +202,7 @@ public:
     bool GenerateSDFBrushFromStaticMesh(UStaticMesh* Mesh, FTransform MeshTransform, float VoxelSize,
                                         FCustomSDFBrush& OutBrush);
     void DebugBrushPlacement(const FVector& ClickPosition);
+    void DebugDrawVoxelAtWorldPosition(const FVector& WorldPosition, FColor BoxColor, float Duration, float Thickness);
     void DrawDebugChunkWithOverflow(FIntVector ChunkCoords);
     void DrawVoxelDebugBounds(const FVector& ChunkOrigin,
                               float DebugDuration);
@@ -315,6 +316,10 @@ public:
     UFUNCTION(CallInEditor, Category="Digger Brush|Actions")
     void ApplyBrushInEditor(bool bDig);
 
+    UFUNCTION(BlueprintCallable, Category = "Voxel Editing")
+    void SetVoxelAtWorldPosition(const FVector& WorldPos, float Value);
+
+
     AIslandActor* SpawnIslandActorWithMeshData(
         const FVector& SpawnLocation,
         const FIslandMeshData& MeshData,
@@ -377,11 +382,6 @@ public:
 
 public:
     
-   /* FVector ChunkToWorldCoordinates(int32 XInd, int32 YInd, int32 ZInd) const
-    {
-        FIntVector ChunkPosition=FIntVector(XInd, YInd, ZInd);
-        return FVoxelConversion::ChunkToWorld(ChunkPosition);
-    }*/
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
     int32 ChunkSize = 32;  // Number of grif squares per chunk
@@ -538,7 +538,7 @@ public:
     TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos);
     float GetSmartLandscapeHeightAt(const FVector& WorldPos);
     float GetSmartLandscapeHeightAt(const FVector& WorldPos, bool bForcePrecise);
-    bool IsNearLandscapeEdge(const FVector& WorldPos, float Threshold);
+    //bool IsNearLandscapeEdge(const FVector& WorldPos, float Threshold);
     bool GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector& Location, float& OutHeight);
     FVector GetLandscapeNormalAt(const FVector& WorldPosition);
     UWorld* GetSafeWorld() const;

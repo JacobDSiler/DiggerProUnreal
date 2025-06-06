@@ -100,7 +100,6 @@ public:
 	}
 
 private:
-	bool IsValidVoxel(const FIntVector& Position) const;
 	float GetSafeSDFValue(const FIntVector& Position) const;
 	void ValidateAndResizeBuffers(FIntVector& Size, TArray<FVector>& Vertices, TArray<int32>& Triangles);
 	FVector ApplyLandscapeTransition(const FVector& VertexWS) const;

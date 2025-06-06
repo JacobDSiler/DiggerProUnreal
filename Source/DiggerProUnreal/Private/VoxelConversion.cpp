@@ -6,3 +6,4 @@ int32   FVoxelConversion::Subdivisions = 4;
 float   FVoxelConversion::TerrainGridSize = 100.0f;
 float   FVoxelConversion::LocalVoxelSize = FVoxelConversion::TerrainGridSize / FVoxelConversion::Subdivisions;
 FVector FVoxelConversion::Origin = FVector::ZeroVector;
+float FVoxelConversion::ChunkWorldSize = ChunkSize * TerrainGridSize;

@@ -196,23 +196,43 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrush
 {
     if (!DiggerManager || !BrushShape)
     {
-        UE_LOG(LogTemp, Error, TEXT("DiggerManager or BrushShape is null in UVoxelChunk::ApplyBrushStroke"));
+        UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in UVoxelChunk::ApplyBrushStroke"));
         return;
     }
 	
+    if (!BrushShape)
+    {
+        UE_LOG(LogTemp, Error, TEXT("BrushShape is null in UVoxelChunk::ApplyBrushStroke"));
+        return;
+    }
 
+    if (!SparseVoxelGrid)
+    {
+        UE_LOG(LogTemp, Error, TEXT("SparseVoxelGrid is null in ApplyBrushStroke!"));
+        return;
+    }
 
     // Get chunk origin and voxel size
     FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
     VoxelSize = FVoxelConversion::LocalVoxelSize;
+	
     
     // CRITICAL FIX: Convert brush radius from world units to voxel units
     float VoxelSpaceRadius = Stroke.BrushRadius / VoxelSize;
     float VoxelSpaceFalloff = Stroke.BrushFalloff / VoxelSize;
     float TotalVoxelRadius = VoxelSpaceRadius + VoxelSpaceFalloff;
     
-    // Calculate the affected voxel bounds
-    FIntVector VoxelCenter = FVoxelConversion::WorldToLocalVoxel(Stroke.BrushPosition);
+    // FIXED: Convert brush position to local voxel coordinates relative to chunk origin
+    // Since chunks are center-aligned, we need to offset to get 0-based voxel indices
+    FVector LocalBrushPos = Stroke.BrushPosition - ChunkOrigin;
+    int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    float HalfChunkSize = (VoxelsPerChunk * VoxelSize) * 0.5f;
+    
+    FIntVector VoxelCenter = FIntVector(
+        FMath::FloorToInt((LocalBrushPos.X + HalfChunkSize) / VoxelSize),
+        FMath::FloorToInt((LocalBrushPos.Y + HalfChunkSize) / VoxelSize),
+        FMath::FloorToInt((LocalBrushPos.Z + HalfChunkSize) / VoxelSize)
+    );
     
     // Define the bounding box using voxel-space radius
     int32 MinX = FMath::FloorToInt(VoxelCenter.X - TotalVoxelRadius);
@@ -223,7 +243,6 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrush
     int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + TotalVoxelRadius);
     
     // Clamp to chunk bounds
-    int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
     MinX = FMath::Max(0, MinX);
     MaxX = FMath::Min(VoxelsPerChunk - 1, MaxX);
     MinY = FMath::Max(0, MinY);
@@ -239,8 +258,13 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrush
         {
             for (int32 Z = MinZ; Z <= MaxZ; ++Z)
             {
-                // Convert voxel coordinates to world position
-                FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(FIntVector(X, Y, Z));
+                // FIXED: Convert voxel coordinates to world position using the chunk origin
+                // Account for center-aligned chunks by subtracting half chunk size
+                FVector WorldPos = ChunkOrigin + FVector(
+                    (X * VoxelSize) - HalfChunkSize,
+                    (Y * VoxelSize) - HalfChunkSize,
+                    (Z * VoxelSize) - HalfChunkSize
+                );
 
                 // Skip voxels outside the brush's true shape (including falloff)
                 float Distance = FVector::Dist(WorldPos, Stroke.BrushPosition);
@@ -284,85 +308,83 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrush
         }
     }
 
-    // ... your triple-for loop as before ...
-
     // After setting air voxels, add the shell for dig brushes
     if (Stroke.bDig)
     {
-	    FBox BrushBounds = FBox::BuildAABB(
-		    Stroke.BrushPosition,
-		    FVector(Stroke.BrushRadius + Stroke.BrushFalloff)
-	    );
+        FBox BrushBounds = FBox::BuildAABB(
+            Stroke.BrushPosition,
+            FVector(Stroke.BrushRadius + Stroke.BrushFalloff)
+        );
 
-    	//Make a copy of stroke to use after the auto helper
-    	FBrushStroke StrokeCopy = Stroke;
+        // Make a copy of stroke to use after the auto helper
+        FBrushStroke StrokeCopy = Stroke;
 
-	    auto IsAir = [&](const FVector& WorldPos) -> bool
-	    {
-		    if (!DiggerManager || !BrushShape)
-		    {
-			    return false;
-		    }
-		    float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
-		    float SDF = BrushShape->CalculateSDF(
-			    WorldPos,
-			    Stroke.BrushPosition,
-			    Stroke.BrushRadius,
-			    Stroke.BrushStrength,
-			    Stroke.BrushFalloff,
-			    TerrainHeight,
-			    true // bDig
-		    );
-		    return SDF > 0.0f;
-	    };
+        auto IsAir = [&](const FVector& WorldPos) -> bool
+        {
+            if (!DiggerManager || !BrushShape)
+            {
+                return false;
+            }
+            float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
+            float SDF = BrushShape->CalculateSDF(
+                WorldPos,
+                Stroke.BrushPosition,
+                Stroke.BrushRadius,
+                Stroke.BrushStrength,
+                Stroke.BrushFalloff,
+                TerrainHeight,
+                true // bDig
+            );
+            return SDF > 0.0f;
+        };
 
+        if (!DiggerManager)
+        {
+            UE_LOG(LogTemp, Error, TEXT("DiggerManager is null! Cannot spawn hole."));
+        }
+        if (!StrokeCopy.IsValid())
+        {
+            UE_LOG(LogTemp, Error, TEXT("Stroke is null! Cannot spawn hole."));
+        }
 
-	    if (!DiggerManager)
-	    {
-		    UE_LOG(LogTemp, Error, TEXT("DiggerManager is null! Cannot spawn hole."));
-	    }
-	    if (!StrokeCopy.IsValid())
-	    {
-		    UE_LOG(LogTemp, Error, TEXT("Stroke is null! Cannot spawn hole."));
-	    }
+        if (!DiggerManager)
+        {
+            UE_LOG(LogTemp, Error, TEXT("DiggerManager is null! Cannot spawn hole."));
+        }
+        else if (!Stroke.IsValid())
+        {
+            UE_LOG(LogTemp, Error, TEXT("Stroke is not valid! Cannot spawn hole."));
+        }
+        else if (!BrushShape)
+        {
+            UE_LOG(LogTemp, Error, TEXT("BrushShape is null! Cannot spawn hole."));
+        }
+        else
+        {
+            // All pointers have been checked now and we can spawn a terrain hole blueprint with the specified stroke.
+            DiggerManager->HandleHoleSpawn(StrokeCopy);
+        }
 
-    	if (!DiggerManager)
-    	{
-    		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null! Cannot spawn hole."));
-    	}
-    	else if (!Stroke.IsValid())
-    	{
-    		UE_LOG(LogTemp, Error, TEXT("Stroke is not valid! Cannot spawn hole."));
-    	}
-    	else if (!BrushShape)
-    	{
-    		UE_LOG(LogTemp, Error, TEXT("BrushShape is null! Cannot spawn hole."));
-    	}
-    	else
-    	{
-    		//All pointers has been checked now and we can spawn a terrain hole blueprint with the specified stroke.
-    		DiggerManager->HandleHoleSpawn(StrokeCopy);
-    	}
-	    
-
-    	
-    	SetDigShellVoxels_Generic(
-			SparseVoxelGrid,
-			BrushBounds,
-			VoxelSize,
-			[&](const FVector& WorldPos) { return DiggerManager->GetLandscapeHeightAt(WorldPos); },
-			IsAir
-		);
+        SetDigShellVoxels_Generic(
+            SparseVoxelGrid,
+            BrushBounds,
+            VoxelSize,
+            [&](const FVector& WorldPos) { return DiggerManager->GetLandscapeHeightAt(WorldPos); },
+            IsAir
+        );
     }
 
-
-	
     MarkDirty();
 
-    UE_LOG(LogTemp, Log, TEXT("ApplyBrushStroke: Modified %d voxels in Chunk %d"), ModifiedVoxels, SectionIndex);
+    if (ModifiedVoxels == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushStroke: No voxels modified by brush stroke in Chunk %d"), SectionIndex);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Log, TEXT("ApplyBrushStroke: Modified %d voxels in Chunk %d"), ModifiedVoxels, SectionIndex);
+    }
 }
-
-
 
 void UVoxelChunk::BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction,
 	const FString& String)
@@ -730,8 +752,8 @@ void UVoxelChunk::ApplyStairsBrush(FVector3d BrushPosition, float Width, float H
     for (int32 Y = MinY; Y <= MaxY; ++Y)
     for (int32 Z = MinZ; Z <= MaxZ; ++Z)
     {
-        if (X < 0 || X >= VoxelsPerChunk || Y < 0 || Y >= VoxelsPerChunk || Z < 0 || Z >= VoxelsPerChunk)
-            continue;
+       // if (X < 0 || X >= VoxelsPerChunk || Y < 0 || Y >= VoxelsPerChunk || Z < 0 || Z >= VoxelsPerChunk)
+          //  continue;
 
         FVector WorldPos = ChunkOrigin + FVector(X, Y, Z) * FVoxelConversion::LocalVoxelSize
                          + FVector(FVoxelConversion::LocalVoxelSize * 0.5f);

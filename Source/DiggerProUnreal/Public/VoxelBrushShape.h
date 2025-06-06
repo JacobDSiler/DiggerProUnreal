@@ -123,6 +123,7 @@ public:
 
 	void SetWorld(UWorld* SetWorld)
 	{
+		UE_LOG(LogTemp, Error, TEXT("Brush shape: Set World used!"));
 		this->World = SetWorld;
 	}
 
