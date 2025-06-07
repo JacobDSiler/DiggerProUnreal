@@ -249,9 +249,9 @@ struct FVoxelConversion
         int32 VoxelsPerChunk = ChunkSize * Subdivisions;
 
         FIntVector ChunkCoords(
-            FMath::RoundToInt((float)GlobalVoxelCoords.X / VoxelsPerChunk),
-            FMath::RoundToInt((float)GlobalVoxelCoords.Y / VoxelsPerChunk),
-            FMath::RoundToInt((float)GlobalVoxelCoords.Z / VoxelsPerChunk)
+            FMath::FloorToInt((float)GlobalVoxelCoords.X / VoxelsPerChunk),
+            FMath::FloorToInt((float)GlobalVoxelCoords.Y / VoxelsPerChunk),
+            FMath::FloorToInt((float)GlobalVoxelCoords.Z / VoxelsPerChunk)
         );
 
         FIntVector LocalCoords(

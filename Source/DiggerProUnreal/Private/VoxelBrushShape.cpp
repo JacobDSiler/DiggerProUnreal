@@ -131,8 +131,7 @@ FHitResult UVoxelBrushShape::GetCameraHitLocation()
 
     // Check if this is a hole blueprint - adjust this condition to match your hole BP detection
     // Option 1: Check by class name
-    if (git status
-        IsHoleBPActor(HitActor))
+    if (IsHoleBPActor(HitActor))
     {
         // This is a hole blueprint, perform complex trace
         return PerformComplexTrace(WorldLocation, End, PlayerController->GetPawn());

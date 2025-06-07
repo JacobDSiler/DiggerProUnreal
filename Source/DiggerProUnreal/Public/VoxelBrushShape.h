@@ -104,6 +104,7 @@ protected:
 	//Dig Setting
 	bool bIsDigging;
 
+public:
 	UFUNCTION(BlueprintCallable, Category = "Brush")
 	FHitResult GetCameraHitLocation();
 

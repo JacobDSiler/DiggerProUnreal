@@ -242,13 +242,15 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrush
     int32 MinZ = FMath::FloorToInt(VoxelCenter.Z - TotalVoxelRadius);
     int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + TotalVoxelRadius);
     
-    // Clamp to chunk bounds
-    MinX = FMath::Max(0, MinX);
-    MaxX = FMath::Min(VoxelsPerChunk - 1, MaxX);
-    MinY = FMath::Max(0, MinY);
-    MaxY = FMath::Min(VoxelsPerChunk - 1, MaxY);
-    MinZ = FMath::Max(0, MinZ);
-    MaxZ = FMath::Min(VoxelsPerChunk - 1, MaxZ);
+    // CORRECTED: Allow full chunk range (0 to VoxelsPerChunk-1) PLUS overflow (-1) on minimum sides
+    // This ensures we can write to the -1 overflow slabs for seamless rendering
+    // while still covering the full positive range of the chunk
+    MinX = FMath::Max(-1, MinX);  // Allow -1 for overflow
+    MaxX = FMath::Min(VoxelsPerChunk, MaxX);  // Allow full positive range + 1 for potential overflow
+    MinY = FMath::Max(-1, MinY);  // Allow -1 for overflow  
+    MaxY = FMath::Min(VoxelsPerChunk, MaxY);  // Allow full positive range + 1 for potential overflow
+    MinZ = FMath::Max(-1, MinZ);  // Allow -1 for overflow
+    MaxZ = FMath::Min(VoxelsPerChunk, MaxZ);  // Allow full positive range + 1 for potential overflow
 
     int32 ModifiedVoxels = 0;
 
@@ -258,13 +260,13 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrush
         {
             for (int32 Z = MinZ; Z <= MaxZ; ++Z)
             {
-                // FIXED: Convert voxel coordinates to world position using the chunk origin
-                // Account for center-aligned chunks by subtracting half chunk size
-                FVector WorldPos = ChunkOrigin + FVector(
-                    (X * VoxelSize) - HalfChunkSize,
-                    (Y * VoxelSize) - HalfChunkSize,
-                    (Z * VoxelSize) - HalfChunkSize
-                );
+            	// FIXED: Convert voxel coordinates to world position using CENTER-ALIGNED voxels
+            	// This matches what your coordinate conversion methods expect
+            	FVector WorldPos = ChunkOrigin + FVector(
+					(X * VoxelSize) - HalfChunkSize + (VoxelSize * 0.5f),  // Add half voxel size for center
+					(Y * VoxelSize) - HalfChunkSize + (VoxelSize * 0.5f),  // Add half voxel size for center
+					(Z * VoxelSize) - HalfChunkSize + (VoxelSize * 0.5f)   // Add half voxel size for center
+				);
 
                 // Skip voxels outside the brush's true shape (including falloff)
                 float Distance = FVector::Dist(WorldPos, Stroke.BrushPosition);
@@ -290,101 +292,47 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrush
                 if (FMath::IsNearlyZero(SDF))
                     continue;
 
+                // Check if this voxel is in the overflow region
+                bool bIsOverflow = (X == -1 || Y == -1 || Z == -1 || 
+                                   X == VoxelsPerChunk || Y == VoxelsPerChunk || Z == VoxelsPerChunk);
+                
                 // IMPORTANT: Special handling for digging below terrain
                 if (Stroke.bDig && !bAboveTerrain)
                 {
                     // For digging below terrain, explicitly set to air
                     // This is crucial for creating cavities below terrain
                     SparseVoxelGrid->SetVoxel(X, Y, Z, FVoxelConversion::SDF_AIR * Stroke.BrushStrength, true);
+                    
+                    // Debug log for overflow voxels
+                    if (bIsOverflow)
+                    {
+                        UE_LOG(LogTemp, Verbose, TEXT("Writing to overflow voxel [%d,%d,%d] in chunk %s - DIG"), 
+                               X, Y, Z, *ChunkCoordinates.ToString());
+                    }
                 }
                 else if (!Stroke.bDig || bAboveTerrain)
                 {
                     // For adding (anywhere) or digging above terrain, use normal SDF
                     SparseVoxelGrid->SetVoxel(X, Y, Z, SDF, Stroke.bDig);
+                    
+                    // Debug log for overflow voxels
+                    if (bIsOverflow)
+                    {
+                        UE_LOG(LogTemp, Verbose, TEXT("Writing to overflow voxel [%d,%d,%d] in chunk %s - ADD"), 
+                               X, Y, Z, *ChunkCoordinates.ToString());
+                    }
                 }
                 
                 ModifiedVoxels++;
             }
         }
     }
-
-    // After setting air voxels, add the shell for dig brushes
-    if (Stroke.bDig)
-    {
-        FBox BrushBounds = FBox::BuildAABB(
-            Stroke.BrushPosition,
-            FVector(Stroke.BrushRadius + Stroke.BrushFalloff)
-        );
-
-        // Make a copy of stroke to use after the auto helper
-        FBrushStroke StrokeCopy = Stroke;
-
-        auto IsAir = [&](const FVector& WorldPos) -> bool
-        {
-            if (!DiggerManager || !BrushShape)
-            {
-                return false;
-            }
-            float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
-            float SDF = BrushShape->CalculateSDF(
-                WorldPos,
-                Stroke.BrushPosition,
-                Stroke.BrushRadius,
-                Stroke.BrushStrength,
-                Stroke.BrushFalloff,
-                TerrainHeight,
-                true // bDig
-            );
-            return SDF > 0.0f;
-        };
-
-        if (!DiggerManager)
-        {
-            UE_LOG(LogTemp, Error, TEXT("DiggerManager is null! Cannot spawn hole."));
-        }
-        if (!StrokeCopy.IsValid())
-        {
-            UE_LOG(LogTemp, Error, TEXT("Stroke is null! Cannot spawn hole."));
-        }
-
-        if (!DiggerManager)
-        {
-            UE_LOG(LogTemp, Error, TEXT("DiggerManager is null! Cannot spawn hole."));
-        }
-        else if (!Stroke.IsValid())
-        {
-            UE_LOG(LogTemp, Error, TEXT("Stroke is not valid! Cannot spawn hole."));
-        }
-        else if (!BrushShape)
-        {
-            UE_LOG(LogTemp, Error, TEXT("BrushShape is null! Cannot spawn hole."));
-        }
-        else
-        {
-            // All pointers have been checked now and we can spawn a terrain hole blueprint with the specified stroke.
-            DiggerManager->HandleHoleSpawn(StrokeCopy);
-        }
-
-        SetDigShellVoxels_Generic(
-            SparseVoxelGrid,
-            BrushBounds,
-            VoxelSize,
-            [&](const FVector& WorldPos) { return DiggerManager->GetLandscapeHeightAt(WorldPos); },
-            IsAir
-        );
-    }
-
-    MarkDirty();
-
-    if (ModifiedVoxels == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushStroke: No voxels modified by brush stroke in Chunk %d"), SectionIndex);
-    }
-    else
-    {
-        UE_LOG(LogTemp, Log, TEXT("ApplyBrushStroke: Modified %d voxels in Chunk %d"), ModifiedVoxels, SectionIndex);
-    }
+    
+    // Log summary of modified voxels including overflow
+    UE_LOG(LogTemp, Log, TEXT("Chunk %s: Modified %d voxels (including overflow region)"), 
+           *ChunkCoordinates.ToString(), ModifiedVoxels);
 }
+
 
 void UVoxelChunk::BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction,
 	const FString& String)
