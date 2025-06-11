@@ -43,108 +43,37 @@ USTRUCT()
 struct FIslandSaveData
 {
     GENERATED_BODY()
-    
+
     UPROPERTY()
-    FVector MeshOrigin;
-    
+    FVector MeshOrigin = FVector::ZeroVector;
+
     UPROPERTY()
     TArray<FVector> Vertices;
-    
+
     UPROPERTY()
     TArray<int32> Triangles;
-    
+
     UPROPERTY()
     TArray<FVector> Normals;
-    
+
     UPROPERTY()
-    bool bEnablePhysics;
+    bool bEnablePhysics = false;
+
+    // Optional but recommended constructor
+    FIslandSaveData()
+        : MeshOrigin(FVector::ZeroVector)
+        , Vertices()
+        , Triangles()
+        , Normals()
+        , bEnablePhysics(false)
+    {}
 };
 
-class UTerrainHoleComponent;
+
 #if WITH_EDITOR
 class FDiggerEdModeToolkit;
 #endif
 
-// Define the FBrushStroke struct
-/*USTRUCT(BlueprintType)
-struct FBrushStroke
-{
-    GENERATED_BODY()
-
-    // Location of the stroke in world space
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    FVector BrushPosition = FVector::ZeroVector;
-
-    // Rotation of the brush stroke
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    FRotator BrushRotation = FRotator::ZeroRotator;
-
-    // Size of the brush stroke
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    float BrushRadius = 100.f;
-
-    // Type of the brush (e.g., Sphere, Cube, Custom)
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    EVoxelBrushType BrushType = EVoxelBrushType::Sphere;
-
-    // Whether this stroke digs (true) or adds (false)
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    bool bDig = true;
-
-    // Length of the brush stroke in world space
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    float BrushLength;
-    
-    // Angle of the brush stroke in degrees
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    float BrushAngle;
-
-    // Offset for the brush stroke as a vector
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    FVector BrushOffset;
-
-    // The flag for using the advanced cube brush
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    bool bUseAdvancedCubeBrush;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    float AdvancedCubeHalfExtentX;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    float AdvancedCubeHalfExtentY;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    float AdvancedCubeHalfExtentZ;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    float TorusInnerRadius;
-    
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    bool bSpiral=false;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    int32 NumSteps=10;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush")
-    float StepDepth;
-    float BrushStrength;
-    float BrushFalloff;
-
-    // Optional: allow pressure sensitivity in the future?
-    // float Intensity = 1.0f;
-
-    FBrushStroke() {}
-
-    FBrushStroke(FVector InPosition, FRotator InRotation, float InRadius, EVoxelBrushType InType, bool bInDig)
-        : BrushPosition(InPosition)
-          , BrushRotation(InRotation)
-          , BrushRadius(InRadius)
-          , BrushType(InType)
-          , bDig(bInDig)
-          , BrushLength(0), BrushAngle(0)
-    {
-    }
-};*/
 
 USTRUCT(BlueprintType)
 struct FIslandData

@@ -13,6 +13,8 @@ public class DiggerProUnreal : ModuleRules
             "Core", 
             "CoreUObject", 
             "Engine", 
+            "UnrealEd",
+            "EditorSubsystem",
             "InputCore", 
             "HeadMountedDisplay", 
             "EnhancedInput", 

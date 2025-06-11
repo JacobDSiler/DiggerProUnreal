@@ -22,8 +22,6 @@ UVoxelChunk::UVoxelChunk()
 	  DiggerManager(nullptr),
 	  SparseVoxelGrid(CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid")))
 {
-	// Initialize the SparseVoxelGrid
-	SparseVoxelGrid->Initialize( this); 
     
 	MarchingCubesGenerator = CreateDefaultSubobject<UMarchingCubes>(TEXT("MarchingCubesGenerator"));
 
@@ -50,6 +48,12 @@ void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerM
 {
 	ChunkCoordinates = InChunkCoordinates;
 	UE_LOG(LogTemp, Error, TEXT("Chunk created at X: %i Y: %i Z: %i"), ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
+	
+	// Now initialize the SparseVoxelGrid with the correct coordinates
+	if (SparseVoxelGrid)
+	{
+		SparseVoxelGrid->Initialize(this);
+	}
 
 	if(!DiggerManager)
 	{
@@ -190,95 +194,129 @@ bool UVoxelChunk::LoadChunkData(const FString& FilePath)
 }
 
 
-// UVoxelChunk.cpp
+
+void UVoxelChunk::WriteToOverflows(const FIntVector& LocalVoxelCoords, 
+                                   int32 StorageX, int32 StorageY, int32 StorageZ, 
+                                   float SDF, bool bDig)
+{
+    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const int32 HalfVoxelsPerChunk = VoxelsPerChunk / 2;
+    
+    // Write to current chunk's overflow regions based on voxel position
+    
+    // Check if voxel is in the -X overflow region (before chunk start)
+    if (LocalVoxelCoords.X < -HalfVoxelsPerChunk) {
+        // Write to -X overflow (storage index 0)
+        SparseVoxelGrid->SetVoxel(0, StorageY, StorageZ, SDF, bDig);
+    }
+    
+    // Check if voxel is in the -Y overflow region  
+    if (LocalVoxelCoords.Y < -HalfVoxelsPerChunk) {
+        // Write to -Y overflow
+        SparseVoxelGrid->SetVoxel(StorageX, 0, StorageZ, SDF, bDig);
+    }
+    
+    // Check if voxel is in the -Z overflow region
+    if (LocalVoxelCoords.Z < -HalfVoxelsPerChunk) {
+        // Write to -Z overflow  
+        SparseVoxelGrid->SetVoxel(StorageX, StorageY, 0, SDF, bDig);
+    }
+    
+    // Handle corner overflow cases
+    if (LocalVoxelCoords.X < -HalfVoxelsPerChunk && LocalVoxelCoords.Y < -HalfVoxelsPerChunk) {
+        SparseVoxelGrid->SetVoxel(0, 0, StorageZ, SDF, bDig);
+    }
+    
+    if (LocalVoxelCoords.X < -HalfVoxelsPerChunk && LocalVoxelCoords.Z < -HalfVoxelsPerChunk) {
+        SparseVoxelGrid->SetVoxel(0, StorageY, 0, SDF, bDig);
+    }
+    
+    if (LocalVoxelCoords.Y < -HalfVoxelsPerChunk && LocalVoxelCoords.Z < -HalfVoxelsPerChunk) {
+        SparseVoxelGrid->SetVoxel(StorageX, 0, 0, SDF, bDig);
+    }
+    
+    // Triple corner overflow
+    if (LocalVoxelCoords.X < -HalfVoxelsPerChunk && 
+        LocalVoxelCoords.Y < -HalfVoxelsPerChunk && 
+        LocalVoxelCoords.Z < -HalfVoxelsPerChunk) {
+        SparseVoxelGrid->SetVoxel(0, 0, 0, SDF, bDig);
+    }
+}
 
 void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrushShape* BrushShape)
 {
-    if (!DiggerManager || !BrushShape)
+    if (!DiggerManager || !BrushShape || !SparseVoxelGrid)
     {
-        UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in UVoxelChunk::ApplyBrushStroke"));
+        UE_LOG(LogTemp, Error, TEXT("Null pointer in UVoxelChunk::ApplyBrushStroke - DiggerManager: %s, BrushShape: %s, SparseVoxelGrid: %s"), 
+               DiggerManager ? TEXT("Valid") : TEXT("NULL"),
+               BrushShape ? TEXT("Valid") : TEXT("NULL"), 
+               SparseVoxelGrid ? TEXT("Valid") : TEXT("NULL"));
         return;
     }
-	
-    if (!BrushShape)
-    {
-        UE_LOG(LogTemp, Error, TEXT("BrushShape is null in UVoxelChunk::ApplyBrushStroke"));
-        return;
-    }
-
-    if (!SparseVoxelGrid)
-    {
-        UE_LOG(LogTemp, Error, TEXT("SparseVoxelGrid is null in ApplyBrushStroke!"));
-        return;
-    }
-
-    // Get chunk origin and voxel size
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
-    VoxelSize = FVoxelConversion::LocalVoxelSize;
-	
     
-    // CRITICAL FIX: Convert brush radius from world units to voxel units
-    float VoxelSpaceRadius = Stroke.BrushRadius / VoxelSize;
-    float VoxelSpaceFalloff = Stroke.BrushFalloff / VoxelSize;
-    float TotalVoxelRadius = VoxelSpaceRadius + VoxelSpaceFalloff;
+    // Get chunk origin and voxel size - cache these values
+    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
+    const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
+    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
+    const float HalfVoxelSize = CachedVoxelSize * 0.5f;
     
-    // FIXED: Convert brush position to local voxel coordinates relative to chunk origin
-    // Since chunks are center-aligned, we need to offset to get 0-based voxel indices
-    FVector LocalBrushPos = Stroke.BrushPosition - ChunkOrigin;
-    int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
-    float HalfChunkSize = (VoxelsPerChunk * VoxelSize) * 0.5f;
+    // Convert brush parameters to voxel space
+    const float VoxelSpaceRadius = Stroke.BrushRadius / CachedVoxelSize;
+    const float VoxelSpaceFalloff = Stroke.BrushFalloff / CachedVoxelSize;
+    const float TotalVoxelRadius = VoxelSpaceRadius + VoxelSpaceFalloff;
     
-    FIntVector VoxelCenter = FIntVector(
-        FMath::FloorToInt((LocalBrushPos.X + HalfChunkSize) / VoxelSize),
-        FMath::FloorToInt((LocalBrushPos.Y + HalfChunkSize) / VoxelSize),
-        FMath::FloorToInt((LocalBrushPos.Z + HalfChunkSize) / VoxelSize)
+    // Convert brush position to local voxel coordinates
+    const FVector LocalBrushPos = Stroke.BrushPosition - ChunkOrigin;
+    const FIntVector VoxelCenter = FIntVector(
+        FMath::FloorToInt((LocalBrushPos.X + HalfChunkSize) / CachedVoxelSize),
+        FMath::FloorToInt((LocalBrushPos.Y + HalfChunkSize) / CachedVoxelSize),
+        FMath::FloorToInt((LocalBrushPos.Z + HalfChunkSize) / CachedVoxelSize)
     );
     
-    // Define the bounding box using voxel-space radius
-    int32 MinX = FMath::FloorToInt(VoxelCenter.X - TotalVoxelRadius);
-    int32 MaxX = FMath::CeilToInt(VoxelCenter.X + TotalVoxelRadius);
-    int32 MinY = FMath::FloorToInt(VoxelCenter.Y - TotalVoxelRadius);
-    int32 MaxY = FMath::CeilToInt(VoxelCenter.Y + TotalVoxelRadius);
-    int32 MinZ = FMath::FloorToInt(VoxelCenter.Z - TotalVoxelRadius);
-    int32 MaxZ = FMath::CeilToInt(VoxelCenter.Z + TotalVoxelRadius);
+    // Calculate bounding box with overflow support
+    const int32 MinX = FMath::Max(-1, FMath::FloorToInt(VoxelCenter.X - TotalVoxelRadius));
+    const int32 MaxX = FMath::Min(VoxelsPerChunk, FMath::CeilToInt(VoxelCenter.X + TotalVoxelRadius));
+    const int32 MinY = FMath::Max(-1, FMath::FloorToInt(VoxelCenter.Y - TotalVoxelRadius));
+    const int32 MaxY = FMath::Min(VoxelsPerChunk, FMath::CeilToInt(VoxelCenter.Y + TotalVoxelRadius));
+    const int32 MinZ = FMath::Max(-1, FMath::FloorToInt(VoxelCenter.Z - TotalVoxelRadius));
+    const int32 MaxZ = FMath::Min(VoxelsPerChunk, FMath::CeilToInt(VoxelCenter.Z + TotalVoxelRadius));
     
-    // CORRECTED: Allow full chunk range (0 to VoxelsPerChunk-1) PLUS overflow (-1) on minimum sides
-    // This ensures we can write to the -1 overflow slabs for seamless rendering
-    // while still covering the full positive range of the chunk
-    MinX = FMath::Max(-1, MinX);  // Allow -1 for overflow
-    MaxX = FMath::Min(VoxelsPerChunk, MaxX);  // Allow full positive range + 1 for potential overflow
-    MinY = FMath::Max(-1, MinY);  // Allow -1 for overflow  
-    MaxY = FMath::Min(VoxelsPerChunk, MaxY);  // Allow full positive range + 1 for potential overflow
-    MinZ = FMath::Max(-1, MinZ);  // Allow -1 for overflow
-    MaxZ = FMath::Min(VoxelsPerChunk, MaxZ);  // Allow full positive range + 1 for potential overflow
-
+    // Pre-calculate values for optimization
+    const float BrushRadiusPlusFalloff = Stroke.BrushRadius + Stroke.BrushFalloff;
+    const float BrushRadiusPlusFalloffSq = BrushRadiusPlusFalloff * BrushRadiusPlusFalloff;
+    const float SDF_AIR_Strength = FVoxelConversion::SDF_AIR * Stroke.BrushStrength;
+    
     int32 ModifiedVoxels = 0;
-
+    
     for (int32 X = MinX; X <= MaxX; ++X)
     {
         for (int32 Y = MinY; Y <= MaxY; ++Y)
         {
             for (int32 Z = MinZ; Z <= MaxZ; ++Z)
             {
-            	// FIXED: Convert voxel coordinates to world position using CENTER-ALIGNED voxels
-            	// This matches what your coordinate conversion methods expect
-            	FVector WorldPos = ChunkOrigin + FVector(
-					(X * VoxelSize) - HalfChunkSize + (VoxelSize * 0.5f),  // Add half voxel size for center
-					(Y * VoxelSize) - HalfChunkSize + (VoxelSize * 0.5f),  // Add half voxel size for center
-					(Z * VoxelSize) - HalfChunkSize + (VoxelSize * 0.5f)   // Add half voxel size for center
-				);
-
-                // Skip voxels outside the brush's true shape (including falloff)
-                float Distance = FVector::Dist(WorldPos, Stroke.BrushPosition);
-                if (Distance > Stroke.BrushRadius + Stroke.BrushFalloff)
+                // Convert voxel coordinates to center-aligned world position
+                const FVector WorldPos = ChunkOrigin + FVector(
+                    (X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+                    (Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+                    (Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
+                );
+                
+                // Fast distance check using squared distance to avoid sqrt
+                const FVector Delta = WorldPos - Stroke.BrushPosition;
+                const float DistanceSq = Delta.SizeSquared();
+                if (DistanceSq > BrushRadiusPlusFalloffSq)
                     continue;
-
-                // Get terrain height at this position
-                float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
-                bool bAboveTerrain = WorldPos.Z >= TerrainHeight;
-
-                // Calculate the SDF value for this voxel using the brush shape
-                float SDF = BrushShape->CalculateSDF(
+                
+                // Only calculate actual distance when needed
+                const float Distance = FMath::Sqrt(DistanceSq);
+                
+                // Get terrain height and check position
+                const float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
+                const bool bAboveTerrain = WorldPos.Z >= TerrainHeight;
+                
+                // Calculate SDF value
+                const float SDF = BrushShape->CalculateSDF(
                     WorldPos,
                     Stroke.BrushPosition,
                     Stroke.BrushRadius,
@@ -287,40 +325,21 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrush
                     TerrainHeight,
                     Stroke.bDig
                 );
-
+                
                 // Skip if SDF is not changing anything
                 if (FMath::IsNearlyZero(SDF))
                     continue;
-
-                // Check if this voxel is in the overflow region
-                bool bIsOverflow = (X == -1 || Y == -1 || Z == -1 || 
-                                   X == VoxelsPerChunk || Y == VoxelsPerChunk || Z == VoxelsPerChunk);
                 
-                // IMPORTANT: Special handling for digging below terrain
+                // Apply voxel modification based on operation type
                 if (Stroke.bDig && !bAboveTerrain)
                 {
-                    // For digging below terrain, explicitly set to air
-                    // This is crucial for creating cavities below terrain
-                    SparseVoxelGrid->SetVoxel(X, Y, Z, FVoxelConversion::SDF_AIR * Stroke.BrushStrength, true);
-                    
-                    // Debug log for overflow voxels
-                    if (bIsOverflow)
-                    {
-                        UE_LOG(LogTemp, Verbose, TEXT("Writing to overflow voxel [%d,%d,%d] in chunk %s - DIG"), 
-                               X, Y, Z, *ChunkCoordinates.ToString());
-                    }
+                    // Digging below terrain - explicitly set to air
+                    SparseVoxelGrid->SetVoxel(X, Y, Z, SDF_AIR_Strength, true);
                 }
                 else if (!Stroke.bDig || bAboveTerrain)
                 {
-                    // For adding (anywhere) or digging above terrain, use normal SDF
+                    // Adding (anywhere) or digging above terrain - use normal SDF
                     SparseVoxelGrid->SetVoxel(X, Y, Z, SDF, Stroke.bDig);
-                    
-                    // Debug log for overflow voxels
-                    if (bIsOverflow)
-                    {
-                        UE_LOG(LogTemp, Verbose, TEXT("Writing to overflow voxel [%d,%d,%d] in chunk %s - ADD"), 
-                               X, Y, Z, *ChunkCoordinates.ToString());
-                    }
                 }
                 
                 ModifiedVoxels++;
@@ -328,9 +347,14 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrush
         }
     }
     
-    // Log summary of modified voxels including overflow
-    UE_LOG(LogTemp, Log, TEXT("Chunk %s: Modified %d voxels (including overflow region)"), 
-           *ChunkCoordinates.ToString(), ModifiedVoxels);
+    // Optional: Log performance info in debug builds
+    #if UE_BUILD_DEBUG
+    if (ModifiedVoxels > 0)
+    {
+        UE_LOG(LogTemp, Verbose, TEXT("ApplyBrushStroke modified %d voxels in chunk %s"), 
+               ModifiedVoxels, *ChunkCoordinates.ToString());
+    }
+    #endif
 }
 
 

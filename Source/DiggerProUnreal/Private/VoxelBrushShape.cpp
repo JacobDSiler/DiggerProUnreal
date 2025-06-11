@@ -75,95 +75,27 @@ UWorld* UVoxelBrushShape::GetSafeWorld() const
 
 FHitResult UVoxelBrushShape::GetCameraHitLocation()
 {
-    if (!World)
-    {
-        SetWorld(GetSafeWorld());
-    }
+    
+    if (!World) return FHitResult();
 
-    if (!World)
-    {
-        UE_LOG(LogTemp, Error, TEXT("World is null in GetCameraHitLocation!"));
-        return FHitResult();
-    }
+    APlayerController* PC = World->GetFirstPlayerController();
+    if (!PC) return FHitResult();
 
-    // Early exit if no player controller
-    APlayerController* PlayerController = UGameplayStatics::GetPlayerController(World, 0);
-    if (!PlayerController)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("PlayerController is null in GetCameraHitLocation!"));
-        return FHitResult();
-    }
-
-    // Get mouse ray
     FVector WorldLocation, WorldDirection;
-    if (!PlayerController->DeprojectMousePositionToWorld(WorldLocation, WorldDirection))
+    if (PC->DeprojectMousePositionToWorld(WorldLocation, WorldDirection))
     {
-        UE_LOG(LogTemp, Warning, TEXT("DeprojectMousePositionToWorld failed!"));
-        return FHitResult();
-    }
-    FVector End = WorldLocation + (WorldDirection * 10000.0f);
+        FVector TraceStart = WorldLocation;
+        FVector TraceEnd = TraceStart + WorldDirection * 10000.f;
 
-    // Perform initial simple trace
-    FHitResult HitResult;
-    FCollisionQueryParams QueryParams;
-    QueryParams.bTraceComplex = false; // Simple trace first
-    QueryParams.AddIgnoredActor(PlayerController->GetPawn());
-
-    bool bHit = World->LineTraceSingleByChannel(
-        HitResult,
-        WorldLocation,
-        End,
-        ECC_Visibility, // or whatever channel you use
-        QueryParams
-    );
-
-    if (!bHit)
-    {
-        return FHitResult(); // No hit at all
+        FHitResult Hit;
+        FCollisionQueryParams Params;
+        GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params);
+        return Hit;
     }
 
-    // Check if the hit actor is a hole blueprint
-    AActor* HitActor = HitResult.GetActor();
-    if (!HitActor)
-    {
-        return HitResult; // Hit something but no actor, return simple trace result
-    }
-
-    // Check if this is a hole blueprint - adjust this condition to match your hole BP detection
-    // Option 1: Check by class name
-    if (IsHoleBPActor(HitActor))
-    {
-        // This is a hole blueprint, perform complex trace
-        return PerformComplexTrace(WorldLocation, End, PlayerController->GetPawn());
-    }
-
-    // Option 2: Check by tag (if your hole BPs have a specific tag)
-    /*
-    if (HitActor->Tags.Contains(FName("HoleBlueprint")))
-    {
-        return PerformComplexTrace(WorldLocation, End, PlayerController->GetPawn());
-    }
-    */
-
-    // Option 3: Check by interface or component (if your hole BPs implement a specific interface)
-    /*
-    if (HitActor->GetClass()->ImplementsInterface(UYourHoleInterface::StaticClass()))
-    {
-        return PerformComplexTrace(WorldLocation, End, PlayerController->GetPawn());
-    }
-    */
-
-    // Option 4: Check by component (if your hole BPs have a specific component)
-    /*
-    if (HitActor->FindComponentByClass<UYourHoleComponent>())
-    {
-        return PerformComplexTrace(WorldLocation, End, PlayerController->GetPawn());
-    }
-    */
-
-    // Not a hole blueprint, return the simple trace result
-    return HitResult;
+    return FHitResult();
 }
+
 
 FHitResult UVoxelBrushShape::PerformComplexTrace(const FVector& Start, const FVector& End, AActor* IgnoredActor)
 {

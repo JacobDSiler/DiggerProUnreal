@@ -1,4 +1,5 @@
 #include "DiggerManager.h"
+
 #include "CoreMinimal.h"
 
 // Voxel & Mesh Systems
@@ -15,15 +16,15 @@
 #include "LandscapeProxy.h"
 
 // Procedural & Static Meshes
-#include "ProceduralMeshComponent.h"
 #include "MeshDescription.h"
+#include "ProceduralMeshComponent.h"
 #include "StaticMeshAttributes.h"
 #include "StaticMeshResources.h"
 #include "Engine/StaticMesh.h"
 
 // Engine Systems
-#include "Engine/World.h"
 #include "TimerManager.h"
+#include "Engine/World.h"
 
 // Async & Performance
 #include "Async/Async.h"
@@ -49,7 +50,9 @@
 #include "Rendering/StaticMeshVertexBuffer.h"
 
 // UObject Utilities
+#include "EditorSupportDelegates.h"
 #include "EngineUtils.h"
+#include "Subsystems/EditorActorSubsystem.h"
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/Package.h"
 #include "Voxel/BrushShapes/CubeBrushShape.h"
@@ -61,6 +64,7 @@
 #include "Editor.h"
 #include "ScopedTransaction.h"
 #include "Engine/Selection.h"
+#include "Editor/EditorEngine.h"
 
 
 class Editor;
@@ -153,6 +157,9 @@ void ADiggerManager::PostInitProperties()
 // In ADiggerManager.cpp
 void ADiggerManager::InitializeBrushShapes()
 {
+    //Set the world in ActiveBrush
+    ActiveBrush->SetWorld(GetWorld());
+    
     BrushShapeMap.Empty();
     BrushShapeMap.Add(EVoxelBrushType::Sphere, NewObject<USphereBrushShape>(this));
     BrushShapeMap.Add(EVoxelBrushType::Cube, NewObject<UCubeBrushShape>(this));
@@ -179,81 +186,28 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
         return;
     }
     
-    // Make sure our static conversion class is initialized
     if (FVoxelConversion::LocalVoxelSize <= 0.0f)
     {
-        UE_LOG(LogTemp, Error, TEXT("VoxelConversion not initialized! Using default values."));
         FVoxelConversion::InitFromConfig(8, 4, 100.0f, FVector::ZeroVector);
     }
 
-    // ROBUST CHUNK SELECTION: Use a more conservative approach to ensure ALL affected chunks are included
-    // The brush effect radius is the maximum distance where voxels can be modified
+    // Handle hole spawn ONCE per brush stroke, before processing chunks
+    if (BrushStroke.bDig)
+    {
+        HandleHoleSpawn(BrushStroke);
+    }
+
     float BrushEffectRadius = BrushStroke.BrushRadius + BrushStroke.BrushFalloff;
-    
-    // Calculate chunk size in world units
     float ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::LocalVoxelSize;
-    
-    // CRITICAL: Add enough padding to guarantee we don't miss any chunks
-    // We need to account for the diagonal distance across a chunk plus some safety margin
     float ChunkDiagonal = ChunkWorldSize * 1.732f; // sqrt(3) for 3D diagonal
     float SafetyPadding = BrushEffectRadius + ChunkDiagonal;
-    
-    // Create expanded bounding box
+
     FVector Min = BrushStroke.BrushPosition - FVector(SafetyPadding);
     FVector Max = BrushStroke.BrushPosition + FVector(SafetyPadding);
 
-    // Convert to chunk coordinates
     FIntVector MinChunk = FVoxelConversion::WorldToChunk(Min);
     FIntVector MaxChunk = FVoxelConversion::WorldToChunk(Max);
-    
-    // ALTERNATIVE APPROACH: Calculate chunk range directly from brush radius
-    // This ensures we definitely get all chunks that could be touched
-    int32 ChunkRadiusX = FMath::CeilToInt(SafetyPadding / ChunkWorldSize) + 1;
-    int32 ChunkRadiusY = FMath::CeilToInt(SafetyPadding / ChunkWorldSize) + 1;
-    int32 ChunkRadiusZ = FMath::CeilToInt(SafetyPadding / ChunkWorldSize) + 1;
-    
-    FIntVector BrushCenterChunk = FVoxelConversion::WorldToChunk(BrushStroke.BrushPosition);
-    
-    // Use the more conservative of the two approaches
-    FIntVector DirectMinChunk = BrushCenterChunk - FIntVector(ChunkRadiusX, ChunkRadiusY, ChunkRadiusZ);
-    FIntVector DirectMaxChunk = BrushCenterChunk + FIntVector(ChunkRadiusX, ChunkRadiusY, ChunkRadiusZ);
-    
-    MinChunk.X = FMath::Min(MinChunk.X, DirectMinChunk.X);
-    MinChunk.Y = FMath::Min(MinChunk.Y, DirectMinChunk.Y);
-    MinChunk.Z = FMath::Min(MinChunk.Z, DirectMinChunk.Z);
-    
-    MaxChunk.X = FMath::Max(MaxChunk.X, DirectMaxChunk.X);
-    MaxChunk.Y = FMath::Max(MaxChunk.Y, DirectMaxChunk.Y);
-    MaxChunk.Z = FMath::Max(MaxChunk.Z, DirectMaxChunk.Z);
 
-    // Debug output - extra verbose for diagnosing issues
-    UE_LOG(LogTemp, Warning, TEXT("--------------------------------------------"));
-    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: BrushPosition=%s, Radius=%f, Falloff=%f"),
-           *BrushStroke.BrushPosition.ToString(), BrushStroke.BrushRadius, BrushStroke.BrushFalloff);
-    UE_LOG(LogTemp, Warning, TEXT("Brush Effect Radius: %f, Safety Padding: %f, Chunk World Size: %f"), 
-           BrushEffectRadius, SafetyPadding, ChunkWorldSize);
-    UE_LOG(LogTemp, Warning, TEXT("Brush Center Chunk: %s"), *BrushCenterChunk.ToString());
-    UE_LOG(LogTemp, Warning, TEXT("Chunk Radius: [%d,%d,%d]"), ChunkRadiusX, ChunkRadiusY, ChunkRadiusZ);
-    UE_LOG(LogTemp, Warning, TEXT("Min World Pos: %s, Max World Pos: %s"),
-           *Min.ToString(), *Max.ToString());
-    UE_LOG(LogTemp, Warning, TEXT("Final Affected Chunks: X=[%d,%d], Y=[%d,%d], Z=[%d,%d]"),
-           MinChunk.X, MaxChunk.X, MinChunk.Y, MaxChunk.Y, MinChunk.Z, MaxChunk.Z);
-    UE_LOG(LogTemp, Warning, TEXT("Total chunks to process: %d"), 
-           (MaxChunk.X - MinChunk.X + 1) * (MaxChunk.Y - MinChunk.Y + 1) * (MaxChunk.Z - MinChunk.Z + 1));
-    UE_LOG(LogTemp, Warning, TEXT("VoxelConversion Config: ChunkSize=%d, Subs=%d, GridSize=%f, VoxelSize=%f"),
-           FVoxelConversion::ChunkSize, FVoxelConversion::Subdivisions,
-           FVoxelConversion::TerrainGridSize, FVoxelConversion::LocalVoxelSize);
-
-    // Show brush center location in voxel space
-    FIntVector BrushChunk = FVoxelConversion::WorldToChunk(BrushStroke.BrushPosition);
-    FIntVector BrushLocalVoxel = FVoxelConversion::WorldToLocalVoxel(BrushStroke.BrushPosition);
-    UE_LOG(LogTemp, Warning, TEXT("Brush center is in chunk %s at local voxel %s"),
-           *BrushChunk.ToString(), *BrushLocalVoxel.ToString());
-
-    int32 TotalChunksProcessed = 0;
-    int32 ChunksWithModifications = 0;
-
-    // Loop over all affected chunks
     for (int32 X = MinChunk.X; X <= MaxChunk.X; ++X)
     {
         for (int32 Y = MinChunk.Y; Y <= MaxChunk.Y; ++Y)
@@ -261,38 +215,14 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
             for (int32 Z = MinChunk.Z; Z <= MaxChunk.Z; ++Z)
             {
                 FIntVector ChunkCoords(X, Y, Z);
-                
-                // SIMPLIFIED: Remove the pre-filtering for now to ensure ALL chunks in range are processed
-                // The distance check might be incorrectly excluding chunks that should be affected
-                TotalChunksProcessed++;
-                
                 if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
                 {
-                    // Calculate distance for logging purposes
-                    FVector ChunkCenter = FVoxelConversion::ChunkToWorld(ChunkCoords);
-                    float DistanceToChunk = FVector::Dist(BrushStroke.BrushPosition, ChunkCenter);
-                    
-                    UE_LOG(LogTemp, Verbose, TEXT("Processing chunk %s (distance to center: %f)"), 
-                           *ChunkCoords.ToString(), DistanceToChunk);
-                    
-                    // Always apply the brush - let the individual chunk method handle the filtering
                     Chunk->ApplyBrushStroke(BrushStroke, ActiveBrushShape);
-                    Chunk->MarkDirty(); // Always mark dirty since we can't easily track changes here
-                    ChunksWithModifications++; // Count all processed chunks for now
-                }
-                else
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("Failed to get or create chunk at %s"), *ChunkCoords.ToString());
                 }
             }
         }
     }
-
-    UE_LOG(LogTemp, Warning, TEXT("Brush application complete: %d chunks processed, %d chunks modified"), 
-           TotalChunksProcessed, ChunksWithModifications);
-    UE_LOG(LogTemp, Warning, TEXT("--------------------------------------------"));
 }
-
 
 
 void ADiggerManager::SetVoxelAtWorldPosition(const FVector& WorldPos, float Value)
@@ -1886,6 +1816,7 @@ FVector ADiggerManager::GetLandscapeNormalAt(const FVector& WorldPosition)
     return Normal;
 }
 
+
 UWorld* ADiggerManager::GetSafeWorld() const
 {
 #if WITH_EDITOR
@@ -1899,108 +1830,100 @@ UWorld* ADiggerManager::GetSafeWorld() const
 
 void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 {
+    UE_LOG(LogTemp, Warning, TEXT("HandleHoleSpawn Called! Stand by..."));
     if (!HoleBP)
     {
-        UE_LOG(LogTemp, Error, TEXT("HoleBP is not set in ADiggerManager!"));
+        UE_LOG(LogTemp, Error, TEXT("HoleBP is not assigned!"));
         return;
     }
 
-    if (!BrushShape)
+    UWorld* CurrentWorld = GetWorld();
+    if (!CurrentWorld)
     {
-        UE_LOG(LogTemp, Error, TEXT("BrushShape is null in HandleHoleSpawn!"));
+        UE_LOG(LogTemp, Error, TEXT("Invalid World in SpawnHoleAtBrushLocation!"));
         return;
     }
 
-    // Use the safer raycast method that performs complex trace when hitting existing holes
-    FHitResult Hit = BrushShape->GetCameraHitLocation();
-
-    FVector SpawnLocation = Stroke.BrushPosition; // Default to stroke position
+    FVector SpawnLocation = Stroke.BrushPosition;
     FRotator SpawnRotation = Stroke.BrushRotation;
-    FVector SpawnScale = FVector(Stroke.BrushRadius/2);
+    FVector SpawnScale = FVector(Stroke.BrushRadius / 50.0f);
 
-    // Only use hit location if we got a valid blocking hit
-    if (Hit.bBlockingHit && Hit.Location != FVector::ZeroVector)
+    // Avoid zero-location spawns
+    if (SpawnLocation.IsNearlyZero())
     {
-        SpawnLocation = Hit.Location;
-        
-        // If we hit something, use the surface normal to orient the hole properly
-        if (Hit.Normal != FVector::ZeroVector)
-        {
-            SpawnRotation = FRotationMatrix::MakeFromZ(Hit.Normal).Rotator();
-        }
-        
-        UE_LOG(LogTemp, Log, TEXT("Using hit location for hole spawn: %s with normal: %s"), 
-               *SpawnLocation.ToString(), *Hit.Normal.ToString());
-    }
-    else
-    {
-        UE_LOG(LogTemp, Log, TEXT("Using stroke position for hole spawn: %s"), *SpawnLocation.ToString());
+        UE_LOG(LogTemp, Warning, TEXT("Spawn location near origin, adjusting upward."));
+        SpawnLocation.Z = 100.f;
     }
 
-    // Debug the spawn parameters
-    UE_LOG(LogTemp, Log, TEXT("Spawning HoleBP: %s"), HoleBP ? *HoleBP->GetName() : TEXT("NULL"));
-    UE_LOG(LogTemp, Log, TEXT("Spawn Location: %s"), *SpawnLocation.ToString());
-    UE_LOG(LogTemp, Log, TEXT("Spawn Rotation: %s"), *SpawnRotation.ToString());
-    UE_LOG(LogTemp, Log, TEXT("Spawn Scale: %s"), *SpawnScale.ToString());
-
-    // Use your existing GetSafeWorld method that handles both editor and PIE
-    if(!World)
-        World = GetSafeWorld();
-    
-    if (!World)
-    {
-        UE_LOG(LogTemp, Error, TEXT("GetSafeWorld() returned null in HandleHoleSpawn!"));
-        return;
-    }
-    
-    UE_LOG(LogTemp, Log, TEXT("Using world: %s"), *World->GetName());
-
-    FActorSpawnParameters SpawnParams;
-    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-    
     AActor* SpawnedHole = nullptr;
-    
+
+    UE_LOG(LogTemp, Warning, TEXT("About to spawn at location: %s"), *SpawnLocation.ToString());
+
 #if WITH_EDITOR
-    if (GIsEditor && !GIsPlayInEditorWorld)
+    if (GIsEditor && !GWorld->HasBegunPlay())
     {
-        // In editor mode, use transactional spawning
-        const FScopedTransaction Transaction(NSLOCTEXT("DiggerManager", "SpawnHole", "Spawn Hole"));
-        World->Modify();
+        UE_LOG(LogTemp, Warning, TEXT("Using editor spawn path"));
         
-        SpawnedHole = World->SpawnActor<AActor>(HoleBP, SpawnLocation, SpawnRotation, SpawnParams);
-        
-        if (SpawnedHole)
+        if (GEditor && GEditor->GetEditorWorldContext().World())
         {
-            // Mark the actor as transactional for undo/redo
-            SpawnedHole->Modify();
-            SpawnedHole->SetFlags(RF_Transactional);
+            UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
             
-            // Register with editor for proper cleanup
-            GEditor->SelectNone(false, true);
-            GEditor->SelectActor(SpawnedHole, true, false);
+            FActorSpawnParameters SpawnParams;
+            SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+            SpawnParams.bNoFail = true;
+            
+            // Spawn using the standard method with separate location and rotation
+            SpawnedHole = EditorWorld->SpawnActor<AActor>(HoleBP, SpawnLocation, SpawnRotation, SpawnParams);
+            
+            if (SpawnedHole)
+            {
+                // Set scale after spawning
+                SpawnedHole->SetActorScale3D(SpawnScale);
+                
+                // Set label using the actor's method, not the subsystem
+                FString NewLabel = FString::Printf(TEXT("HoleBP_%d"), FMath::RandRange(0, 999999));
+                SpawnedHole->SetActorLabel(NewLabel);
+                
+                // Mark for undo/redo
+                SpawnedHole->Modify();
+                
+                UE_LOG(LogTemp, Warning, TEXT("Successfully spawned in editor"));
+            }
         }
     }
     else
 #endif
     {
-        // In PIE or packaged game, use normal spawning
-        SpawnedHole = World->SpawnActor<AActor>(HoleBP, SpawnLocation, SpawnRotation, SpawnParams);
+        UE_LOG(LogTemp, Warning, TEXT("Using PIE/Runtime spawn path"));
+        
+        FHitResult HitResult = ActiveBrush->GetCameraHitLocation();
+        if (HitResult.bBlockingHit || HitResult.Location != FVector::ZeroVector)
+        {
+            SpawnLocation = HitResult.Location;
+            SpawnRotation = FRotationMatrix::MakeFromZ(HitResult.ImpactNormal.GetSafeNormal()).Rotator();
+        }
+        
+        FActorSpawnParameters SpawnParams;
+        SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        SpawnParams.bNoFail = true;
+        SpawnedHole = CurrentWorld->SpawnActor<AActor>(HoleBP, SpawnLocation, SpawnRotation, SpawnParams);
+        
+        if (SpawnedHole)
+        {
+            SpawnedHole->SetActorScale3D(SpawnScale);
+        }
     }
 
     if (SpawnedHole)
     {
-        // Set scale based on brush radius
-        SpawnedHole->SetActorScale3D(SpawnScale);
-        UE_LOG(LogTemp, Log, TEXT("Successfully spawned hole: %s at: %s with scale: %s"), 
-               *SpawnedHole->GetName(), *SpawnLocation.ToString(), *SpawnScale.ToString());
+        UE_LOG(LogTemp, Log, TEXT("Successfully spawned HoleBP at %s with scale %s"), 
+               *SpawnLocation.ToString(), *SpawnScale.ToString());
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to spawn hole at location: %s"), *SpawnLocation.ToString());
-        UE_LOG(LogTemp, Error, TEXT("Check: 1) HoleBP is valid 2) World is valid 3) Location is not in solid geometry"));
+        UE_LOG(LogTemp, Error, TEXT("Failed to spawn HoleBP at %s"), *SpawnLocation.ToString());
     }
 }
-
 
 
 void ADiggerManager::DuplicateLandscape(ALandscapeProxy* Landscape)

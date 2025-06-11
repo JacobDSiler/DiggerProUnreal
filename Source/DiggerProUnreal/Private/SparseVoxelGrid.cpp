@@ -835,21 +835,27 @@ void USparseVoxelGrid::RenderVoxels() {
     if (VoxelData.IsEmpty()) {
         UE_LOG(LogTemp, Warning, TEXT("VoxelData is empty, no voxels to render!"));
         return;
-    } else {
-        UE_LOG(LogTemp, Warning, TEXT("VoxelData contains %d voxels."), VoxelData.Num());
     }
 
-    const float HalfVoxelSize = FVoxelConversion::LocalVoxelSize / 2.0f;
+    // Get the parent chunk coordinates
+    FIntVector ChunkCoords = GetParentChunkCoordinates();
+    
+    UE_LOG(LogTemp, Warning, TEXT("Rendering voxels for chunk %s"), *ChunkCoords.ToString());
 
+    // Render each voxel
     for (const auto& Voxel : VoxelData) {
-        const FIntVector VoxelCoords = Voxel.Key;
+        const FIntVector& LocalVoxelCoords = Voxel.Key;
         const FVoxelData& VoxelDataValue = Voxel.Value;
 
-        // Convert voxel coordinates to world space using the voxel conversion utility
-        const FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(VoxelCoords);
-
-        // Draw at the center of the voxel (half size offset from min corner)
-        FVector Center = FVoxelConversion::ChunkToWorld(GetParentChunkCoordinates()) +FVoxelConversion::LocalVoxelToWorld(VoxelCoords) + FVector(FVoxelConversion::LocalVoxelSize / 2) + DebugRenderOffset;
+        // Convert local voxel coordinates to global voxel coordinates
+        FIntVector GlobalVoxelCoords = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(
+            ChunkCoords, 
+            LocalVoxelCoords
+        );
+        
+        // Convert global voxel coordinates to world position
+        FVector WorldPosition = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(GlobalVoxelCoords);
+        FVector Center = WorldPosition + DebugRenderOffset;
 
         const float SDFValue = VoxelDataValue.SDFValue;
 
@@ -862,11 +868,25 @@ void USparseVoxelGrid::RenderVoxels() {
             VoxelColor = FColor::Yellow; // Surface
         }
 
-        // Draw the debug cube for the voxel
-        DrawDebugBox(World, Center, FVector(HalfVoxelSize), FQuat::Identity, VoxelColor, false, 15.f, 0, 2);
+        DrawDebugBox(World, 
+                    Center + FVector(FVoxelConversion::LocalVoxelSize / 2.0f), 
+                    FVector(FVoxelConversion::LocalVoxelSize / 2.0f), 
+                    FQuat::Identity, 
+                    VoxelColor, 
+                    false, 
+                    15.f, 
+                    0, 
+                    2);
+                    
+        DrawDebugPoint(World, 
+                      Center + FVector(FVoxelConversion::LocalVoxelSize / 2.0f), 
+                      2.0f, 
+                      VoxelColor, 
+                      false, 
+                      15.f, 
+                      0);
 
-        // Optionally draw a point at the center of the voxel
-        DrawDebugPoint(World, Center, 2.0f, VoxelColor, false, 15.f, 0);
+        UE_LOG(LogTemp, Warning, TEXT("Voxel: Local %s -> Global %s -> World %s"), 
+               *LocalVoxelCoords.ToString(), *GlobalVoxelCoords.ToString(), *Center.ToString());
     }
 }
-

@@ -34,6 +34,11 @@ public:
 
     // Brush application
     void ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrushShape* BrushShape);
+    void WriteToOverflows(const FIntVector& LocalVoxelCoords, int32 StorageX, int32 StorageY, int32 StorageZ, float SDF,
+                          bool bDig);
+    void WriteToNeighborOverflows(const FIntVector& LocalVoxelCoords, int32 StorageX, int32 StorageY, int32 StorageZ,
+                                  float SDF, bool bDig);
+    UVoxelChunk* GetNeighborChunk(const FIntVector& Offset);
 
     // Update functions
     UFUNCTION(BlueprintCallable, Category  =Custom)

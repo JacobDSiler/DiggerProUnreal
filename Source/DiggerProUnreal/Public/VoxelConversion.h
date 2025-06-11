@@ -70,27 +70,83 @@ struct FVoxelConversion
      * @param WorldPos - Position in world space
      * @return Integer coordinates of the chunk containing the position
      */
-    static FIntVector WorldToChunk(const FVector& WorldPos)
+    /**
+  * Converts a world position to chunk coordinates.
+  * Uses FloorToInt for consistent chunk boundary assignment.
+  * 
+  * @param WorldPos - Position in world space
+  * @return Integer coordinates of the chunk containing the position
+  */
+static FIntVector WorldToChunk(const FVector& WorldPos)
+{
+    const FVector LocalizedPos = WorldPos - Origin;
+    
+    // KEEP RoundToInt since you've verified this works visually
+    const int32 X = FMath::RoundToInt(LocalizedPos.X / ChunkWorldSize);
+    const int32 Y = FMath::RoundToInt(LocalizedPos.Y / ChunkWorldSize);
+    const int32 Z = FMath::RoundToInt(LocalizedPos.Z / ChunkWorldSize);
+    
+    return FIntVector(X, Y, Z);
+}
+
+/**
+ * FIXED: Convert world position to CENTER-ALIGNED global voxel coordinates
+ * This makes voxels consistent with your center-aligned chunk system
+ */
+static FIntVector WorldToGlobalVoxel_CenterAligned(const FVector& WorldPos)
+{
+    const FVector LocalizedPos = WorldPos - Origin;
+    
+    // Use RoundToInt to match your chunk alignment method
+    return FIntVector(
+        FMath::RoundToInt(LocalizedPos.X / LocalVoxelSize),
+        FMath::RoundToInt(LocalizedPos.Y / LocalVoxelSize),
+        FMath::RoundToInt(LocalizedPos.Z / LocalVoxelSize)
+    );
+}
+
+/**
+ * FIXED: Convert CENTER-ALIGNED global voxel coordinates to world position
+ */
+static FVector GlobalVoxelToWorld_CenterAligned(const FIntVector& GlobalVoxelCoords)
+{
+    // Since both chunks and voxels use center alignment, this is simple
+    return Origin + FVector(GlobalVoxelCoords) * LocalVoxelSize;
+}
+
+/**
+ * FIXED: Convert center-aligned global voxel to chunk and local voxel
+ */
+    static void GlobalVoxelToChunkAndLocal_CenterAligned(const FIntVector& GlobalVoxelCoords,
+                                                        FIntVector& OutChunkCoords,
+                                                        FIntVector& OutLocalVoxel)
     {
-        
-        // Localized position relative to grid origin
-        const FVector LocalizedPos = WorldPos - Origin;
-        
-        // Divide by chunk world size to get chunk coordinates
-        const int32 X = FMath::RoundToInt(LocalizedPos.X / ChunkWorldSize);
-        const int32 Y = FMath::RoundToInt(LocalizedPos.Y / ChunkWorldSize);
-        const int32 Z = FMath::RoundToInt(LocalizedPos.Z / ChunkWorldSize);
-        
-        const FIntVector ChunkCoords(X, Y, Z);
-        
-        // Calculate chunk center for logging
-        const FVector ChunkCenter = Origin + FVector(ChunkCoords) * ChunkWorldSize;
-        
-        UE_LOG(LogTemp, Warning, TEXT("[WorldToChunk] WorldPos: %s, LocalizedPos: %s, ChunkCoords: %s, ChunkCenter: %s"),
-            *WorldPos.ToString(), *LocalizedPos.ToString(), *ChunkCoords.ToString(), *ChunkCenter.ToString());
-        
-        return ChunkCoords;
+        const int32 VoxelsPerChunk = ChunkSize * Subdivisions;
+
+        OutChunkCoords = FIntVector(
+            FMath::FloorToInt((GlobalVoxelCoords.X + 0.5f) / (float)VoxelsPerChunk),
+            FMath::FloorToInt((GlobalVoxelCoords.Y + 0.5f) / (float)VoxelsPerChunk),
+            FMath::FloorToInt((GlobalVoxelCoords.Z + 0.5f) / (float)VoxelsPerChunk)
+        );
+
+        const FIntVector ChunkCenterGlobalVoxel = OutChunkCoords * VoxelsPerChunk;
+        OutLocalVoxel = GlobalVoxelCoords - ChunkCenterGlobalVoxel;
     }
+
+/**
+ * FIXED: Convert chunk coords and center-aligned local voxel to global voxel
+ */
+static FIntVector ChunkAndLocalToGlobalVoxel_CenterAligned(const FIntVector& ChunkCoords,
+                                                          const FIntVector& LocalVoxel)
+{
+    const int32 VoxelsPerChunk = ChunkSize * Subdivisions;
+    
+    // Chunk center in global voxel coordinates
+    FIntVector ChunkCenterGlobalVoxel = ChunkCoords * VoxelsPerChunk;
+    
+    // Add local offset
+    return ChunkCenterGlobalVoxel + LocalVoxel;
+}
 
     /**
      * Validates if a voxel index is within the valid range, including overflow regions.
@@ -105,7 +161,7 @@ struct FVoxelConversion
         const int32 VoxelsPerChunk = ChunkSize * Subdivisions;
         
         // Allow 1 voxel overflow on the negative side
-        const int32 MinValid = -1;
+        const int32 MinValid = -2;
         
         // Allow 1 voxel overflow on the positive side
         const int32 MaxValid = VoxelsPerChunk;
@@ -129,27 +185,15 @@ struct FVoxelConversion
      */
     static FVector MinCornerVoxelToWorld(const FIntVector& ChunkCoords, const FIntVector& VoxelIndex)
     {
-        // Calculate chunk dimensions
-        const int32 VoxelsPerChunk = ChunkSize * Subdivisions;
-        
-        // Calculate the chunk center
-        FVector ChunkCenter = Origin + FVector(ChunkCoords) * ChunkWorldSize;
-        
-        // Calculate the chunk minimum corner
-        FVector ChunkExtent = FVector(ChunkWorldSize * 0.5f);
-        FVector ChunkMinCorner = ChunkCenter - ChunkExtent;
-        
+        // Calculate chunk minimum corner DIRECTLY (same method)
+        FVector ChunkMinCorner = Origin + FVector(ChunkCoords) * ChunkWorldSize;
+    
         // Calculate the world position of the voxel
-        // Add 0.5f to get the center of the voxel
         FVector VoxelCenter = ChunkMinCorner + 
                              (FVector(VoxelIndex) + FVector(0.5f)) * LocalVoxelSize;
-        
-        UE_LOG(LogTemp, Verbose, TEXT("[MinCornerVoxelToWorld] Chunk: %s, VoxelIndex: %s → World: %s"),
-            *ChunkCoords.ToString(), *VoxelIndex.ToString(), *VoxelCenter.ToString());
-        
+    
         return VoxelCenter;
     }
-
     /**
      * Converts a world position to voxel index where 0,0,0 is the minimum corner of the chunk.
      * This is the inverse of MinCornerVoxelToWorld.
@@ -199,43 +243,34 @@ struct FVoxelConversion
         OutChunkCoords = WorldToChunk(WorldPos);
         OutVoxelIndex = WorldToMinCornerVoxel(WorldPos);
     }
-
+    
     /**
-     * Converts a world position to local voxel coordinates inside a chunk.
-     * This uses a chunk-centered coordinate system where (0,0,0) is the center of the chunk.
-     * 
-     * @param WorldPos - Position in world space
-     * @return Integer coordinates of the voxel within the chunk (chunk-centered system)
-     */
+         * Converts a world position to local voxel coordinates inside a chunk.
+         * This uses a chunk-centered coordinate system where (0,0,0) is the center of the chunk.
+         * 
+         * @param WorldPos - Position in world space
+         * @return Integer coordinates of the voxel within the chunk (chunk-centered system)
+         */
     static FIntVector WorldToLocalVoxel(const FVector& WorldPos)
     {
-        // Get the chunk this world position belongs to
+        // Get chunk coordinates 
         FIntVector ChunkCoords = WorldToChunk(WorldPos);
     
-        // Get the center of the chunk in world space
-        FVector ChunkCenter = ChunkToWorld(ChunkCoords);
+        // Calculate chunk minimum corner DIRECTLY (avoid center calculation)
+        FVector ChunkMinCorner = Origin + FVector(ChunkCoords) * ChunkWorldSize;
     
-        // Calculate the world-space min corner of the chunk 
-        FVector ChunkExtent = FVector(ChunkWorldSize * 0.5f);
-        FVector ChunkMinCorner = ChunkCenter - ChunkExtent;
-    
-        // Compute the local position within the chunk
+        // Calculate the local position within the chunk
         FVector LocalInChunk = WorldPos - ChunkMinCorner;
-
-        // Compute the voxel index (chunk-local, within bounds of the chunk)
-        float VoxelSize = TerrainGridSize / Subdivisions;  // Make sure Subdivisions > 0
-        FIntVector LocalVoxel(
-            FMath::FloorToInt(LocalInChunk.X / VoxelSize),
-            FMath::FloorToInt(LocalInChunk.Y / VoxelSize),
-            FMath::FloorToInt(LocalInChunk.Z / VoxelSize)
+    
+        // Convert to voxel coordinates 
+        FIntVector VoxelIndex(
+            FMath::FloorToInt(LocalInChunk.X / LocalVoxelSize),
+            FMath::FloorToInt(LocalInChunk.Y / LocalVoxelSize),
+            FMath::FloorToInt(LocalInChunk.Z / LocalVoxelSize)
         );
-
-        UE_LOG(LogTemp, Warning, TEXT("[WorldToLocalVoxel] WorldPos: %s → Chunk: %s → LocalVoxel: %s"),
-            *WorldPos.ToString(), *ChunkCoords.ToString(), *LocalVoxel.ToString());
-
-        return LocalVoxel;
+    
+        return VoxelIndex;
     }
-
 
     /**
      * Converts global voxel coordinates to the world position of the voxel's center.
