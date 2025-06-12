@@ -26,7 +26,6 @@ public:
     void InitializeMeshComponent(UProceduralMeshComponent* MeshComponent);
     void InitializeDiggerManager(ADiggerManager* InDiggerManager);
     
-
     
     // Debug functions
     void DebugDrawChunk();
@@ -92,6 +91,8 @@ private:
     void ApplyTorusBrush(FVector3d BrushPosition, float MajorRadius, float MinorRadius, FRotator Rotation, bool bDig);
     void ApplyPyramidBrush(FVector3d BrushPosition, float Height, float BaseHalfExtent, bool bDig,
                            const FRotator& Rotation);
+
+    void CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels);
 
     void ApplyCylinderBrush(FVector3d BrushPosition, float Radius, float Height, const FRotator& Rotation, bool bDig, bool bFilled);
     // UVoxelChunk.h

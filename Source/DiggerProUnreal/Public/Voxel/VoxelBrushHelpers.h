@@ -55,6 +55,8 @@ inline void SetDigShellVoxels(
 
 
 
+
+
 inline void SetDigShellVoxels_Generic(
     USparseVoxelGrid* Grid,
     const FBox& BrushBounds, // World-space bounds of the brush

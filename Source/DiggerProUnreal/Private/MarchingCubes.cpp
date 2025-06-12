@@ -656,179 +656,173 @@ void UMarchingCubes::GenerateMeshFromGrid(
     }
 
     // Second pass: Process all cells and generate mesh
-for (int32 x = 0; x < N; ++x)
-for (int32 y = 0; y < N; ++y)
-{
-    // Get terrain height for this column
-    float TerrainHeight = HeightValues[y * N + x];
-    
-    for (int32 z = 0; z < N; ++z)
+    for (int32 x = 0; x < N; ++x)
+    for (int32 y = 0; y < N; ++y)
     {
-        // Quick check if cell is entirely above terrain with no explicit voxels
-        float MinZ = Origin.Z + z * VoxelSize;
-        float MaxZ = MinZ + VoxelSize;
-        bool bBelowTerrain = MaxZ < TerrainHeight;
+        // Get terrain height for this column
+        float TerrainHeight = HeightValues[y * N + x];
         
-        // Check if this cell has any explicit voxels
-        bool bHasExplicitVoxels = false;
-        bool bHasAirVoxelsBelowTerrain = false;
-        
-        for (int32 i = 0; i < 8 && !bHasExplicitVoxels; i++) {
-            FIntVector CornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
-            if (InVoxelGrid->VoxelData.Contains(CornerCoords)) {
-                bHasExplicitVoxels = true;
-                
-                // Check if this is an air voxel below terrain
-                FVector CornerWorldPos = Origin + FVector(CornerCoords) * VoxelSize;
-                if (CornerWorldPos.Z < TerrainHeight) {
-                    float SDFValue = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
-                    if (SDFValue > 0) { // Air voxel
-                        bHasAirVoxelsBelowTerrain = true;
-                    }
-                }
-            }
-        }
-        
-        // For debugging
-        if (bHasExplicitVoxels) {
-            CellsWithExplicitVoxels.Add(FIntVector(x, y, z));
-        }
-        
-        if (bBelowTerrain && bHasAirVoxelsBelowTerrain) {
-            BelowTerrainCellsWithAirVoxels.Add(FIntVector(x, y, z));
-        }
-        
-        // Check if we need to process this cell
-        bool bShouldProcess = false;
-        
-        // Process if it has explicit voxels
-        if (bHasExplicitVoxels) {
-            bShouldProcess = true;
-        }
-        // Process if it's below terrain and has potential for surface generation
-        else if (bBelowTerrain) {
-            // Check if this cell or any adjacent cell has explicit air voxels
-            for (int32 dx = -1; dx <= 1 && !bShouldProcess; dx++)
-            for (int32 dy = -1; dy <= 1 && !bShouldProcess; dy++)
-            for (int32 dz = -1; dz <= 1 && !bShouldProcess; dz++) {
-                FIntVector CheckCell(x + dx, y + dy, z + dz);
-                if (CheckCell.X < 0 || CheckCell.Y < 0 || CheckCell.Z < 0 ||
-                    CheckCell.X >= N || CheckCell.Y >= N || CheckCell.Z >= N)
-                    continue;
-                    
-                // Check if this adjacent cell has air voxels below terrain
-                for (int32 i = 0; i < 8; i++) {
-                    FIntVector CornerCoords = CheckCell + GetCornerOffset(i);
-                    if (InVoxelGrid->VoxelData.Contains(CornerCoords)) {
-                        FVector CornerWorldPos = Origin + FVector(CornerCoords) * VoxelSize;
-                        if (CornerWorldPos.Z < TerrainHeight) {
-                            float SDFValue = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
-                            if (SDFValue > 0) { // Air voxel below terrain
-                                bShouldProcess = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // Process if it's above terrain but not too far above
-        else if (MinZ <= TerrainHeight + VoxelSize) {
-            bShouldProcess = true;
-        }
-        
-        // Skip if we don't need to process this cell
-        if (!bShouldProcess) {
-            continue;
-        }
-
-        FVector CellOrigin = Origin + FVector(x * VoxelSize, y * VoxelSize, z * VoxelSize);
-
-        FVector CornerWSPositions[8];
-        float CornerSDFValues[8];
-
-        for (int32 i = 0; i < 8; i++) {
-            FIntVector CornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
-            CornerWSPositions[i] = Origin + FVector(
-                CornerCoords.X * VoxelSize,
-                CornerCoords.Y * VoxelSize,
-                CornerCoords.Z * VoxelSize
-            );
+        for (int32 z = 0; z < N; ++z)
+        {
+            // Quick check if cell is entirely above terrain with no explicit voxels
+            float MinZ = Origin.Z + z * VoxelSize;
+            float MaxZ = MinZ + VoxelSize;
+            bool bBelowTerrain = MaxZ < TerrainHeight;
             
-            // Handle voxel values
-            if (InVoxelGrid->VoxelData.Contains(CornerCoords))
-            {
-                // Use the explicit voxel value
-                CornerSDFValues[i] = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
-            }
-            else
-            {
-                // For uninitialized voxels, check if they're below terrain
-                FVector WorldPos = CornerWSPositions[i];
-                bool bCornerBelowTerrain = WorldPos.Z < TerrainHeight;
-                
-                if (bCornerBelowTerrain)
-                {
-                    // Default to solid for unset voxels below terrain
-                    CornerSDFValues[i] = -1.0f;
+            // Check if this cell has any explicit voxels
+            bool bHasExplicitVoxels = false;
+            bool bHasAirVoxelsBelowTerrain = false;
+            
+            for (int32 i = 0; i < 8 && !bHasExplicitVoxels; i++) {
+                FIntVector CornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
+                if (InVoxelGrid->VoxelData.Contains(CornerCoords)) {
+                    bHasExplicitVoxels = true;
                     
-                    // Check for nearby explicit air voxels that should create a surface
-                    bool bFoundNearbyAir = false;
-                    float MinDistanceToAir = FLT_MAX;
-                    
-                    // Search in a small radius around this corner
-                    const int32 SearchRadius = 2;
-                    
-                    for (int32 dx = -SearchRadius; dx <= SearchRadius; dx++)
-                    for (int32 dy = -SearchRadius; dy <= SearchRadius; dy++)
-                    for (int32 dz = -SearchRadius; dz <= SearchRadius; dz++)
-                    {
-                        if (dx == 0 && dy == 0 && dz == 0) continue;
-                        
-                        FIntVector SearchCoords = CornerCoords + FIntVector(dx, dy, dz);
-                        
-                        if (InVoxelGrid->VoxelData.Contains(SearchCoords))
-                        {
-                            float NearbySDFValue = InVoxelGrid->GetVoxel(SearchCoords.X, SearchCoords.Y, SearchCoords.Z);
-                            
-                            // If we find an explicit air voxel
-                            if (NearbySDFValue > 0)
-                            {
-                                FVector NearbyWorldPos = Origin + FVector(SearchCoords) * VoxelSize;
-                                
-                                // Check if this air voxel is also below terrain (creating a cavity)
-                                if (NearbyWorldPos.Z < TerrainHeight)
-                                {
-                                    float Distance = FVector(dx, dy, dz).Size();
-                                    if (Distance < MinDistanceToAir)
-                                    {
-                                        MinDistanceToAir = Distance;
-                                        bFoundNearbyAir = true;
-                                    }
-                                }
-                            }
+                    // Check if this is an air voxel below terrain
+                    FVector CornerWorldPos = Origin + FVector(CornerCoords) * VoxelSize;
+                    if (CornerWorldPos.Z < TerrainHeight) {
+                        float SDFValue = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
+                        if (SDFValue > 0) { // Air voxel
+                            bHasAirVoxelsBelowTerrain = true;
                         }
                     }
+                }
+            }
+            
+            // For debugging
+            if (bHasExplicitVoxels) {
+                CellsWithExplicitVoxels.Add(FIntVector(x, y, z));
+            }
+            
+            if (bBelowTerrain && bHasAirVoxelsBelowTerrain) {
+                BelowTerrainCellsWithAirVoxels.Add(FIntVector(x, y, z));
+            }
+            
+            // Check if we need to process this cell
+            bool bShouldProcess = false;
+            
+            // Process if it has explicit voxels
+            if (bHasExplicitVoxels) {
+                bShouldProcess = true;
+            }
+            // Process if it's below terrain and adjacent to a cell with air voxels
+            else if (bBelowTerrain) {
+                // Check if any adjacent cell has air voxels below terrain
+                for (int32 dx = -1; dx <= 1 && !bShouldProcess; dx++)
+                for (int32 dy = -1; dy <= 1 && !bShouldProcess; dy++)
+                for (int32 dz = -1; dz <= 1 && !bShouldProcess; dz++) {
+                    if (dx == 0 && dy == 0 && dz == 0) continue;
                     
-                    // If we found nearby air, create a gradient to ensure surface generation
-                    if (bFoundNearbyAir)
-                    {
-                        // Create a smooth transition from solid to near-zero
-                        // This ensures marching cubes will detect a sign change
-                        float DistanceFactor = FMath::Clamp(MinDistanceToAir / (float)SearchRadius, 0.0f, 1.0f);
+                    FIntVector AdjacentCell(x + dx, y + dy, z + dz);
+                    if (AdjacentCell.X < 0 || AdjacentCell.Y < 0 || AdjacentCell.Z < 0 ||
+                        AdjacentCell.X >= N || AdjacentCell.Y >= N || AdjacentCell.Z >= N)
+                        continue;
                         
-                        // Use a value that's still negative but close to zero to create surface
-                        // The closer to air, the closer to zero (but still negative)
-                        CornerSDFValues[i] = FMath::Lerp(-0.01f, -1.0f, DistanceFactor);
+                    if (CellsWithAirVoxelsBelowTerrain.Contains(AdjacentCell)) {
+                        bShouldProcess = true;
                     }
+                }
+            }
+            // Process if it's above terrain but not too far above
+            else if (MinZ <= TerrainHeight + VoxelSize) {
+                bShouldProcess = true;
+            }
+            
+            // Skip if we don't need to process this cell
+            if (!bShouldProcess) {
+                continue;
+            }
+
+            FVector CellOrigin = Origin + FVector(x * VoxelSize, y * VoxelSize, z * VoxelSize);
+
+            FVector CornerWSPositions[8];
+            float CornerSDFValues[8];
+
+            for (int32 i = 0; i < 8; i++) {
+                FIntVector CornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
+                CornerWSPositions[i] = Origin + FVector(
+                    CornerCoords.X * VoxelSize,
+                    CornerCoords.Y * VoxelSize,
+                    CornerCoords.Z * VoxelSize
+                );
+                
+                // Handle voxel values
+                if (InVoxelGrid->VoxelData.Contains(CornerCoords))
+                {
+                    // Use the explicit voxel value
+                    CornerSDFValues[i] = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
                 }
                 else
+{
+    // For uninitialized voxels, check if they're below terrain
+    FVector WorldPos = CornerWSPositions[i];
+    bool bCornerBelowTerrain = WorldPos.Z < TerrainHeight;
+    
+    if (bCornerBelowTerrain)
+    {
+        // Default to solid for unset voxels below terrain
+        CornerSDFValues[i] = -1.0f;
+        
+        // Check for nearby explicit air voxels that should create a surface
+        bool bFoundNearbyAir = false;
+        float MinDistanceToAir = FLT_MAX;
+        
+        // Search in a small radius around this corner
+        const int32 SearchRadius = 2;
+        const float MaxInfluenceDistance = SearchRadius * VoxelSize;
+        
+        for (int32 dx = -SearchRadius; dx <= SearchRadius; dx++)
+        for (int32 dy = -SearchRadius; dy <= SearchRadius; dy++)
+        for (int32 dz = -SearchRadius; dz <= SearchRadius; dz++)
+        {
+            if (dx == 0 && dy == 0 && dz == 0) continue;
+            
+            FIntVector SearchCoords = CornerCoords + FIntVector(dx, dy, dz);
+            
+            if (InVoxelGrid->VoxelData.Contains(SearchCoords))
+            {
+                float NearbySDFValue = InVoxelGrid->GetVoxel(SearchCoords.X, SearchCoords.Y, SearchCoords.Z);
+                
+                // If we find an explicit air voxel
+                if (NearbySDFValue > 0)
                 {
-                    // Above terrain: treat as air (+1.0f)
-                    CornerSDFValues[i] = 1.0f;
+                    FVector NearbyWorldPos = Origin + FVector(SearchCoords) * VoxelSize;
+                    
+                    // Check if this air voxel is also below terrain (creating a cavity)
+                    if (NearbyWorldPos.Z < TerrainHeight)
+                    {
+                        float Distance = FVector(dx, dy, dz).Size() * VoxelSize;
+                        if (Distance < MinDistanceToAir)
+                        {
+                            MinDistanceToAir = Distance;
+                            bFoundNearbyAir = true;
+                        }
+                    }
                 }
             }
         }
+        
+        // If we found nearby air voxels, create a gradient towards them
+        if (bFoundNearbyAir && MinDistanceToAir < MaxInfluenceDistance)
+        {
+            // Create a smooth transition from solid to air based on distance
+            float InfluenceFactor = 1.0f - (MinDistanceToAir / MaxInfluenceDistance);
+            
+            // Interpolate from solid (-1) towards air based on influence
+            // This creates the sign change needed for surface generation
+            CornerSDFValues[i] = FMath::Lerp(-1.0f, 0.5f, InfluenceFactor);
+            
+            // Alternative approach: Use a more aggressive transition
+            // CornerSDFValues[i] = (MinDistanceToAir < VoxelSize) ? 0.1f : -1.0f;
+        }
+    }
+    else
+    {
+        // Above terrain - default to air
+        CornerSDFValues[i] = 1.0f;
+    }
+}
+            }
 
             if (IsDebugging()) {
                 // Only visualize cells with explicit voxels or below-terrain cells with air voxels

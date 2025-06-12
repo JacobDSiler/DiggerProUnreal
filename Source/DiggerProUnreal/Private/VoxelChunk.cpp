@@ -288,6 +288,9 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrush
     const float SDF_AIR_Strength = FVoxelConversion::SDF_AIR * Stroke.BrushStrength;
     
     int32 ModifiedVoxels = 0;
+
+	// Track air voxels placed below terrain for shell generation
+	TArray<FIntVector> AirVoxelsBelowTerrain;
     
     for (int32 X = MinX; X <= MaxX; ++X)
     {
@@ -335,6 +338,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrush
                 {
                     // Digging below terrain - explicitly set to air
                     SparseVoxelGrid->SetVoxel(X, Y, Z, SDF_AIR_Strength, true);
+                	AirVoxelsBelowTerrain.Add(FIntVector(X, Y, Z));
                 }
                 else if (!Stroke.bDig || bAboveTerrain)
                 {
@@ -346,7 +350,13 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrush
             }
         }
     }
-    
+
+	// Create shell of solid voxels around air voxels below terrain
+	if (!AirVoxelsBelowTerrain.IsEmpty())
+	{
+		CreateSolidShellAroundAirVoxels(AirVoxelsBelowTerrain);
+	}
+	
     // Optional: Log performance info in debug builds
     #if UE_BUILD_DEBUG
     if (ModifiedVoxels > 0)
@@ -357,6 +367,62 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrush
     #endif
 }
 
+void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels)
+{
+    // Generate all 26 neighbor offsets (corners, edges, and faces)
+    TArray<FIntVector> NeighborOffsets;
+    for (int32 x = -2; x <= 1; x++)
+    {
+        for (int32 y = -2; y <= 1; y++)
+        {
+            for (int32 z = -2; z <= 1; z++)
+            {
+                if (x == 0 && y == 0 && z == 0) continue; // Skip center
+                NeighborOffsets.Add(FIntVector(x, y, z));
+            }
+        }
+    }
+    
+    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
+    const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
+    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
+    const float HalfVoxelSize = CachedVoxelSize * 0.5f;
+    
+    for (const FIntVector& AirVoxel : AirVoxels)
+    {
+        // Check all 26 neighbors
+        for (const FIntVector& Offset : NeighborOffsets)
+        {
+            FIntVector NeighborCoord = AirVoxel + Offset;
+            
+            // Allow one voxel negative overflow, clamp at chunk size
+            if (NeighborCoord.X < -1 || NeighborCoord.X >= VoxelsPerChunk + 1 ||
+                NeighborCoord.Y < -1 || NeighborCoord.Y >= VoxelsPerChunk + 1 ||
+                NeighborCoord.Z < -1 || NeighborCoord.Z >= VoxelsPerChunk + 1)
+                continue;
+            
+            // Skip if this neighbor is already explicitly set
+            if (SparseVoxelGrid->VoxelData.Contains(NeighborCoord))
+                continue;
+            
+            // Convert to world position to check if below terrain
+            const FVector WorldPos = ChunkOrigin + FVector(
+                (NeighborCoord.X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+                (NeighborCoord.Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+                (NeighborCoord.Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
+            );
+            
+            const float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
+            if (WorldPos.Z < TerrainHeight)
+            {
+                // This neighbor is below terrain and not explicitly set - make it solid
+                SparseVoxelGrid->SetVoxel(NeighborCoord.X, NeighborCoord.Y, NeighborCoord.Z, 
+                                        FVoxelConversion::SDF_SOLID, false);
+            }
+        }
+    }
+}
 
 void UVoxelChunk::BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction,
 	const FString& String)
@@ -1341,7 +1407,7 @@ TMap<FVector, float> UVoxelChunk::GetActiveVoxels() const
 
 
 
-//ToDo: Give this proper arguments and structure to function properly, pull data from SparseVoxelGrid for it if necessary.
+
 void UVoxelChunk::GenerateMesh() const
 {
 	if (!SparseVoxelGrid)
