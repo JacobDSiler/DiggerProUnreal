@@ -185,8 +185,14 @@ void USparseVoxelGrid::SynchronizeBordersIfDirty()
 }
 
 
-bool USparseVoxelGrid::SaveVoxelDataToFile(const FString& FilePath)
+bool USparseVoxelGrid::SaveVoxelDataToFile(const FString& FilePath) 
 {
+    if (FilePath.IsEmpty())
+    {
+        UE_LOG(LogTemp, Error, TEXT("SaveVoxelDataToFile: Empty file path"));
+        return false;
+    }
+
     FBufferArchive ToBinary;
 
     // Serialize metadata
@@ -219,6 +225,11 @@ bool USparseVoxelGrid::SaveVoxelDataToFile(const FString& FilePath)
 
 bool USparseVoxelGrid::LoadVoxelDataFromFile(const FString& FilePath)
 {
+    if (!FPaths::FileExists(FilePath))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("LoadVoxelDataFromFile: File does not exist: %s"), *FilePath);
+        return false;
+    }
     TArray<uint8> BinaryArray;
 
     if (FFileHelper::LoadFileToArray(BinaryArray, *FilePath))

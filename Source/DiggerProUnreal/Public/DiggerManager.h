@@ -426,6 +426,42 @@ private:
     UPROPERTY()
     TArray<UProceduralMeshComponent*> ProceduralMeshComponents;
 
+public:
+    // Single chunk serialization methods
+    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
+    bool SaveChunk(const FIntVector& ChunkCoords);
+    
+    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
+    bool LoadChunk(const FIntVector& ChunkCoords);
+    
+    // Batch serialization methods
+    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
+    bool SaveAllChunks();
+    
+    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
+    bool LoadAllChunks();
+    
+    // Helper methods
+    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
+    FString GetChunkFilePath(const FIntVector& ChunkCoords) const;
+    
+    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
+    bool DoesChunkFileExist(const FIntVector& ChunkCoords) const;
+    
+    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
+    TArray<FIntVector> GetAllSavedChunkCoordinates() const;
+    
+    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
+    bool DeleteChunkFile(const FIntVector& ChunkCoords);
+    
+    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
+    void EnsureVoxelDataDirectoryExists() const;
+
+private:
+    // Constants for file management
+    static const FString VOXEL_DATA_DIRECTORY;
+    static const FString CHUNK_FILE_EXTENSION;
+
 
     UStaticMesh* CreateStaticMeshFromRawData(
         UObject* Outer,

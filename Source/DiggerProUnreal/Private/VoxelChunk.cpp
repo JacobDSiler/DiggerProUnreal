@@ -188,6 +188,7 @@ bool UVoxelChunk::LoadChunkData(const FString& FilePath)
 {
 	if (SparseVoxelGrid)
 	{
+		ForceUpdate();
 		return SparseVoxelGrid->LoadVoxelDataFromFile(FilePath);
 	}
 	return false;

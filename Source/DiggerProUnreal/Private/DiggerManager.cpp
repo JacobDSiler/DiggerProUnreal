@@ -59,6 +59,11 @@
 #include "Voxel/BrushShapes/CubeBrushShape.h"
 #include "Voxel/BrushShapes/SphereBrushShape.h"
 
+// Save and Load
+#include "HAL/PlatformFilemanager.h"
+#include "Misc/FileHelper.h"
+#include "Engine/Engine.h"
+
 // Editor Tool Specific Includes
 #if WITH_EDITOR
 #include "DiggerEdModeToolkit.h"
@@ -2547,3 +2552,256 @@ void ADiggerManager::EditorRebuildAllChunks()
 
 
 #endif // WITH_EDITOR
+
+// Static constants
+const FString ADiggerManager::VOXEL_DATA_DIRECTORY = TEXT("VoxelData");
+const FString ADiggerManager::CHUNK_FILE_EXTENSION = TEXT(".VoxelData");
+
+void ADiggerManager::EnsureVoxelDataDirectoryExists() const
+{
+    FString VoxelDataPath = FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY;
+    
+    IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+    if (!PlatformFile.DirectoryExists(*VoxelDataPath))
+    {
+        if (PlatformFile.CreateDirectoryTree(*VoxelDataPath))
+        {
+            UE_LOG(LogTemp, Log, TEXT("Created VoxelData directory at: %s"), *VoxelDataPath);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("Failed to create VoxelData directory at: %s"), *VoxelDataPath);
+        }
+    }
+}
+
+FString ADiggerManager::GetChunkFilePath(const FIntVector& ChunkCoords) const
+{
+    FString FileName = FString::Printf(TEXT("Chunk%d-%d-%d%s"), 
+        ChunkCoords.X, ChunkCoords.Y, ChunkCoords.Z, *CHUNK_FILE_EXTENSION);
+    
+    return FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY / FileName;
+}
+
+bool ADiggerManager::DoesChunkFileExist(const FIntVector& ChunkCoords) const
+{
+    FString FilePath = GetChunkFilePath(ChunkCoords);
+    return FPaths::FileExists(FilePath);
+}
+
+bool ADiggerManager::SaveChunk(const FIntVector& ChunkCoords)
+{
+    // Ensure the VoxelData directory exists
+    EnsureVoxelDataDirectoryExists();
+    
+    // Check if chunk exists in memory
+    UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
+    if (!ChunkPtr || !*ChunkPtr)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Cannot save chunk at %s - chunk not found in memory"), 
+            *ChunkCoords.ToString());
+        return false;
+    }
+    
+    UVoxelChunk* Chunk = *ChunkPtr;
+    FString FilePath = GetChunkFilePath(ChunkCoords);
+    
+    bool bSaveSuccess = Chunk->SaveChunkData(FilePath);
+    
+    if (bSaveSuccess)
+    {
+        UE_LOG(LogTemp, Log, TEXT("Successfully saved chunk %s to %s"), 
+            *ChunkCoords.ToString(), *FilePath);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to save chunk %s to %s"), 
+            *ChunkCoords.ToString(), *FilePath);
+    }
+    
+    return bSaveSuccess;
+}
+
+bool ADiggerManager::LoadChunk(const FIntVector& ChunkCoords)
+{
+    FString FilePath = GetChunkFilePath(ChunkCoords);
+    
+    // Check if file exists
+    if (!FPaths::FileExists(FilePath))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Cannot load chunk at %s - file does not exist: %s"), 
+            *ChunkCoords.ToString(), *FilePath);
+        return false;
+    }
+    
+    // Get or create the chunk
+    UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords);
+    if (!Chunk)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to get or create chunk at %s"), 
+            *ChunkCoords.ToString());
+        return false;
+    }
+    
+    // Load the chunk data
+    bool bLoadSuccess = Chunk->LoadChunkData(FilePath);
+    
+    if (bLoadSuccess)
+    {
+        UE_LOG(LogTemp, Log, TEXT("Successfully loaded chunk %s from %s"), 
+            *ChunkCoords.ToString(), *FilePath);
+        
+        // Mark chunk as clean after loading
+        // Chunk->bIsDirty = false; // Uncomment if you have access to bIsDirty
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to load chunk %s from %s"), 
+            *ChunkCoords.ToString(), *FilePath);
+    }
+    
+    return bLoadSuccess;
+}
+
+bool ADiggerManager::SaveAllChunks()
+{
+    EnsureVoxelDataDirectoryExists();
+    
+    if (ChunkMap.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No chunks to save - ChunkMap is empty"));
+        return true; // Not an error condition
+    }
+    
+    int32 SavedCount = 0;
+    int32 FailedCount = 0;
+    
+    UE_LOG(LogTemp, Log, TEXT("Starting to save %d chunks..."), ChunkMap.Num());
+    
+    for (const auto& ChunkPair : ChunkMap)
+    {
+        const FIntVector& ChunkCoords = ChunkPair.Key;
+        
+        if (SaveChunk(ChunkCoords))
+        {
+            SavedCount++;
+        }
+        else
+        {
+            FailedCount++;
+        }
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Finished saving chunks: %d successful, %d failed"), 
+        SavedCount, FailedCount);
+    
+    return FailedCount == 0;
+}
+
+bool ADiggerManager::LoadAllChunks()
+{
+    TArray<FIntVector> SavedChunkCoords = GetAllSavedChunkCoordinates();
+    
+    if (SavedChunkCoords.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No saved chunks found to load"));
+        return true; // Not an error condition
+    }
+    
+    int32 LoadedCount = 0;
+    int32 FailedCount = 0;
+    
+    UE_LOG(LogTemp, Log, TEXT("Starting to load %d chunks..."), SavedChunkCoords.Num());
+    
+    for (const FIntVector& ChunkCoords : SavedChunkCoords)
+    {
+        if (LoadChunk(ChunkCoords))
+        {
+            LoadedCount++;
+        }
+        else
+        {
+            FailedCount++;
+        }
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Finished loading chunks: %d successful, %d failed"), 
+        LoadedCount, FailedCount);
+    
+    return FailedCount == 0;
+}
+
+TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates() const
+{
+    TArray<FIntVector> ChunkCoordinates;
+    
+    FString VoxelDataPath = FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY;
+    
+    IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+    
+    if (!PlatformFile.DirectoryExists(*VoxelDataPath))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("VoxelData directory does not exist: %s"), *VoxelDataPath);
+        return ChunkCoordinates;
+    }
+    
+    // Find all .VoxelData files
+    TArray<FString> FoundFiles;
+    PlatformFile.FindFiles(FoundFiles, *VoxelDataPath, *CHUNK_FILE_EXTENSION);
+    
+    for (const FString& FileName : FoundFiles)
+    {
+        // Parse filename to extract coordinates
+        // Expected format: ChunkX-Y-Z.VoxelData
+        FString BaseName = FPaths::GetBaseFilename(FileName);
+        
+        if (BaseName.StartsWith(TEXT("Chunk")))
+        {
+            FString CoordString = BaseName.RightChop(5); // Remove "Chunk" prefix
+            
+            TArray<FString> CoordParts;
+            CoordString.ParseIntoArray(CoordParts, TEXT("-"), true);
+            
+            if (CoordParts.Num() == 3)
+            {
+                int32 X = FCString::Atoi(*CoordParts[0]);
+                int32 Y = FCString::Atoi(*CoordParts[1]);
+                int32 Z = FCString::Atoi(*CoordParts[2]);
+                
+                ChunkCoordinates.Add(FIntVector(X, Y, Z));
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Invalid chunk filename format: %s"), *FileName);
+            }
+        }
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Found %d saved chunk files"), ChunkCoordinates.Num());
+    return ChunkCoordinates;
+}
+
+bool ADiggerManager::DeleteChunkFile(const FIntVector& ChunkCoords)
+{
+    FString FilePath = GetChunkFilePath(ChunkCoords);
+    
+    if (!FPaths::FileExists(FilePath))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Cannot delete chunk file - file does not exist: %s"), *FilePath);
+        return false;
+    }
+    
+    IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+    bool bDeleteSuccess = PlatformFile.DeleteFile(*FilePath);
+    
+    if (bDeleteSuccess)
+    {
+        UE_LOG(LogTemp, Log, TEXT("Successfully deleted chunk file: %s"), *FilePath);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to delete chunk file: %s"), *FilePath);
+    }
+    
+    return bDeleteSuccess;
+}

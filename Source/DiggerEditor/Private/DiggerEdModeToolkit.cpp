@@ -20,6 +20,7 @@
 
 // Slate UI - Widgets
 #include "BrushAssetEditorUtils.h"
+#include "Framework/Notifications/NotificationManager.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
@@ -30,6 +31,7 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
+#include "Widgets/Notifications/SNotificationList.h"
 
 #define LOCTEXT_NAMESPACE "FDiggerEdModeToolkit"
 
@@ -564,6 +566,12 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             })
         ]
     ]
+        
+    // --- Save/Load Section ( Todo: roll-down) ---
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+    [
+    MakeSaveLoadSection()
+    ]
 
     // --- Islands Section (roll-down) ---
     + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
@@ -952,6 +960,159 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
                 [this](float NewValue) { BrushRadius = FMath::Clamp(NewValue, 10.0f, 256.0f); },
                 10.0f, 256.0f, {10.0f, 64.0f, 128.0f, 256.0f}, 10.0f
             )
+        ];
+}
+
+// Add this method to your FDiggerEdModeToolkit class
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
+{
+    return SNew(SVerticalBox)
+
+        // Section Title
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString("Chunk Serialization"))
+            .Font(FAppStyle::GetFontStyle("PropertyWindow.NormalFont"))
+            .ColorAndOpacity(FSlateColor::UseForeground())
+        ]
+
+        // Save/Load Buttons Row
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+        [
+            SNew(SHorizontalBox)
+
+            // Save All Chunks Button
+            + SHorizontalBox::Slot().FillWidth(0.5f).Padding(0, 0, 4, 0)
+            [
+                SNew(SButton)
+                .Text(FText::FromString("Save All Chunks"))
+                .ToolTipText(FText::FromString("Save all currently loaded chunks to disk"))
+                .HAlign(HAlign_Center)
+                .VAlign(VAlign_Center)
+                .OnClicked_Lambda([this]() -> FReply {
+                    if (ADiggerManager* Manager = GetDiggerManager())
+                    {
+                        bool bSuccess = Manager->SaveAllChunks();
+                        if (bSuccess)
+                        {
+                            // Show success notification
+                            FNotificationInfo Info(FText::FromString("Successfully saved all chunks"));
+                            Info.ExpireDuration = 3.0f;
+                            Info.bUseSuccessFailIcons = true;
+                            FSlateNotificationManager::Get().AddNotification(Info);
+                            
+                            UE_LOG(LogTemp, Log, TEXT("Save All Chunks: Success"));
+                        }
+                        else
+                        {
+                            // Show error notification
+                            FNotificationInfo Info(FText::FromString("Failed to save some chunks - check log"));
+                            Info.ExpireDuration = 5.0f;
+                            Info.bUseSuccessFailIcons = true;
+                            FSlateNotificationManager::Get().AddNotification(Info);
+                            
+                            UE_LOG(LogTemp, Error, TEXT("Save All Chunks: Failed"));
+                        }
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Error, TEXT("Save All Chunks: No DiggerManager found"));
+                    }
+                    return FReply::Handled();
+                })
+                .IsEnabled_Lambda([this]() -> bool {
+                    ADiggerManager* Manager = GetDiggerManager();
+                    return Manager != nullptr && Manager->ChunkMap.Num() > 0;
+                })
+            ]
+
+            // Load All Chunks Button
+            + SHorizontalBox::Slot().FillWidth(0.5f).Padding(4, 0, 0, 0)
+            [
+                SNew(SButton)
+                .Text(FText::FromString("Load All Chunks"))
+                .ToolTipText(FText::FromString("Load all saved chunks from disk"))
+                .HAlign(HAlign_Center)
+                .VAlign(VAlign_Center)
+                .OnClicked_Lambda([this]() -> FReply {
+                    if (ADiggerManager* Manager = GetDiggerManager())
+                    {
+                        bool bSuccess = Manager->LoadAllChunks();
+                        if (bSuccess)
+                        {
+                            // Show success notification
+                            FNotificationInfo Info(FText::FromString("Successfully loaded all chunks"));
+                            Info.ExpireDuration = 3.0f;
+                            Info.bUseSuccessFailIcons = true;
+                            FSlateNotificationManager::Get().AddNotification(Info);
+                            
+                            UE_LOG(LogTemp, Log, TEXT("Load All Chunks: Success"));
+                        }
+                        else
+                        {
+                            // Show error notification
+                            FNotificationInfo Info(FText::FromString("Failed to load some chunks - check log"));
+                            Info.ExpireDuration = 5.0f;
+                            Info.bUseSuccessFailIcons = true;
+                            FSlateNotificationManager::Get().AddNotification(Info);
+                            
+                            UE_LOG(LogTemp, Error, TEXT("Load All Chunks: Failed"));
+                        }
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Error, TEXT("Load All Chunks: No DiggerManager found"));
+                    }
+                    return FReply::Handled();
+                })
+                .IsEnabled_Lambda([this]() -> bool {
+                    ADiggerManager* Manager = GetDiggerManager();
+                    if (!Manager) return false;
+                    
+                    // Check if there are any saved chunks to load
+                    TArray<FIntVector> SavedChunks = Manager->GetAllSavedChunkCoordinates();
+                    return SavedChunks.Num() > 0;
+                })
+            ]
+        ]
+
+        // Statistics Row
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 0)
+        [
+            SNew(SHorizontalBox)
+
+            // Loaded Chunks Count
+            + SHorizontalBox::Slot().FillWidth(0.5f).Padding(0, 0, 4, 0)
+            [
+                SNew(STextBlock)
+                .Text_Lambda([this]() -> FText {
+                    if (ADiggerManager* Manager = GetDiggerManager())
+                    {
+                        return FText::FromString(FString::Printf(TEXT("Loaded: %d"), Manager->ChunkMap.Num()));
+                    }
+                    return FText::FromString("Loaded: 0");
+                })
+                .Font(FAppStyle::GetFontStyle("PropertyWindow.NormalFont"))
+                .ToolTipText(FText::FromString("Number of chunks currently loaded in memory"))
+            ]
+
+            // Saved Chunks Count
+            + SHorizontalBox::Slot().FillWidth(0.5f).Padding(4, 0, 0, 0)
+            [
+                SNew(STextBlock)
+                .Text_Lambda([this]() -> FText {
+                    if (ADiggerManager* Manager = GetDiggerManager())
+                    {
+                        TArray<FIntVector> SavedChunks = Manager->GetAllSavedChunkCoordinates();
+                        return FText::FromString(FString::Printf(TEXT("Saved: %d"), SavedChunks.Num()));
+                    }
+                    return FText::FromString("Saved: 0");
+                })
+                .Font(FAppStyle::GetFontStyle("PropertyWindow.NormalFont"))
+                .ToolTipText(FText::FromString("Number of chunks saved to disk"))
+            ]
         ];
 }
 

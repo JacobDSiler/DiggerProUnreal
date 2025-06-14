@@ -288,6 +288,7 @@ private:
 	TSharedPtr<SBox> IslandGridContainer; // Add this!
 	TSharedPtr<SUniformGridPanel> IslandGrid;
 	TSharedPtr<FAssetThumbnailPool> AssetThumbnailPool;
+	TSharedRef<SWidget> MakeSaveLoadSection();
 	bool bBrushDig = false;
 	void RebuildCustomBrushGrid();
 };
