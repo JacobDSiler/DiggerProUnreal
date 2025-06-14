@@ -3,6 +3,7 @@
 #include "DiggerManager.h"
 #include "EngineUtils.h"
 #include "Landscape.h"
+#include "GameFramework/GameModeBase.h"
 #include "Kismet/GameplayStatics.h"
 
 UVoxelBrushShape::UVoxelBrushShape()
@@ -72,34 +73,111 @@ UWorld* UVoxelBrushShape::GetSafeWorld() const
     return GetWorld();
 }
 
-
-FHitResult UVoxelBrushShape::GetCameraHitLocation()
+// Add this method to VoxelBrushShape
+FBrushStroke UVoxelBrushShape::CreateBrushStroke(const FHitResult& HitResult, bool bIsDig) const
 {
-    
-    if (!World) return FHitResult();
+    FBrushStroke NewStroke;
+    NewStroke.BrushPosition = HitResult.Location;  // This is the key - get position from hit
+    NewStroke.BrushRadius = BrushSize;
+    NewStroke.BrushFalloff = 0.f;
+    NewStroke.BrushStrength = 1.f;
+    NewStroke.bDig = bIsDig;
+    NewStroke.BrushType = BrushType;
 
-    APlayerController* PC = World->GetFirstPlayerController();
-    if (!PC) return FHitResult();
-
-    FVector WorldLocation, WorldDirection;
-    if (PC->DeprojectMousePositionToWorld(WorldLocation, WorldDirection))
-    {
-        FVector TraceStart = WorldLocation;
-        FVector TraceEnd = TraceStart + WorldDirection * 10000.f;
-
-        FHitResult Hit;
-        FCollisionQueryParams Params;
-        GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params);
-        return Hit;
-    }
-
-    return FHitResult();
+    return NewStroke;
 }
 
 
-FHitResult UVoxelBrushShape::PerformComplexTrace(const FVector& Start, const FVector& End, AActor* IgnoredActor)
+bool UVoxelBrushShape::GetCameraHitLocation(FHitResult& OutHitResult) const
 {
-    World=GetSafeWorld();
+    // Your existing world detection code...
+    UWorld* TargetWorld = nullptr;
+    
+    if (GEngine && GEngine->GameViewport && GEngine->GameViewport->GetWorld())
+    {
+        TargetWorld = GEngine->GameViewport->GetWorld();
+    }
+    else if (UWorld* ComponentWorld = GetWorld())
+    {
+        TargetWorld = ComponentWorld;
+    }
+    else
+    {
+        TargetWorld = GetSafeWorld();
+    }
+
+    if (!TargetWorld)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No valid world found"));
+        return false;
+    }
+
+    APlayerController* PlayerController = TargetWorld->GetFirstPlayerController();
+    if (!PlayerController)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No PlayerController found"));
+        return false;
+    }
+
+    float MouseX, MouseY;
+    if (!PlayerController->GetMousePosition(MouseX, MouseY))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Could not get mouse position"));
+        return false;
+    }
+
+    FVector WorldPosition;
+    FVector WorldDirection;
+    if (PlayerController->DeprojectScreenPositionToWorld(MouseX, MouseY, WorldPosition, WorldDirection))
+    {
+        FVector TraceStart = WorldPosition;
+        FVector TraceEnd = WorldPosition + (WorldDirection * 50000.0f);
+
+        // Use the complex trace system instead of simple line trace
+        FHitResult ComplexHit = PerformComplexTrace(TraceStart, TraceEnd, PlayerController->GetPawn());
+        
+        if (ComplexHit.bBlockingHit)
+        {
+            OutHitResult = ComplexHit;
+            
+            // Log what we hit for debugging
+            if (OutHitResult.GetActor())
+            {
+                UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Hit Actor: %s, Component: %s"), 
+                    *OutHitResult.GetActor()->GetName(), 
+                    OutHitResult.GetComponent() ? *OutHitResult.GetComponent()->GetName() : TEXT("None"));
+            }
+            
+            return true;
+        }
+        
+        // Fallback to simple trace if complex trace fails
+        FCollisionQueryParams QueryParams;
+        QueryParams.bTraceComplex = true;
+        QueryParams.AddIgnoredActor(PlayerController->GetPawn());
+
+        if (TargetWorld->LineTraceSingleByChannel(OutHitResult, TraceStart, TraceEnd, ECC_WorldStatic, QueryParams))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Fallback Hit Actor: %s"), 
+                OutHitResult.GetActor() ? *OutHitResult.GetActor()->GetName() : TEXT("None"));
+            return true;
+        }
+        else if (TargetWorld->LineTraceSingleByChannel(OutHitResult, TraceStart, TraceEnd, ECC_Visibility, QueryParams))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Fallback Hit Actor (Visibility): %s"), 
+                   OutHitResult.GetActor() ? *OutHitResult.GetActor()->GetName() : TEXT("None"));
+            return true;
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No valid hit found."));
+    return false;
+}
+
+
+
+FHitResult UVoxelBrushShape::PerformComplexTrace(const FVector& Start, const FVector& End, AActor* IgnoredActor) const
+{          
     if (!World)
     {
         UE_LOG(LogTemp, Error, TEXT("World is null in PerformComplexTrace!"));
@@ -107,7 +185,11 @@ FHitResult UVoxelBrushShape::PerformComplexTrace(const FVector& Start, const FVe
     }
 
     FCollisionQueryParams CollisionParams;
-    CollisionParams.AddIgnoredActor(IgnoredActor);
+    CollisionParams.bTraceComplex = true;
+    if (IgnoredActor)
+    {
+        CollisionParams.AddIgnoredActor(IgnoredActor);
+    }
 
     FHitResult InitialHit;
     bool bHit = World->LineTraceSingleByChannel(InitialHit, Start, End, ECC_Visibility, CollisionParams);
@@ -115,7 +197,7 @@ FHitResult UVoxelBrushShape::PerformComplexTrace(const FVector& Start, const FVe
     if (!bHit)
     {
         UE_LOG(LogTemp, Warning, TEXT("No hit in PerformComplexTrace."));
-        return InitialHit;
+        return InitialHit; // Return invalid hit result
     }
 
     AActor* HitActor = InitialHit.GetActor();
@@ -127,13 +209,18 @@ FHitResult UVoxelBrushShape::PerformComplexTrace(const FVector& Start, const FVe
 
     UE_LOG(LogTemp, Warning, TEXT("Initial hit: %s"), *HitActor->GetName());
 
+    // If we didn't hit a hole, return the initial hit
     if (!IsHoleBPActor(HitActor))
     {
         return InitialHit;
     }
 
-    // Defensive: TraceThroughHole may return an invalid hit, so check inside that method too
-    return TraceThroughHole(InitialHit, End, IgnoredActor);
+    // We hit a hole, trace through it
+    UE_LOG(LogTemp, Warning, TEXT("Hit HoleBP, tracing through..."));
+    FHitResult ThroughHoleHit = TraceThroughHole(InitialHit, End, IgnoredActor);
+    
+    // Return the result from tracing through the hole
+    return ThroughHoleHit;
 }
 
 bool UVoxelBrushShape::IsHoleBPActor(AActor* Actor) const
@@ -158,7 +245,7 @@ bool UVoxelBrushShape::IsHoleBPActor(AActor* Actor) const
     return Actor->GetClass() == DiggerManager->HoleBP;
 }
 
-FHitResult UVoxelBrushShape::TraceThroughHole(const FHitResult& HoleHit, const FVector& End, AActor* IgnoredActor)
+FHitResult UVoxelBrushShape::TraceThroughHole(const FHitResult& HoleHit, const FVector& End, AActor* IgnoredActor) const
 {
     if (!World)
     {
@@ -216,7 +303,7 @@ FHitResult UVoxelBrushShape::TraceThroughHole(const FHitResult& HoleHit, const F
     return FinalHit;
 }
 
-FHitResult UVoxelBrushShape::TraceBehindLandscape(const FHitResult& LandscapeHit, const FVector& End, AActor* IgnoredActor, AActor* HoleActor)
+FHitResult UVoxelBrushShape::TraceBehindLandscape(const FHitResult& LandscapeHit, const FVector& End, AActor* IgnoredActor, AActor* HoleActor) const
 {
     if (!World)
     {

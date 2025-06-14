@@ -1,3 +1,4 @@
+// ConeBrushShape.h
 #pragma once
 
 #include "VoxelBrushShape.h"
@@ -13,6 +14,8 @@ public:
 		const FVector& BrushCenter,
 		float Radius,
 		float Strength,
-		float Falloff, float TerrainHeight, bool bDig
+		float Falloff,
+		float TerrainHeight,
+		bool bDig
 	) const override;
 };

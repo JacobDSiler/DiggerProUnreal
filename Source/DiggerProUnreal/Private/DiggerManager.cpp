@@ -55,6 +55,7 @@
 #include "Subsystems/EditorActorSubsystem.h"
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/Package.h"
+#include "Voxel/BrushShapes/ConeBrushShape.h"
 #include "Voxel/BrushShapes/CubeBrushShape.h"
 #include "Voxel/BrushShapes/SphereBrushShape.h"
 
@@ -157,13 +158,25 @@ void ADiggerManager::PostInitProperties()
 // In ADiggerManager.cpp
 void ADiggerManager::InitializeBrushShapes()
 {
-    //Set the world in ActiveBrush
-    ActiveBrush->SetWorld(GetWorld());
-    
+    // Clear existing brushes
     BrushShapeMap.Empty();
+
+    // Initialize all available brush shapes
     BrushShapeMap.Add(EVoxelBrushType::Sphere, NewObject<USphereBrushShape>(this));
     BrushShapeMap.Add(EVoxelBrushType::Cube, NewObject<UCubeBrushShape>(this));
-    // ...add other shapes
+    BrushShapeMap.Add(EVoxelBrushType::Cone, NewObject<UConeBrushShape>(this));
+    
+    // Log initialization for debugging
+    UE_LOG(LogTemp, Warning, TEXT("Initializing brush shapes..."));
+    for (const auto& Pair : BrushShapeMap)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Initialized %s for brush type %d"), 
+            *Pair.Value->GetClass()->GetName(), 
+            (int32)Pair.Key);
+    }
+
+    // If there's an ActiveBrush member, we should probably handle it differently
+    // Can you show me the ActiveBrush related code so we can fix that?
 }
 
 UVoxelBrushShape* ADiggerManager::GetActiveBrushShape(EVoxelBrushType BrushType) const
@@ -176,6 +189,67 @@ UVoxelBrushShape* ADiggerManager::GetActiveBrushShape(EVoxelBrushType BrushType)
 }
 
 
+/*void ADiggerManager::ApplyBrushAtCameraHit()
+{
+    // Get the active brush shape
+    const UVoxelBrushShape* ActiveBrushShape = GetActiveBrushShape(ActiveBrush->GetBrushType());
+    if (!ActiveBrushShape)
+    {
+        UE_LOG(LogTemp, Error, TEXT("ActiveBrushShape is null"));
+        return;
+    }
+
+    // Get hit location
+    FHitResult HitResult;
+    if (!ActiveBrushShape->GetCameraHitLocation(HitResult))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No valid hit found"));
+        return;
+    }
+
+    // Create brush stroke with correct data
+    FBrushStroke BrushStroke;
+    BrushStroke.BrushPosition = HitResult.Location;
+    BrushStroke.BrushRadius = ActiveBrush->GetBrushSize();
+    BrushStroke.BrushFalloff = 0.f;
+    BrushStroke.BrushStrength = 1.f;
+    BrushStroke.bDig = ActiveBrush->GetDig();
+    BrushStroke.BrushType = ActiveBrush->GetBrushType();
+
+    //Log the brushstrok details
+    UE_LOG(LogTemp, Warning, TEXT("PIE: === BRUSH STROKE DEBUG ==="));
+    UE_LOG(LogTemp, Warning, TEXT("PIE: Position: %s"), *BrushStroke.BrushPosition.ToString());
+    UE_LOG(LogTemp, Warning, TEXT("PIE: Radius: %f"), BrushStroke.BrushRadius);
+    UE_LOG(LogTemp, Warning, TEXT("PIE: Falloff: %f"), BrushStroke.BrushFalloff);
+    UE_LOG(LogTemp, Warning, TEXT("PIE: Strength: %f"), BrushStroke.BrushStrength);
+    UE_LOG(LogTemp, Warning, TEXT("PIE: bDig: %s"), BrushStroke.bDig ? TEXT("true") : TEXT("false"));
+
+    UE_LOG(LogTemp, Warning, TEXT("Applying brush at location: %s, radius: %f"), 
+           *BrushStroke.BrushPosition.ToString(), BrushStroke.BrushRadius);
+
+    // Apply the brush
+    ApplyBrushToAllChunks(BrushStroke);
+}*/
+
+void ADiggerManager::ApplyBrushToAllChunksPIE(FBrushStroke& BrushStroke)
+{
+    // Get the hit location from camera first
+    FHitResult HitResult;
+    if (!ActiveBrush->GetCameraHitLocation(HitResult))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No valid hit found"));
+        return;
+    }
+
+    // Create brush stroke with the hit location and brush settings
+    BrushStroke = ActiveBrush->CreateBrushStroke(HitResult, ActiveBrush->GetDig());
+    
+    UE_LOG(LogTemp, Warning, TEXT("PIE Brush applied at: %s"), *BrushStroke.BrushPosition.ToString());
+    
+    // Apply the brush
+    ApplyBrushToAllChunks(BrushStroke);
+}
+
 
 void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
 {
@@ -185,6 +259,13 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
         UE_LOG(LogTemp, Error, TEXT("ActiveBrushShape is null for brush type %d"), (int32)BrushStroke.BrushType);
         return;
     }
+
+    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: === BRUSH STROKE DEBUG ==="));
+    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Position: %s"), *BrushStroke.BrushPosition.ToString());
+    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Radius: %f"), BrushStroke.BrushRadius);
+    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Falloff: %f"), BrushStroke.BrushFalloff);
+    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Strength: %f"), BrushStroke.BrushStrength);
+    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: bDig: %s"), BrushStroke.bDig ? TEXT("true") : TEXT("false"));
     
     if (FVoxelConversion::LocalVoxelSize <= 0.0f)
     {
@@ -194,7 +275,10 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
     // Handle hole spawn ONCE per brush stroke, before processing chunks
     if (BrushStroke.bDig)
     {
-        HandleHoleSpawn(BrushStroke);
+        if(BrushStroke.BrushPosition.Z - BrushStroke.BrushRadius + BrushStroke.BrushFalloff <= GetLandscapeHeightAt(BrushStroke.BrushPosition))
+        {
+            HandleHoleSpawn(BrushStroke);
+        }
     }
 
     float BrushEffectRadius = BrushStroke.BrushRadius + BrushStroke.BrushFalloff;
@@ -215,15 +299,23 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
             for (int32 Z = MinChunk.Z; Z <= MaxChunk.Z; ++Z)
             {
                 FIntVector ChunkCoords(X, Y, Z);
+                
+                // Add this logging
+                UE_LOG(LogTemp, Warning, TEXT("Trying to get/create chunk at: %s"), *ChunkCoords.ToString());
+                
                 if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
                 {
+                    UE_LOG(LogTemp, Warning, TEXT("Successfully got chunk at: %s"), *ChunkCoords.ToString());
                     Chunk->ApplyBrushStroke(BrushStroke, ActiveBrushShape);
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Error, TEXT("Failed to get/create chunk at: %s"), *ChunkCoords.ToString());
                 }
             }
         }
     }
 }
-
 
 void ADiggerManager::SetVoxelAtWorldPosition(const FVector& WorldPos, float Value)
 {
@@ -1223,6 +1315,14 @@ void ADiggerManager::BeginPlay()
 {
     Super::BeginPlay();
 
+    UE_LOG(LogTemp, Warning, TEXT("=== PIE STARTED - CHUNK STATUS ==="));
+    UE_LOG(LogTemp, Warning, TEXT("ChunkMap contains %d chunks"), ChunkMap.Num());
+    
+    for (auto& ChunkPair : ChunkMap)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Found chunk at: %s"), *ChunkPair.Key.ToString());
+    }
+
     if (!EnsureWorldReference())
     {
         UE_LOG(LogTemp, Error, TEXT("World is null in DiggerManager BeginPlay()! Continuing with default behavior."));
@@ -1401,6 +1501,8 @@ void ADiggerManager::UpdateVoxelSize()
 {
     if (Subdivisions != 0)
     {
+        UE_LOG(LogTemp, Warning, TEXT("Initializing FVoxelConversion in PIE BeginPlay"));
+        FVoxelConversion::InitFromConfig(ChunkSize, Subdivisions, TerrainGridSize, FVector::ZeroVector);
         VoxelSize = TerrainGridSize / Subdivisions;
     }
     else
@@ -1773,6 +1875,7 @@ bool ADiggerManager::GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const 
     return false;
 }
 
+
 FVector ADiggerManager::GetLandscapeNormalAt(const FVector& WorldPosition)
 {
     // Get all landscape actors in the level
@@ -1846,7 +1949,7 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 
     FVector SpawnLocation = Stroke.BrushPosition;
     FRotator SpawnRotation = Stroke.BrushRotation;
-    FVector SpawnScale = FVector(Stroke.BrushRadius / 50.0f);
+    FVector SpawnScale = FVector(Stroke.BrushRadius / 47.0f);
 
     // Avoid zero-location spawns
     if (SpawnLocation.IsNearlyZero())
@@ -1896,11 +1999,34 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     {
         UE_LOG(LogTemp, Warning, TEXT("Using PIE/Runtime spawn path"));
         
-        FHitResult HitResult = ActiveBrush->GetCameraHitLocation();
+        FHitResult HitResult;
+        if (!ActiveBrush->GetCameraHitLocation(HitResult))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("No valid hit found."));
+            return;
+        }
+        
         if (HitResult.bBlockingHit || HitResult.Location != FVector::ZeroVector)
         {
             SpawnLocation = HitResult.Location;
-            SpawnRotation = FRotationMatrix::MakeFromZ(HitResult.ImpactNormal.GetSafeNormal()).Rotator();
+            
+            // Ensure we have a valid normal for rotation calculation
+            FVector SafeNormal = HitResult.ImpactNormal.GetSafeNormal();
+            if (SafeNormal.IsNearlyZero())
+            {
+                SafeNormal = FVector::UpVector;
+                UE_LOG(LogTemp, Warning, TEXT("Using default up vector for hole rotation"));
+            }
+            
+            // Clamp the normal to prevent extreme angles
+            float DotWithUp = FVector::DotProduct(SafeNormal, FVector::UpVector);
+            if (FMath::Abs(DotWithUp) < 0.1f) // If normal is nearly horizontal
+            {
+                SafeNormal = FVector::UpVector;
+                UE_LOG(LogTemp, Warning, TEXT("Clamping extreme angle to up vector"));
+            }
+            
+            SpawnRotation = FRotationMatrix::MakeFromZ(SafeNormal).Rotator();
         }
         
         FActorSpawnParameters SpawnParams;

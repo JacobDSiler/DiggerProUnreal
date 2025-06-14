@@ -125,6 +125,10 @@ public:
     ADiggerManager();
     void InitializeBrushShapes();
     UVoxelBrushShape* GetActiveBrushShape(EVoxelBrushType BrushType) const;
+ 
+
+    UFUNCTION(BlueprintCallable, Category="Brush")
+    void ApplyBrushToAllChunksPIE(FBrushStroke& BrushStroke);
     void ApplyBrushToAllChunks(FBrushStroke& BrushStroke);
     bool SaveSDFBrushToFile(const FCustomSDFBrush& Brush, const FString& FilePath);
     bool LoadSDFBrushFromFile(const FString& FilePath, FCustomSDFBrush& OutBrush);

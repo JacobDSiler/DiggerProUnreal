@@ -1,54 +1,95 @@
 // ConeBrushShape.cpp
-
 #include "ConeBrushShape.h"
 #include "VoxelConversion.h"
 #include "Math/UnrealMathUtility.h"
 
+// UConeBrushShape.cpp
 float UConeBrushShape::CalculateSDF_Implementation(
     const FVector& WorldPos,
     const FVector& BrushCenter,
-    float Radius,         // Cone base radius
-    float Length,         // Use Strength param
+    float Radius,
+    float Strength,
     float Falloff,
-    float bFilledParam,   // Use TerrainHeight param as bFilled (0.0 = false, >0.5 = true)
-    bool bDig
-) const
+    float TerrainHeight,
+    bool bDig) const
 {
-
-    // Interpret bFilled from bFilledParam (0.0 = false, >0.5 = true)
-    bool bFilled = bFilledParam > 0.5f;
-
-    // Assume cone is aligned along +Z, tip at BrushCenter, base at BrushCenter + (0,0,Length)
-    FVector Local = WorldPos - BrushCenter;
-    float h = Length;
-    float r = Radius;
-
-    // Project point onto cone axis (Z)
-    float z = Local.Z;
-    float radial = FVector2D(Local.X, Local.Y).Size();
-
-    // SDF for a finite cone (see Inigo Quilez, "Distance to a cone")
-    float s = (h - z) / h;
-    float coneRadiusAtZ = r * s;
-    float distToSurface = radial - coneRadiusAtZ;
-
-    float Distance;
+    // Get brush parameters
+    float Height = 50.f;
+    float Angle = 60.f;
+    bool bFilled = true;
+//    FRotator BrushRotation = FRotator(180.f,0.f,0.f);
+    FVector BrushOffset = FVector(0);
+    
+    // Apply offset to brush center
+    FVector AdjustedBrushCenter = BrushCenter + BrushOffset;
+    
+    // Transform to brush space
+    FTransform BrushTransform(BrushRotation, AdjustedBrushCenter);
+    FTransform InvBrushTransform = BrushTransform.Inverse();
+    FVector LocalPos = InvBrushTransform.TransformPosition(WorldPos);
+    
+    // Calculate cone parameters
+    float AngleRad = FMath::DegreesToRadians(Angle);
+    float RadiusAtBase = Height * FMath::Tan(AngleRad);
+    
+    // Calculate SDF for cone (matching your original logic)
+    float radiusAtZ = (LocalPos.Z / Height) * RadiusAtBase;
+    float d = FVector2D(LocalPos.X, LocalPos.Y).Size() - radiusAtZ;
+    
+    float dist;
     if (bFilled)
     {
-        // Inside the cone volume
-        Distance = FMath::Max(distToSurface, -z); // -z: below tip is outside
+        // Hard caps: bottom at Z=0, top at Z=Height
+        float cappedZ = FMath::Clamp(LocalPos.Z, 0.0f, Height);
+        radiusAtZ = (cappedZ / Height) * RadiusAtBase;
+        d = FVector2D(LocalPos.X, LocalPos.Y).Size() - radiusAtZ;
+
+        // Only inside the cylinder-ish cone body
+        float dz = 0.0f;
+        if (LocalPos.Z < 0.0f) dz = LocalPos.Z;
+        else if (LocalPos.Z > Height) dz = LocalPos.Z - Height;
+
+        dist = FMath::Max(d, dz); // flat bottom/top cap
     }
     else
     {
-        // Only the shell
-        Distance = FMath::Abs(distToSurface) - Falloff * 0.5f;
+        // Keep the soft SDF for shell-style cones
+        dist = FMath::Max(d, -LocalPos.Z);
+        dist = FMath::Min(dist, FMath::Max(d, LocalPos.Z - Height));
+    }
+    
+    // Early out if outside influence
+    if (dist > Falloff)
+        return 0.0f;
+    
+    // Skip interior if not filled (for hollow cones)
+    const float SDFTransitionBand = FVoxelConversion::LocalVoxelSize * 2.0f;
+    if (!bFilled && dist < -SDFTransitionBand)
+    {
+        return 0.0f;
+    }
+    
+    // Fix for tip issue: Add a small bias to ensure the tip is properly handled
+    if (!bDig && LocalPos.Z < FVoxelConversion::LocalVoxelSize)
+    {
+        // Near the tip, make sure the SDF is negative enough
+        dist = FMath::Min(dist, -0.1f);
+    }
+    
+    // Convert distance to SDF value
+    float SDFValue;
+    if (bDig)
+    {
+        SDFValue = dist <= 0.0f ? 
+            FVoxelConversion::SDF_AIR : 
+            FMath::Lerp(FVoxelConversion::SDF_AIR, 0.0f, dist / Falloff);
+    }
+    else
+    {
+        SDFValue = dist <= 0.0f ? 
+            FVoxelConversion::SDF_SOLID : 
+            FMath::Lerp(FVoxelConversion::SDF_SOLID, 0.0f, dist / Falloff);
     }
 
-    // Smooth falloff
-    float t = FMath::Clamp((Distance + Falloff) / FMath::Max(Falloff, 0.0001f), 0.0f, 1.0f);
-
-    float TargetSDF = bDig ? FVoxelConversion::SDF_AIR : FVoxelConversion::SDF_SOLID;
-    float SDF = FMath::Lerp(TargetSDF, 0.0f, t);
-
-    return SDF;
+    return SDFValue * Strength;
 }

@@ -23,6 +23,10 @@ public:
 	void InitializeBrush(EVoxelBrushType InBrushType, float InSize, FVector InLocation, ADiggerManager* DiggerManagerRef);
 	UVoxelChunk* GetTargetChunkFromBrushPosition(const FVector3d& BrushPosition);
 	UWorld* GetSafeWorld() const;
+	FBrushStroke CreateBrushStroke(const FHitResult& HitResult, bool bIsDig) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Brush")
+	bool GetCameraHitLocation(FHitResult& OutHitResult) const;
 
 	// Use virtual, not pure virtual
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Voxel")
@@ -104,23 +108,20 @@ protected:
 	//Dig Setting
 	bool bIsDigging;
 
-public:
-	UFUNCTION(BlueprintCallable, Category = "Brush")
-	FHitResult GetCameraHitLocation();
 
 private:
 	//World
 	UPROPERTY()
 	UWorld* World;
+public:
+	FHitResult PerformComplexTrace(const FVector& Start, const FVector& End, AActor* IgnoredActor) const;
+	bool IsHoleBPActor(AActor* Actor) const;
+	FHitResult TraceThroughHole(const FHitResult& HoleHit, const FVector& End, AActor* IgnoredActor) const;
+	FHitResult TraceBehindLandscape(const FHitResult& LandscapeHit, const FVector& End, AActor* IgnoredActor, AActor* HoleActor) const;
+
 	FRotator BrushRotation;
 	float BrushLength;
 	float BrushAngle;
-public:
-	FHitResult PerformComplexTrace(const FVector& Start, const FVector& End, AActor* IgnoredActor);
-	bool IsHoleBPActor(AActor* Actor) const;
-	FHitResult TraceThroughHole(const FHitResult& HoleHit, const FVector& End, AActor* IgnoredActor);
-	FHitResult TraceBehindLandscape(const FHitResult& LandscapeHit, const FVector& End, AActor* IgnoredActor, AActor* HoleActor);
-
 
 	void SetWorld(UWorld* SetWorld)
 	{
