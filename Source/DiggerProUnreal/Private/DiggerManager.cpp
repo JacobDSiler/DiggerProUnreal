@@ -2575,6 +2575,24 @@ void ADiggerManager::EnsureVoxelDataDirectoryExists() const
     }
 }
 
+void ADiggerManager::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+    
+    // Update cache refresh timer
+    SavedChunkCacheRefreshTimer += DeltaTime;
+    if (SavedChunkCacheRefreshTimer >= CACHE_REFRESH_INTERVAL)
+    {
+        SavedChunkCacheRefreshTimer = 0.0f;
+        if (!bSavedChunkCacheValid)
+        {
+            RefreshSavedChunkCache();
+        }
+    }
+    
+    // Your existing tick code...
+}
+
 FString ADiggerManager::GetChunkFilePath(const FIntVector& ChunkCoords) const
 {
     FString FileName = FString::Printf(TEXT("Chunk%d-%d-%d%s"), 
@@ -2591,10 +2609,8 @@ bool ADiggerManager::DoesChunkFileExist(const FIntVector& ChunkCoords) const
 
 bool ADiggerManager::SaveChunk(const FIntVector& ChunkCoords)
 {
-    // Ensure the VoxelData directory exists
     EnsureVoxelDataDirectoryExists();
     
-    // Check if chunk exists in memory
     UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
     if (!ChunkPtr || !*ChunkPtr)
     {
@@ -2610,13 +2626,14 @@ bool ADiggerManager::SaveChunk(const FIntVector& ChunkCoords)
     
     if (bSaveSuccess)
     {
-        UE_LOG(LogTemp, Log, TEXT("Successfully saved chunk %s to %s"), 
-            *ChunkCoords.ToString(), *FilePath);
+        UE_LOG(LogTemp, Log, TEXT("Successfully saved chunk %s"), *ChunkCoords.ToString());
+        
+        // Invalidate cache so it gets refreshed
+        InvalidateSavedChunkCache();
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to save chunk %s to %s"), 
-            *ChunkCoords.ToString(), *FilePath);
+        UE_LOG(LogTemp, Error, TEXT("Failed to save chunk %s"), *ChunkCoords.ToString());
     }
     
     return bSaveSuccess;
@@ -2626,11 +2643,10 @@ bool ADiggerManager::LoadChunk(const FIntVector& ChunkCoords)
 {
     FString FilePath = GetChunkFilePath(ChunkCoords);
     
-    // Check if file exists
     if (!FPaths::FileExists(FilePath))
     {
-        UE_LOG(LogTemp, Warning, TEXT("Cannot load chunk at %s - file does not exist: %s"), 
-            *ChunkCoords.ToString(), *FilePath);
+        UE_LOG(LogTemp, Warning, TEXT("Cannot load chunk at %s - file does not exist"), 
+            *ChunkCoords.ToString());
         return false;
     }
     
@@ -2648,20 +2664,48 @@ bool ADiggerManager::LoadChunk(const FIntVector& ChunkCoords)
     
     if (bLoadSuccess)
     {
-        UE_LOG(LogTemp, Log, TEXT("Successfully loaded chunk %s from %s"), 
-            *ChunkCoords.ToString(), *FilePath);
+        UE_LOG(LogTemp, Log, TEXT("Successfully loaded chunk %s"), *ChunkCoords.ToString());
         
-        // Mark chunk as clean after loading
-        // Chunk->bIsDirty = false; // Uncomment if you have access to bIsDirty
+        // IMPORTANT: Force mesh regeneration after loading
+        Chunk->ForceUpdate();
+        
+        // Alternative: If you have a specific mesh update method, use that instead
+        // For example:
+        // if (USparseVoxelGrid* VoxelGrid = Chunk->GetSparseVoxelGrid())
+        // {
+        //     VoxelGrid->UpdateMesh();
+        // }
+        
+        UE_LOG(LogTemp, Log, TEXT("Triggered mesh regeneration for loaded chunk %s"), 
+            *ChunkCoords.ToString());
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to load chunk %s from %s"), 
-            *ChunkCoords.ToString(), *FilePath);
+        UE_LOG(LogTemp, Error, TEXT("Failed to load chunk %s"), *ChunkCoords.ToString());
     }
     
     return bLoadSuccess;
 }
+
+void ADiggerManager::CreateHoleAt(FVector WorldPosition, FRotator Rotation, FVector Scale, TSubclassOf<AActor> HoleBPClass)
+{
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(WorldPosition);
+    if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
+    {
+        Chunk->AddHole(GetWorld(), HoleBPClass, WorldPosition, Rotation, Scale);
+    }
+}
+
+bool ADiggerManager::RemoveHoleNear(FVector WorldPosition, float MaxDistance)
+{
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(WorldPosition);
+    if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
+    {
+        return Chunk->RemoveNearestHole(WorldPosition, MaxDistance);
+    }
+    return false;
+}
+
 
 bool ADiggerManager::SaveAllChunks()
 {
@@ -2669,8 +2713,8 @@ bool ADiggerManager::SaveAllChunks()
     
     if (ChunkMap.Num() == 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("No chunks to save - ChunkMap is empty"));
-        return true; // Not an error condition
+        UE_LOG(LogTemp, Log, TEXT("No chunks to save - ChunkMap is empty"));
+        return true;
     }
     
     int32 SavedCount = 0;
@@ -2695,17 +2739,20 @@ bool ADiggerManager::SaveAllChunks()
     UE_LOG(LogTemp, Log, TEXT("Finished saving chunks: %d successful, %d failed"), 
         SavedCount, FailedCount);
     
+    // Invalidate cache after batch save
+    InvalidateSavedChunkCache();
+    
     return FailedCount == 0;
 }
 
 bool ADiggerManager::LoadAllChunks()
 {
-    TArray<FIntVector> SavedChunkCoords = GetAllSavedChunkCoordinates();
+    TArray<FIntVector> SavedChunkCoords = GetAllSavedChunkCoordinates(true); // Force refresh
     
     if (SavedChunkCoords.Num() == 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("No saved chunks found to load"));
-        return true; // Not an error condition
+        UE_LOG(LogTemp, Log, TEXT("No saved chunks found to load"));
+        return true;
     }
     
     int32 LoadedCount = 0;
@@ -2731,9 +2778,23 @@ bool ADiggerManager::LoadAllChunks()
     return FailedCount == 0;
 }
 
-TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates() const
+
+TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates(bool bForceRefresh) const
 {
-    TArray<FIntVector> ChunkCoordinates;
+    // Use cached data if valid and not forcing refresh
+    if (!bForceRefresh && bSavedChunkCacheValid)
+    {
+        return CachedSavedChunkCoordinates;
+    }
+    
+    // If we need to refresh, do it on the mutable cache
+    const_cast<ADiggerManager*>(this)->RefreshSavedChunkCache();
+    return CachedSavedChunkCoordinates;
+}
+
+void ADiggerManager::RefreshSavedChunkCache()
+{
+    CachedSavedChunkCoordinates.Empty();
     
     FString VoxelDataPath = FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY;
     
@@ -2741,8 +2802,8 @@ TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates() const
     
     if (!PlatformFile.DirectoryExists(*VoxelDataPath))
     {
-        UE_LOG(LogTemp, Warning, TEXT("VoxelData directory does not exist: %s"), *VoxelDataPath);
-        return ChunkCoordinates;
+        bSavedChunkCacheValid = true;
+        return;
     }
     
     // Find all .VoxelData files
@@ -2752,7 +2813,6 @@ TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates() const
     for (const FString& FileName : FoundFiles)
     {
         // Parse filename to extract coordinates
-        // Expected format: ChunkX-Y-Z.VoxelData
         FString BaseName = FPaths::GetBaseFilename(FileName);
         
         if (BaseName.StartsWith(TEXT("Chunk")))
@@ -2768,17 +2828,26 @@ TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates() const
                 int32 Y = FCString::Atoi(*CoordParts[1]);
                 int32 Z = FCString::Atoi(*CoordParts[2]);
                 
-                ChunkCoordinates.Add(FIntVector(X, Y, Z));
-            }
-            else
-            {
-                UE_LOG(LogTemp, Warning, TEXT("Invalid chunk filename format: %s"), *FileName);
+                CachedSavedChunkCoordinates.Add(FIntVector(X, Y, Z));
             }
         }
     }
     
-    UE_LOG(LogTemp, Log, TEXT("Found %d saved chunk files"), ChunkCoordinates.Num());
-    return ChunkCoordinates;
+    bSavedChunkCacheValid = true;
+    
+    // Only log when actually refreshing to avoid spam
+    static int32 LastCachedCount = -1;
+    if (CachedSavedChunkCoordinates.Num() != LastCachedCount)
+    {
+        UE_LOG(LogTemp, VeryVerbose, TEXT("Refreshed saved chunk cache: found %d files"), 
+            CachedSavedChunkCoordinates.Num());
+        LastCachedCount = CachedSavedChunkCoordinates.Num();
+    }
+}
+
+void ADiggerManager::InvalidateSavedChunkCache()
+{
+    bSavedChunkCacheValid = false;
 }
 
 bool ADiggerManager::DeleteChunkFile(const FIntVector& ChunkCoords)
@@ -2796,11 +2865,14 @@ bool ADiggerManager::DeleteChunkFile(const FIntVector& ChunkCoords)
     
     if (bDeleteSuccess)
     {
-        UE_LOG(LogTemp, Log, TEXT("Successfully deleted chunk file: %s"), *FilePath);
+        UE_LOG(LogTemp, Log, TEXT("Successfully deleted chunk file for chunk %s"), *ChunkCoords.ToString());
+        
+        // Invalidate cache after deletion
+        InvalidateSavedChunkCache();
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to delete chunk file: %s"), *FilePath);
+        UE_LOG(LogTemp, Error, TEXT("Failed to delete chunk file for chunk %s"), *ChunkCoords.ToString());
     }
     
     return bDeleteSuccess;

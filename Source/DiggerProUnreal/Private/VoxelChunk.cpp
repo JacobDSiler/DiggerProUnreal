@@ -13,6 +13,8 @@
 #include "Kismet/GameplayStatics.h"
 
 
+struct FSpawnedHoleData;
+
 UVoxelChunk::UVoxelChunk()
 	: ChunkCoordinates(FIntVector::ZeroValue), 
 	  TerrainGridSize(100), 
@@ -193,6 +195,68 @@ bool UVoxelChunk::LoadChunkData(const FString& FilePath)
 	}
 	return false;
 }
+
+
+void UVoxelChunk::SpawnHoleMeshes(UWorld* WorldContext)
+{
+	for (FSpawnedHoleData& HoleData : HoleBPs)
+	{
+		if (HoleData.HoleBPClass && !HoleData.SpawnedInstance)
+		{
+			FTransform SpawnTransform(HoleData.Rotation, HoleData.Location, HoleData.Scale);
+			AActor* Spawned = WorldContext->SpawnActor<AActor>(HoleData.HoleBPClass, SpawnTransform);
+			HoleData.SpawnedInstance = Spawned;
+		}
+	}
+}
+
+void UVoxelChunk::AddHole(UWorld* WorldContext, TSubclassOf<AActor> HoleBPClass, FVector Location, FRotator Rotation, FVector Scale)
+{
+	if (!HoleBPClass || !WorldContext) return;
+
+	FSpawnedHoleData NewHole;
+	NewHole.HoleBPClass = HoleBPClass;
+	NewHole.Location = Location;
+	NewHole.Rotation = Rotation;
+	NewHole.Scale = Scale;
+
+	FTransform SpawnTransform(Rotation, Location, Scale);
+	AActor* Spawned = WorldContext->SpawnActor<AActor>(HoleBPClass, SpawnTransform);
+	NewHole.SpawnedInstance = Spawned;
+
+	HoleBPs.Add(NewHole);
+}
+
+bool UVoxelChunk::RemoveNearestHole(FVector Location, float MaxDistance)
+{
+	int32 NearestIndex = INDEX_NONE;
+	float ClosestDistSqr = MaxDistance * MaxDistance;
+
+	for (int32 i = 0; i < HoleBPs.Num(); ++i)
+	{
+		float DistSqr = FVector::DistSquared(HoleBPs[i].Location, Location);
+		if (DistSqr < ClosestDistSqr)
+		{
+			ClosestDistSqr = DistSqr;
+			NearestIndex = i;
+		}
+	}
+
+	if (NearestIndex != INDEX_NONE)
+	{
+		AActor* Spawned = HoleBPs[NearestIndex].SpawnedInstance;
+		if (Spawned && !IsValid(Spawned))
+		{
+			Spawned->Destroy();
+		}
+		HoleBPs.RemoveAt(NearestIndex);
+		return true;
+	}
+
+	return false;
+}
+
+
 
 
 

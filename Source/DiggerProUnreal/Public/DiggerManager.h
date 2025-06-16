@@ -13,7 +13,8 @@
 #include "Engine/StaticMeshActor.h"
 #include "GameFramework/Actor.h"
 // Define the FBrushStroke struct
-#include "C:\Users\serpe\Documents\Unreal Projects\DiggerProUnreal\Source\DiggerProUnreal\Private\FBrushStroke.h"
+//#include "C:\Users\serpe\Documents\Unreal Projects\DiggerProUnreal\Source\DiggerProUnreal\Public\FBrushStroke.h"
+#include "FBrushStroke.h"
 
 #include "AssetToolsModule.h"
 #include "FCustomSDFBrush.h"
@@ -164,6 +165,12 @@ public:
             }
             return OutArray;
         }
+
+    UFUNCTION(BlueprintCallable)
+    void CreateHoleAt(FVector WorldPosition, FRotator Rotation, FVector Scale, TSubclassOf<AActor> HoleBPClass);
+
+    UFUNCTION(BlueprintCallable)
+    bool RemoveHoleNear(FVector WorldPosition, float MaxDistance = 100.0f);
 
 
 #if WITH_EDITOR
@@ -448,14 +455,36 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
     bool DoesChunkFileExist(const FIntVector& ChunkCoords) const;
     
-    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
-    TArray<FIntVector> GetAllSavedChunkCoordinates() const;
     
     UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
     bool DeleteChunkFile(const FIntVector& ChunkCoords);
     
     UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
     void EnsureVoxelDataDirectoryExists() const;
+    void Tick(float DeltaTime);
+
+private:
+    // Cache for saved chunk coordinates to avoid constant filesystem scanning
+    UPROPERTY()
+    TArray<FIntVector> CachedSavedChunkCoordinates;
+    
+    // Flag to track if cache is valid
+    bool bSavedChunkCacheValid = false;
+    
+    // Timer to refresh cache periodically instead of every frame
+    float SavedChunkCacheRefreshTimer = 0.0f;
+    static constexpr float CACHE_REFRESH_INTERVAL = 2.0f; // Refresh every 2 seconds
+
+public:
+    // Modified method signatures
+    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
+    TArray<FIntVector> GetAllSavedChunkCoordinates(bool bForceRefresh = false) const;
+    
+    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
+    void RefreshSavedChunkCache();
+    
+    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
+    void InvalidateSavedChunkCache();
 
 private:
     // Constants for file management

@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "LandscapeProxy.h"
 #include "UObject/NoExportTypes.h"
+#include "FSpawnedHoleData.h"
 #include "VoxelChunk.generated.h"
 
 class UVoxelBrushShape;
@@ -25,7 +26,14 @@ public:
     void InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerManager* InDiggerManager);
     void InitializeMeshComponent(UProceduralMeshComponent* MeshComponent);
     void InitializeDiggerManager(ADiggerManager* InDiggerManager);
-    
+
+
+    UFUNCTION(BlueprintCallable)
+    void AddHole(UWorld* WorldContext, TSubclassOf<AActor> HoleBPClass, FVector Location, FRotator Rotation, FVector Scale);
+
+    UFUNCTION(BlueprintCallable)
+    bool RemoveNearestHole(FVector Location, float MaxDistance = 100.0f);
+
     
     // Debug functions
     void DebugDrawChunk();
@@ -48,12 +56,17 @@ public:
     void ForceUpdate();
     bool SaveChunkData(const FString& FilePath);
     bool LoadChunkData(const FString& FilePath);
+    void SpawnHoleMeshes(UWorld* WorldContext);
 
     // Voxel manipulation
     void SetVoxel(int32 X, int32 Y, int32 Z, const float SDFValue, bool& bDig) const;
     void SetVoxel(const FVector& Position, const float SDFValue, bool& bDig) const;
-    
 
+    
+    UPROPERTY()
+    TArray<FSpawnedHoleData> HoleBPs;
+
+    
     // Mesh generation
     void GenerateMesh() const;
 
@@ -73,6 +86,7 @@ public:
     void BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction, const FString& String);
 
     float BlendSDF(float SDFValue, float ExistingSDF, bool bDig, float TransitionBand);
+    //void ForceRegenerateMesh();
 
 private:
     void ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig);
