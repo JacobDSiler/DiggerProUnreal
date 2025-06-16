@@ -1938,17 +1938,9 @@ UWorld* ADiggerManager::GetSafeWorld() const
 
 void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 {
-    UE_LOG(LogTemp, Warning, TEXT("HandleHoleSpawn Called! Stand by..."));
-    if (!HoleBP)
+    if (!HoleBP || !ActiveBrush)
     {
-        UE_LOG(LogTemp, Error, TEXT("HoleBP is not assigned!"));
-        return;
-    }
-
-    UWorld* CurrentWorld = GetWorld();
-    if (!CurrentWorld)
-    {
-        UE_LOG(LogTemp, Error, TEXT("Invalid World in SpawnHoleAtBrushLocation!"));
+        UE_LOG(LogTemp, Error, TEXT("HoleBP or ActiveBrush is null"));
         return;
     }
 
@@ -1956,105 +1948,40 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     FRotator SpawnRotation = Stroke.BrushRotation;
     FVector SpawnScale = FVector(Stroke.BrushRadius / 47.0f);
 
-    // Avoid zero-location spawns
     if (SpawnLocation.IsNearlyZero())
     {
-        UE_LOG(LogTemp, Warning, TEXT("Spawn location near origin, adjusting upward."));
         SpawnLocation.Z = 100.f;
     }
 
-    AActor* SpawnedHole = nullptr;
-
-    UE_LOG(LogTemp, Warning, TEXT("About to spawn at location: %s"), *SpawnLocation.ToString());
-
-#if WITH_EDITOR
-    if (GIsEditor && !GWorld->HasBegunPlay())
+    FHitResult HitResult;
+    if (ActiveBrush->GetCameraHitLocation(HitResult))
     {
-        UE_LOG(LogTemp, Warning, TEXT("Using editor spawn path"));
-        
-        if (GEditor && GEditor->GetEditorWorldContext().World())
+        FVector SafeNormal = HitResult.ImpactNormal.GetSafeNormal();
+        if (SafeNormal.IsNearlyZero() || FMath::Abs(FVector::DotProduct(SafeNormal, FVector::UpVector)) < 0.1f)
         {
-            UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
-            
-            FActorSpawnParameters SpawnParams;
-            SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-            SpawnParams.bNoFail = true;
-            
-            // Spawn using the standard method with separate location and rotation
-            SpawnedHole = EditorWorld->SpawnActor<AActor>(HoleBP, SpawnLocation, SpawnRotation, SpawnParams);
-            
-            if (SpawnedHole)
-            {
-                // Set scale after spawning
-                SpawnedHole->SetActorScale3D(SpawnScale);
-                
-                // Set label using the actor's method, not the subsystem
-                FString NewLabel = FString::Printf(TEXT("HoleBP_%d"), FMath::RandRange(0, 999999));
-                SpawnedHole->SetActorLabel(NewLabel);
-                
-                // Mark for undo/redo
-                SpawnedHole->Modify();
-                
-                UE_LOG(LogTemp, Warning, TEXT("Successfully spawned in editor"));
-            }
+            SafeNormal = FVector::UpVector;
         }
-    }
-    else
-#endif
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Using PIE/Runtime spawn path"));
-        
-        FHitResult HitResult;
-        if (!ActiveBrush->GetCameraHitLocation(HitResult))
-        {
-            UE_LOG(LogTemp, Warning, TEXT("No valid hit found."));
-            return;
-        }
-        
-        if (HitResult.bBlockingHit || HitResult.Location != FVector::ZeroVector)
-        {
-            SpawnLocation = HitResult.Location;
-            
-            // Ensure we have a valid normal for rotation calculation
-            FVector SafeNormal = HitResult.ImpactNormal.GetSafeNormal();
-            if (SafeNormal.IsNearlyZero())
-            {
-                SafeNormal = FVector::UpVector;
-                UE_LOG(LogTemp, Warning, TEXT("Using default up vector for hole rotation"));
-            }
-            
-            // Clamp the normal to prevent extreme angles
-            float DotWithUp = FVector::DotProduct(SafeNormal, FVector::UpVector);
-            if (FMath::Abs(DotWithUp) < 0.1f) // If normal is nearly horizontal
-            {
-                SafeNormal = FVector::UpVector;
-                UE_LOG(LogTemp, Warning, TEXT("Clamping extreme angle to up vector"));
-            }
-            
-            SpawnRotation = FRotationMatrix::MakeFromZ(SafeNormal).Rotator();
-        }
-        
-        FActorSpawnParameters SpawnParams;
-        SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-        SpawnParams.bNoFail = true;
-        SpawnedHole = CurrentWorld->SpawnActor<AActor>(HoleBP, SpawnLocation, SpawnRotation, SpawnParams);
-        
-        if (SpawnedHole)
-        {
-            SpawnedHole->SetActorScale3D(SpawnScale);
-        }
+
+        SpawnRotation = FRotationMatrix::MakeFromZ(SafeNormal).Rotator();
+        SpawnLocation = HitResult.Location;
     }
 
-    if (SpawnedHole)
+    // Find which chunk owns this location
+    UVoxelChunk* TargetChunk = GetOrCreateChunkAtWorld(SpawnLocation);
+
+    if (TargetChunk)
     {
-        UE_LOG(LogTemp, Log, TEXT("Successfully spawned HoleBP at %s with scale %s"), 
-               *SpawnLocation.ToString(), *SpawnScale.ToString());
+        // Save and spawn from the chunk
+        TargetChunk->SaveHoleData(SpawnLocation, SpawnRotation, SpawnScale);
+        TargetChunk->SpawnHoleFromData(FSpawnedHoleData(SpawnLocation, SpawnRotation, SpawnScale));
+        UE_LOG(LogTemp, Log, TEXT("Delegated hole spawn to chunk at location %s"), *SpawnLocation.ToString());
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to spawn HoleBP at %s"), *SpawnLocation.ToString());
+        UE_LOG(LogTemp, Error, TEXT("No chunk found at location %s"), *SpawnLocation.ToString());
     }
 }
+
 
 
 void ADiggerManager::DuplicateLandscape(ALandscapeProxy* Landscape)
@@ -2692,7 +2619,7 @@ void ADiggerManager::CreateHoleAt(FVector WorldPosition, FRotator Rotation, FVec
     FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(WorldPosition);
     if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
     {
-        Chunk->AddHole(GetWorld(), HoleBPClass, WorldPosition, Rotation, Scale);
+        Chunk->SpawnHole(HoleBPClass, WorldPosition, Rotation, Scale);
     }
 }
 

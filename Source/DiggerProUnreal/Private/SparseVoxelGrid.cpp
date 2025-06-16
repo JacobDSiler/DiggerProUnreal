@@ -185,86 +185,75 @@ void USparseVoxelGrid::SynchronizeBordersIfDirty()
 }
 
 
-bool USparseVoxelGrid::SaveVoxelDataToFile(const FString& FilePath) 
+//inline FArchive& operator<<(FArchive& Ar, FSpawnedHoleData& HoleData)
+
+
+
+// FArchive operator<<(FArchive& Ar, FSpawnedHoleData& HoleData)
+// {
+//     HoleData.Serialize(Ar);
+//     return Ar;
+// }
+
+FArchive operator<<(const FArchive& Ar, int Int);
+
+bool USparseVoxelGrid::SerializeToArchive(FArchive& Ar)
 {
-    if (FilePath.IsEmpty())
+    // Serialize core metadata
+    Ar << TerrainGridSize;
+    Ar << Subdivisions;
+    Ar << ChunkSize;
+
+    // Serialize voxel count
+    int32 VoxelCount = VoxelData.Num();
+    Ar << VoxelCount;
+
+    if (Ar.IsSaving())
     {
-        UE_LOG(LogTemp, Error, TEXT("SaveVoxelDataToFile: Empty file path"));
-        return false;
+        for (auto& Pair : VoxelData)
+        {
+            FIntVector& Key = Pair.Key;
+            FVoxelData& Voxel = Pair.Value;
+
+            Ar << Key.X;
+            Ar << Key.Y;
+            Ar << Key.Z;
+            Ar << Voxel.SDFValue;
+        }
     }
 
-    FBufferArchive ToBinary;
-
-    // Serialize metadata
-    ToBinary << TerrainGridSize;
-    ToBinary << Subdivisions;
-    ToBinary << ChunkSize;
-
-    // Serialize the voxel data map
-    for (const auto& VoxelPair : VoxelData)
-    {
-        int32 X = VoxelPair.Key.X;
-        int32 Y = VoxelPair.Key.Y;
-        int32 Z = VoxelPair.Key.Z;
-        float SDFValue = VoxelPair.Value.SDFValue;
-
-        ToBinary << X;
-        ToBinary << Y;
-        ToBinary << Z;
-        ToBinary << SDFValue;
-    }
-
-
-    if (FFileHelper::SaveArrayToFile(ToBinary, *FilePath))
-    {
-        ToBinary.FlushCache();
-        return true;
-    }
-    return false;
+    return true;
 }
 
-bool USparseVoxelGrid::LoadVoxelDataFromFile(const FString& FilePath)
+bool USparseVoxelGrid::SerializeFromArchive(FArchive& Ar)
 {
-    if (!FPaths::FileExists(FilePath))
+    Ar << TerrainGridSize;
+    Ar << Subdivisions;
+    Ar << ChunkSize;
+
+    int32 VoxelCount = 0;
+    Ar << VoxelCount;
+
+    if (VoxelCount < 0 || VoxelCount > 100000000) // sanity check
     {
-        UE_LOG(LogTemp, Warning, TEXT("LoadVoxelDataFromFile: File does not exist: %s"), *FilePath);
+        UE_LOG(LogTemp, Error, TEXT("Invalid voxel count: %d"), VoxelCount);
         return false;
     }
-    TArray<uint8> BinaryArray;
 
-    if (FFileHelper::LoadFileToArray(BinaryArray, *FilePath))
+    if (Ar.IsLoading())
     {
-        FMemoryReader FromBinary = FMemoryReader(BinaryArray, true);
-        FromBinary.Seek(0);
-
-        FromBinary << TerrainGridSize;
-        FromBinary << Subdivisions;
-        FromBinary << ChunkSize;
-
-        VoxelData.Empty();
-
-        while (FromBinary.Tell() < FromBinary.TotalSize())
+        VoxelData.Empty(); // Safe to ignore pre-allocation
+        for (int32 i = 0; i < VoxelCount; ++i)
         {
             int32 X, Y, Z;
             float SDFValue;
 
-            FromBinary << X;
-            FromBinary << Y;
-            FromBinary << Z;
-            FromBinary << SDFValue;
-
-            FIntVector VoxelCoords(X, Y, Z);
-            FVoxelData Voxel;
-            Voxel.SDFValue = SDFValue;
-            VoxelData.Add(VoxelCoords, Voxel);
+            Ar << X << Y << Z << SDFValue;
+            VoxelData.Add(FIntVector(X, Y, Z), FVoxelData{ SDFValue });
         }
-
-
-        FromBinary.FlushCache();
-        return true;
     }
 
-    return false;
+    return true;
 }
 
 

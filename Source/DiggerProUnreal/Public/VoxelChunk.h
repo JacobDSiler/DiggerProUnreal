@@ -26,10 +26,20 @@ public:
     void InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerManager* InDiggerManager);
     void InitializeMeshComponent(UProceduralMeshComponent* MeshComponent);
     void InitializeDiggerManager(ADiggerManager* InDiggerManager);
+    void RestoreAllHoles();
+
+    // In UVoxelChunk.h
+    UFUNCTION()
+    void SpawnHoleFromData(const FSpawnedHoleData& HoleData);
+    
+    // In UVoxelChunk.h
+    UFUNCTION()
+    void SaveHoleData(const FVector& Location, const FRotator& Rotation, const FVector& Scale);
+
 
 
     UFUNCTION(BlueprintCallable)
-    void AddHole(UWorld* WorldContext, TSubclassOf<AActor> HoleBPClass, FVector Location, FRotator Rotation, FVector Scale);
+    void SpawnHole(TSubclassOf<AActor> HoleBPClass, FVector Location, FRotator Rotation, FVector Scale);
 
     UFUNCTION(BlueprintCallable)
     bool RemoveNearestHole(FVector Location, float MaxDistance = 100.0f);
@@ -56,17 +66,24 @@ public:
     void ForceUpdate();
     bool SaveChunkData(const FString& FilePath);
     bool LoadChunkData(const FString& FilePath);
-    void SpawnHoleMeshes(UWorld* WorldContext);
+    bool LoadChunkData(const FString& FilePath, bool bOverwrite);
+    void ClearSpawnedHoles();
+    void SpawnHoleMeshes();
+    AActor* SpawnTransientActor(UWorld* InWorld, TSubclassOf<AActor> ActorClass, FVector Location, FRotator Rotation,
+                                FVector Scale);
 
     // Voxel manipulation
     void SetVoxel(int32 X, int32 Y, int32 Z, const float SDFValue, bool& bDig) const;
     void SetVoxel(const FVector& Position, const float SDFValue, bool& bDig) const;
+    
+    TSubclassOf<AActor> HoleBP;
 
     
     UPROPERTY()
-    TArray<FSpawnedHoleData> HoleBPs;
+    TArray<AActor*> SpawnedHoleInstances;
+    TArray<FSpawnedHoleData> HoleDataArray;
 
-    
+
     // Mesh generation
     void GenerateMesh() const;
 

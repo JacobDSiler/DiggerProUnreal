@@ -47,12 +47,7 @@ public:
 	bool bBorderIsDirty = false;
 
 	void RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove);
-
-	// Save current voxel data to disk
-	bool SaveVoxelDataToFile(const FString& FilePath);
-
-	// Load voxel data from disk into the current grid
-	bool LoadVoxelDataFromFile(const FString& FilePath);
+	
 	float GetVoxel(FIntVector Vector);
 
 	// Delegate to broadcast when a new island is detected
@@ -67,6 +62,8 @@ public:
 	void SetVoxel(FIntVector Position, float SDFValue, bool bDig);
 	void SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig);
 	void SynchronizeBordersIfDirty();
+	bool SerializeToArchive(FArchive& Ar);
+	bool SerializeFromArchive(FArchive& Ar);
 
 	// Retrieves the voxel's SDF value; returns true if the voxel exists
 	float GetVoxel(int32 X, int32 Y, int32 Z);

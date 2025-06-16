@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/Actor.h"
+#include "UObject/NoExportTypes.h"
 #include "FSpawnedHoleData.generated.h"
 
 USTRUCT(BlueprintType)
@@ -9,30 +9,29 @@ struct FSpawnedHoleData
 {
 	GENERATED_BODY()
 
-	// The class of the Blueprint to spawn
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	TSubclassOf<AActor> HoleBPClass;
-
-	// Transform data
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY()
 	FVector Location;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY()
 	FRotator Rotation;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY()
 	FVector Scale;
 
-	// Optional: store the spawned instance if needed
-	UPROPERTY(Transient)
-	AActor* SpawnedInstance;
+	FSpawnedHoleData() = default;
 
-	// Constructor
-	FSpawnedHoleData()
-		: HoleBPClass(nullptr)
-		, Location(FVector::ZeroVector)
-		, Rotation(FRotator::ZeroRotator)
-		, Scale(FVector(1.0f))
-		, SpawnedInstance(nullptr)
+	FSpawnedHoleData(const FVector& InLoc, const FRotator& InRot, const FVector& InScale)
+		: Location(InLoc), Rotation(InRot), Scale(InScale)
 	{}
 };
+
+
+// 🔥 This must be outside of the struct definition:
+FORCEINLINE FArchive& operator<<(FArchive& Ar, FSpawnedHoleData& Hole)
+{
+	Ar << Hole.Location;
+	Ar << Hole.Rotation;
+	Ar << Hole.Scale;
+	return Ar;
+}
+

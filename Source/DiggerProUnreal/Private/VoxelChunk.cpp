@@ -11,6 +11,8 @@
 #include "VoxelLogAggregator.h"
 #include "Async/Async.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/FileHelper.h"
+#include "Serialization/BufferArchive.h"
 
 
 struct FSpawnedHoleData;
@@ -24,10 +26,7 @@ UVoxelChunk::UVoxelChunk()
 	  DiggerManager(nullptr),
 	  SparseVoxelGrid(CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid")))
 {
-    
 	MarchingCubesGenerator = CreateDefaultSubobject<UMarchingCubes>(TEXT("MarchingCubesGenerator"));
-
-
 }
 
 
@@ -50,6 +49,8 @@ void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerM
 {
 	ChunkCoordinates = InChunkCoordinates;
 	UE_LOG(LogTemp, Error, TEXT("Chunk created at X: %i Y: %i Z: %i"), ChunkCoordinates.X, ChunkCoordinates.Y, ChunkCoordinates.Z);
+
+	HoleBP=InDiggerManager->HoleBP;
 	
 	// Now initialize the SparseVoxelGrid with the correct coordinates
 	if (SparseVoxelGrid)
@@ -117,6 +118,55 @@ void UVoxelChunk::InitializeDiggerManager(ADiggerManager* InDiggerManager)
 	if(!DiggerManager) DiggerManager = InDiggerManager;
 }
 
+void UVoxelChunk::RestoreAllHoles()
+{
+	for (const FSpawnedHoleData& HoleData : HoleDataArray)
+	{
+		SpawnHoleFromData(HoleData);
+	}
+}
+
+
+// In UVoxelChunk.cpp
+void UVoxelChunk::SpawnHoleFromData(const FSpawnedHoleData& HoleData)
+{
+	if (!HoleBP || !GetWorld())
+	{
+		UE_LOG(LogTemp, Error, TEXT("HoleBP or World invalid during SpawnHoleFromData"));
+		return;
+	}
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParams.bNoFail = true;
+
+	AActor* SpawnedHole = GetWorld()->SpawnActor<AActor>(HoleBP, HoleData.Location, HoleData.Rotation, SpawnParams);
+	if (SpawnedHole)
+	{
+		SpawnedHole->SetActorScale3D(HoleData.Scale);
+
+		// Add spawned actor to tracking array
+		SpawnedHoleInstances.Add(SpawnedHole);
+
+#if WITH_EDITOR
+		if (GIsEditor)
+		{
+			FString NewLabel = FString::Printf(TEXT("HoleBP_%d"), FMath::RandRange(0, 999999));
+			SpawnedHole->SetActorLabel(NewLabel);
+		}
+#endif
+	}
+}
+
+
+
+// In UVoxelChunk.cpp
+void UVoxelChunk::SaveHoleData(const FVector& Location, const FRotator& Rotation, const FVector& Scale)
+{
+	HoleDataArray.Add(FSpawnedHoleData(Location, Rotation, Scale));
+}
+
+
 void UVoxelChunk::DebugDrawChunk()
 {
 	if (!World) World = DiggerManager->GetWorldFromManager();
@@ -179,62 +229,242 @@ void UVoxelChunk::ForceUpdate()
 
 bool UVoxelChunk::SaveChunkData(const FString& FilePath)
 {
-	if (SparseVoxelGrid)
+	FBufferArchive ToBinary;
+
+	// Serialize voxel data first
+	if (!SparseVoxelGrid || !SparseVoxelGrid->SerializeToArchive(ToBinary))
 	{
-		return SparseVoxelGrid->SaveVoxelDataToFile(FilePath);
+		UE_LOG(LogTemp, Error, TEXT("Failed to serialize voxel grid"));
+		return false;
 	}
+
+	// Serialize hole data count
+	int32 HoleCount = SpawnedHoleInstances.Num();
+	ToBinary << HoleCount;
+
+	// Serialize each hole
+	for (FSpawnedHoleData& Hole : HoleDataArray)
+	{
+		ToBinary << Hole;  // Use your operator<< for FSpawnedHoleData
+	}
+
+	// Save all to file
+	if (FFileHelper::SaveArrayToFile(ToBinary, *FilePath))
+	{
+		ToBinary.FlushCache();
+		return true;
+	}
+
 	return false;
 }
 
 bool UVoxelChunk::LoadChunkData(const FString& FilePath)
+{return LoadChunkData( FilePath, false);}
+
+bool UVoxelChunk::LoadChunkData(const FString& FilePath, bool bOverwrite)
 {
-	if (SparseVoxelGrid)
+	if (!FPaths::FileExists(FilePath))
 	{
-		ForceUpdate();
-		return SparseVoxelGrid->LoadVoxelDataFromFile(FilePath);
+		UE_LOG(LogTemp, Warning, TEXT("LoadChunkData: File does not exist: %s"), *FilePath);
+		return false;
 	}
-	return false;
+
+	TArray<uint8> BinaryArray;
+	if (!FFileHelper::LoadFileToArray(BinaryArray, *FilePath))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LoadChunkData: Failed to load file to array"));
+		return false;
+	}
+
+	FMemoryReader FromBinary = FMemoryReader(BinaryArray, true);
+	FromBinary.Seek(0);
+
+	// --- Load voxel grid ---
+	if (!SparseVoxelGrid)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SparseVoxelGrid is null during load"));
+		return false;
+	}
+
+	// Temporarily deserialize into a temp voxel grid for merging
+	USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
+	if (!TempGrid->SerializeFromArchive(FromBinary))
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to deserialize voxel grid from archive"));
+		return false;
+	}
+
+	if (bOverwrite)
+	{
+		SparseVoxelGrid->VoxelData = TempGrid->VoxelData; // Replace voxel data
+		ClearSpawnedHoles();                              // Remove any existing hole actors
+		HoleDataArray.Empty();                            // Clear existing saved hole data
+	}
+	else
+	{
+		for (const auto& Pair : TempGrid->VoxelData)
+		{
+			SparseVoxelGrid->VoxelData.Add(Pair.Key, Pair.Value); // Merge into existing
+		}
+	}
+
+	// --- Deserialize hole data ---
+	int32 HoleCount = 0;
+	FromBinary << HoleCount;
+
+	for (int32 i = 0; i < HoleCount; ++i)
+	{
+		FSpawnedHoleData Hole;
+		FromBinary << Hole;
+
+		HoleDataArray.Add(Hole);
+
+		if (bOverwrite || !bOverwrite) // Always spawn when loading
+		{
+			SpawnHoleFromData(Hole);
+		}
+	}
+
+	return true;
 }
 
 
-void UVoxelChunk::SpawnHoleMeshes(UWorld* WorldContext)
+void UVoxelChunk::ClearSpawnedHoles()
 {
-	for (FSpawnedHoleData& HoleData : HoleBPs)
+	for (AActor* HoleActor : SpawnedHoleInstances)
 	{
-		if (HoleData.HoleBPClass && !HoleData.SpawnedInstance)
+		if (HoleActor && IsValid(HoleActor))
 		{
-			FTransform SpawnTransform(HoleData.Rotation, HoleData.Location, HoleData.Scale);
-			AActor* Spawned = WorldContext->SpawnActor<AActor>(HoleData.HoleBPClass, SpawnTransform);
-			HoleData.SpawnedInstance = Spawned;
+			HoleActor->Destroy();
+		}
+	}
+	SpawnedHoleInstances.Empty();
+}
+
+
+
+void UVoxelChunk::SpawnHoleMeshes()
+{
+	if (!World || !HoleBP) return;
+
+	// Ensure SpawnedHoleInstances matches HoleDataArray size
+	while (SpawnedHoleInstances.Num() < HoleDataArray.Num())
+	{
+		SpawnedHoleInstances.Add(nullptr);
+	}
+
+	for (int32 i = 0; i < HoleDataArray.Num(); ++i)
+	{
+		if (SpawnedHoleInstances[i]) continue;
+
+		const FSpawnedHoleData& HoleData = HoleDataArray[i];
+		FTransform SpawnTransform(HoleData.Rotation, HoleData.Location, HoleData.Scale);
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		SpawnParams.ObjectFlags |= RF_Transient;
+
+		AActor* Spawned = World->SpawnActor<AActor>(HoleBP, SpawnTransform, SpawnParams);
+
+		if (Spawned)
+		{
+			Spawned->SetFlags(RF_Transient);
+			Spawned->ClearFlags(RF_Transactional);
+			Spawned->SetActorLabel(TEXT("Runtime Hole"));
+			SpawnedHoleInstances[i] = Spawned;
 		}
 	}
 }
 
-void UVoxelChunk::AddHole(UWorld* WorldContext, TSubclassOf<AActor> HoleBPClass, FVector Location, FRotator Rotation, FVector Scale)
+AActor* UVoxelChunk::SpawnTransientActor(UWorld* InWorld, TSubclassOf<AActor> ActorClass, FVector Location, FRotator Rotation, FVector Scale)
 {
-	if (!HoleBPClass || !WorldContext) return;
+	if (!InWorld || !ActorClass) return nullptr;
 
-	FSpawnedHoleData NewHole;
-	NewHole.HoleBPClass = HoleBPClass;
-	NewHole.Location = Location;
-	NewHole.Rotation = Rotation;
-	NewHole.Scale = Scale;
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	SpawnParams.bNoFail = true;
+	SpawnParams.ObjectFlags |= RF_Transient;
 
-	FTransform SpawnTransform(Rotation, Location, Scale);
-	AActor* Spawned = WorldContext->SpawnActor<AActor>(HoleBPClass, SpawnTransform);
-	NewHole.SpawnedInstance = Spawned;
-
-	HoleBPs.Add(NewHole);
+	AActor* Spawned = InWorld->SpawnActor<AActor>(ActorClass, Location, Rotation, SpawnParams);
+	if (Spawned)
+	{
+		Spawned->SetActorScale3D(Scale);
+		Spawned->SetFlags(RF_Transient);
+		Spawned->ClearFlags(RF_Transactional);
+		Spawned->SetActorLabel(TEXT("Runtime Hole"));
+	}
+	return Spawned;
 }
+
+ 
+
+
+void UVoxelChunk::SpawnHole(TSubclassOf<AActor> HoleBPClass, FVector Location, FRotator Rotation, FVector Scale)
+{
+	if (!HoleBPClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SpawnHole: Invalid HoleBPClass"));
+		return;
+	}
+
+	HoleBP = HoleBPClass;
+
+	if (!World)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SpawnHole: Invalid World"));
+		return;
+	}
+
+	AActor* SpawnedHole = nullptr;
+
+#if WITH_EDITOR
+	if (GIsEditor && !GWorld->HasBegunPlay())
+	{
+		if (GEditor && GEditor->GetEditorWorldContext().World())
+		{
+			UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+			SpawnedHole = SpawnTransientActor(EditorWorld, HoleBPClass, Location, Rotation, Scale);
+
+			if (SpawnedHole)
+			{
+				FString NewLabel = FString::Printf(TEXT("HoleBP_%d"), FMath::RandRange(0, 999999));
+				SpawnedHole->SetActorLabel(NewLabel);
+				SpawnedHole->Modify();
+			}
+		}
+	}
+	else
+#endif
+	{
+		SpawnedHole = SpawnTransientActor(World, HoleBPClass, Location, Rotation, Scale);
+	}
+
+	if (SpawnedHole)
+	{
+		FSpawnedHoleData HoleData{ Location, Rotation, Scale };
+		HoleDataArray.Add(HoleData);
+
+		UE_LOG(LogTemp, Log, TEXT("Spawned HoleBP in Chunk at %s with scale %s"), *Location.ToString(), *Scale.ToString());
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to spawn HoleBP in Chunk at %s"), *Location.ToString());
+	}
+}
+
+
 
 bool UVoxelChunk::RemoveNearestHole(FVector Location, float MaxDistance)
 {
 	int32 NearestIndex = INDEX_NONE;
 	float ClosestDistSqr = MaxDistance * MaxDistance;
 
-	for (int32 i = 0; i < HoleBPs.Num(); ++i)
+	for (int32 i = 0; i < SpawnedHoleInstances.Num(); ++i)
 	{
-		float DistSqr = FVector::DistSquared(HoleBPs[i].Location, Location);
+		AActor* HoleActor = SpawnedHoleInstances[i];
+		if (!HoleActor) continue;
+
+		float DistSqr = FVector::DistSquared(HoleActor->GetActorLocation(), Location);
 		if (DistSqr < ClosestDistSqr)
 		{
 			ClosestDistSqr = DistSqr;
@@ -244,20 +474,25 @@ bool UVoxelChunk::RemoveNearestHole(FVector Location, float MaxDistance)
 
 	if (NearestIndex != INDEX_NONE)
 	{
-		AActor* Spawned = HoleBPs[NearestIndex].SpawnedInstance;
-		if (Spawned && !IsValid(Spawned))
+		AActor* HoleActor = SpawnedHoleInstances[NearestIndex];
+		if (IsValid(HoleActor))
 		{
-			Spawned->Destroy();
+			HoleActor->Destroy();
 		}
-		HoleBPs.RemoveAt(NearestIndex);
+
+		// Also remove the serialized hole data
+		if (HoleDataArray.IsValidIndex(NearestIndex))
+		{
+			HoleDataArray.RemoveAt(NearestIndex);
+		}
+
+		SpawnedHoleInstances.RemoveAt(NearestIndex);
+
 		return true;
 	}
 
 	return false;
 }
-
-
-
 
 
 void UVoxelChunk::WriteToOverflows(const FIntVector& LocalVoxelCoords, 
