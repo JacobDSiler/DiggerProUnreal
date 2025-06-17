@@ -379,25 +379,73 @@ void UVoxelChunk::SpawnHoleMeshes()
 AActor* UVoxelChunk::SpawnTransientActor(UWorld* InWorld, TSubclassOf<AActor> ActorClass, FVector Location, FRotator Rotation, FVector Scale)
 {
 	if (!InWorld || !ActorClass) return nullptr;
+	
+#if WITH_EDITOR
+	// Store the current dirty state to restore it later
+	bool bWasLevelDirty = false;
+	ULevel* Level = InWorld->GetCurrentLevel();
+	if (Level && GIsEditor)
+	{
+		bWasLevelDirty = Level->GetPackage()->IsDirty();
+	}
+#endif
 
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	SpawnParams.bNoFail = true;
 	SpawnParams.ObjectFlags |= RF_Transient;
-
+	SpawnParams.bDeferConstruction = false;
+	
+	// Spawn the actor
 	AActor* Spawned = InWorld->SpawnActor<AActor>(ActorClass, Location, Rotation, SpawnParams);
+	
 	if (Spawned)
 	{
 		Spawned->SetActorScale3D(Scale);
+		
+		// Set all the transient flags
 		Spawned->SetFlags(RF_Transient);
-		Spawned->ClearFlags(RF_Transactional);
+		Spawned->ClearFlags(RF_Transactional | RF_Public);
+		
+		// Mark as preview actor and disable various systems
+		Spawned->SetActorHiddenInGame(false);
+		Spawned->bIsEditorPreviewActor = true;
+		Spawned->SetReplicates(false);
+		Spawned->SetCanBeDamaged(false);
+		
+		// Additional flags to prevent serialization
+		Spawned->SetFlags(RF_DuplicateTransient | RF_NonPIEDuplicateTransient);
+		
+#if WITH_EDITOR
+		if (GIsEditor)
+		{
+			// Clear transactional flag and prevent modification tracking
+			Spawned->ClearFlags(RF_Transactional);
+			Spawned->Modify(false);
+			
+			// Mark all components as transient too
+			for (UActorComponent* Component : Spawned->GetComponents().Array())
+			{
+				if (Component)
+				{
+					Component->SetFlags(RF_Transient | RF_DuplicateTransient | RF_NonPIEDuplicateTransient);
+					Component->ClearFlags(RF_Transactional | RF_Public);
+				}
+			}
+			
+			// CRITICAL: Reset the level's dirty state if it wasn't dirty before
+			if (Level && !bWasLevelDirty)
+			{
+				Level->GetPackage()->SetDirtyFlag(false);
+			}
+		}
+#endif
+		
 		Spawned->SetActorLabel(TEXT("Runtime Hole"));
 	}
+	
 	return Spawned;
 }
-
- 
-
 
 void UVoxelChunk::SpawnHole(TSubclassOf<AActor> HoleBPClass, FVector Location, FRotator Rotation, FVector Scale)
 {
