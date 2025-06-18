@@ -43,6 +43,8 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
 {
     BindIslandDelegates();
 
+    Manager = GetDiggerManager();
+
     AssetThumbnailPool = MakeShareable(new FAssetThumbnailPool(32, true));
     IslandGrid = SNew(SUniformGridPanel).SlotPadding(2.0f);
 
@@ -558,7 +560,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             .Text(FText::FromString("Bake to Static Mesh"))
             .OnClicked_Lambda([this]()
             {
-                if (ADiggerManager* Manager = GetDiggerManager())
+                if (Manager == GetDiggerManager())
                 {
                     Manager->BakeToStaticMesh(bEnableCollision, bEnableNanite, BakeDetail);
                 }
@@ -629,7 +631,7 @@ void FDiggerEdModeToolkit::ScanCustomBrushFolder()
 
 FDiggerEdModeToolkit::~FDiggerEdModeToolkit()
 {
-    if (ADiggerManager* Manager = GetDiggerManager())
+    if (Manager == GetDiggerManager())
     {
         Manager->OnIslandDetected.RemoveAll(this);
     }
@@ -673,7 +675,7 @@ ADiggerManager* FDiggerEdModeToolkit::GetDiggerManager()
 
 void FDiggerEdModeToolkit::BindIslandDelegates()
 {
-    if (ADiggerManager* Manager = GetDiggerManager())
+    if (Manager == GetDiggerManager())
     {
         UE_LOG(LogTemp, Warning, TEXT("Binding delegates for toolkit: %p, manager: %p"), this, Manager);
 
@@ -921,7 +923,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
                 if (State == ECheckBoxState::Checked)
                 {
                     CurrentBrushType = Info.Type;
-                    if (ADiggerManager* Manager = GetDiggerManager())
+                    if (Manager == GetDiggerManager())
                     {
                         Manager->EditorBrushType = Info.Type;
                     }
@@ -992,7 +994,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
                 .HAlign(HAlign_Center)
                 .VAlign(VAlign_Center)
                 .OnClicked_Lambda([this]() -> FReply {
-                    if (ADiggerManager* Manager = GetDiggerManager())
+                    if (Manager == GetDiggerManager())
                     {
                         bool bSuccess = Manager->SaveAllChunks();
                         if (bSuccess)
@@ -1023,7 +1025,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
                     return FReply::Handled();
                 })
                 .IsEnabled_Lambda([this]() -> bool {
-                    ADiggerManager* Manager = GetDiggerManager();
+                    Manager = GetDiggerManager();
                     return Manager != nullptr && Manager->ChunkMap.Num() > 0;
                 })
             ]
@@ -1037,7 +1039,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
                 .HAlign(HAlign_Center)
                 .VAlign(VAlign_Center)
                 .OnClicked_Lambda([this]() -> FReply {
-                    if (ADiggerManager* Manager = GetDiggerManager())
+                    if (Manager == GetDiggerManager())
                     {
                         bool bSuccess = Manager->LoadAllChunks();
                         if (bSuccess)
@@ -1068,7 +1070,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
                     return FReply::Handled();
                 })
                 .IsEnabled_Lambda([this]() -> bool {
-                    ADiggerManager* Manager = GetDiggerManager();
+                    Manager = GetDiggerManager();
                     if (!Manager) return false;
                     
                     // Check if there are any saved chunks to load
@@ -1088,7 +1090,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
             [
                 SNew(STextBlock)
                 .Text_Lambda([this]() -> FText {
-                    if (ADiggerManager* Manager = GetDiggerManager())
+                    if (Manager == GetDiggerManager())
                     {
                         return FText::FromString(FString::Printf(TEXT("Loaded: %d"), Manager->ChunkMap.Num()));
                     }
@@ -1103,7 +1105,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
             [
                 SNew(STextBlock)
                 .Text_Lambda([this]() -> FText {
-                    if (ADiggerManager* Manager = GetDiggerManager())
+                    if (Manager == GetDiggerManager())
                     {
                         TArray<FIntVector> SavedChunks = Manager->GetAllSavedChunkCoordinates();
                         return FText::FromString(FString::Printf(TEXT("Saved: %d"), SavedChunks.Num()));
@@ -1115,6 +1117,27 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
             ]
         ];
 }
+
+ECheckBoxState FDiggerEdModeToolkit::IsBrushDebugEnabled()
+{
+    
+    if (Manager && Manager->ActiveBrush)
+    {
+        return Manager->ActiveBrush->bEnableDebugDrawing ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+    }
+    return ECheckBoxState::Unchecked;
+}
+
+void FDiggerEdModeToolkit::OnBrushDebugCheckChanged(ECheckBoxState NewState)
+{
+    if (Manager == GetDiggerManager() && Manager->ActiveBrush)
+    {
+        const bool bNewEnabled = (NewState == ECheckBoxState::Checked);
+        Manager->ActiveBrush->bEnableDebugDrawing = bNewEnabled;
+        UE_LOG(LogTemp, Warning, TEXT("Brush debug drawing manually set to %s"), bNewEnabled ? TEXT("ENABLED") : TEXT("DISABLED"));
+    }
+}
+
 
 //Other Brush Settings Sliders
         /*+ SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 4)
@@ -1163,7 +1186,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOperationSection()
              {
                  bBrushDig = false;
                  ClearBrushDigPreviewOverride();
-                 if (ADiggerManager* Manager = GetDiggerManager())
+                 if (Manager == GetDiggerManager())
                  {
                      Manager->EditorBrushDig = false;
                  }
@@ -1187,7 +1210,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOperationSection()
              {
                  bBrushDig = true;
                  ClearBrushDigPreviewOverride();
-                 if (ADiggerManager* Manager = GetDiggerManager())
+                 if ( Manager == GetDiggerManager())
                  {
                      Manager->EditorBrushDig = true;
                  }
@@ -1276,7 +1299,7 @@ void FDiggerEdModeToolkit::OnConvertToPhysicsActorClicked()
         const FIslandData& Island = Islands[SelectedIslandIndex];
         
         // Check if there's actually an island at this position
-        if (ADiggerManager* Manager = GetDiggerManager())
+        if (Manager == GetDiggerManager())
         {
             // Use the reference voxel if available
             if (Island.ReferenceVoxel != FIntVector::ZeroValue)
@@ -1322,7 +1345,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                         {
                             const FIslandData& Island = Islands[SelectedIslandIndex];
                             // Check if there's actually an island at this position
-                            if (ADiggerManager* Manager = GetDiggerManager())
+                            if (Manager == GetDiggerManager())
                             {
                                 // Use the reference voxel if available
                                 if (Island.ReferenceVoxel != FIntVector::ZeroValue)
@@ -1356,7 +1379,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                         {
                             const FIslandData& Island = Islands[SelectedIslandIndex];
                             // Check if there's actually an island at this position
-                            if (ADiggerManager* Manager = GetDiggerManager())
+                            if (Manager == GetDiggerManager())
                             {
                                 // Use the reference voxel if available
                                 if (Island.ReferenceVoxel != FIntVector::ZeroValue)

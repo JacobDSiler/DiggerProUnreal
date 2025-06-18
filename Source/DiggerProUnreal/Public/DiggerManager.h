@@ -130,6 +130,7 @@ public:
 
     UFUNCTION(BlueprintCallable, Category="Brush")
     void ApplyBrushToAllChunksPIE(FBrushStroke& BrushStroke);
+    void ApplyBrushToAllChunks(FBrushStroke& BrushStroke, bool ForceUpdate);
     void ApplyBrushToAllChunks(FBrushStroke& BrushStroke);
     bool SaveSDFBrushToFile(const FCustomSDFBrush& Brush, const FString& FilePath);
     bool LoadSDFBrushFromFile(const FString& FilePath, FCustomSDFBrush& OutBrush);
@@ -212,6 +213,7 @@ public:
     
     bool EnsureWorldReference();
 
+    void ClearProceduralMeshes();
     UFUNCTION(BlueprintCallable, CallInEditor, Category = "Export")
     void BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction);
 
@@ -295,6 +297,8 @@ public:
 protected:
     void RecreateIslandFromSaveData(const FIslandSaveData& SavedIsland);
     virtual void BeginPlay() override;
+    void DestroyAllHoleBPs();
+    void ClearHolesFromChunkMap();
     void PostInitProperties();
     void UpdateVoxelSize();
     void ProcessDirtyChunks();
@@ -367,8 +371,11 @@ public:
     UVoxelChunk* GetOrCreateChunkAtCoordinates(const float& ProposedChunkX, const float& ProposedChunkY,
                                     const float& ProposedChunkZ);
     UVoxelChunk* GetOrCreateChunkAtChunk(const FIntVector& ChunkCoords);
-    
 
+    // Global debug flag
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Debug")
+    bool bGlobalDebugDrawingEnabled = true;
+    
     // Debug voxel system
     UFUNCTION(BlueprintCallable, Category = "Voxel Debug")
     void DebugVoxels();
@@ -502,7 +509,7 @@ private:
         const TArray<FColor>& Colors,
         const TArray<FProcMeshTangent>& Tangents
     );
-
+    void ClearAllVoxelData();
 
 public:
     float GetCachedLandscapeHeightAt(const FVector& WorldPos);

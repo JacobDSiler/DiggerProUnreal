@@ -51,15 +51,17 @@ bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVec
     FVector TraceStart = WorldOrigin;
     FVector TraceEnd = WorldOrigin + WorldDirection * 100000.f;
 
-    FCollisionQueryParams Params(SCENE_QUERY_STAT(EditorBrushTrace), true);
-    UWorld* World = ViewportClient->GetWorld();
-    if (World && World->LineTraceSingleByChannel(OutHit, TraceStart, TraceEnd, ECC_Visibility, Params))
+    FHitResult Hit = FindDiggerManager()->ActiveBrush->SmartTrace(TraceStart, TraceEnd);
+
+    if (Hit.bBlockingHit)
     {
-        OutHitLocation = OutHit.ImpactPoint;
+        OutHit = Hit;
+        OutHitLocation = Hit.ImpactPoint;
         return true;
     }
     return false;
 }
+
 
 
 void FDiggerEdMode::Render(const FSceneView* View, FViewport* Viewport, FPrimitiveDrawInterface* PDI)
@@ -327,17 +329,22 @@ bool FDiggerEdMode::InputKey(FEditorViewportClient* ViewportClient, FViewport* V
 
 bool FDiggerEdMode::HandleClickSimple(const FVector& RayOrigin, const FVector& RayDirection)
 {
-    FHitResult HitResult;
-    FVector End = RayOrigin + RayDirection * 10000.0f;
+    // FHitResult HitResult;
+    // FVector End = RayOrigin + RayDirection * 10000.0f;
 
-    if (GetWorld()->LineTraceSingleByChannel(HitResult, RayOrigin, End, ECC_Visibility))
-    {
-        UE_LOG(LogTemp, Log, TEXT("Hit at: %s"), *HitResult.ImpactPoint.ToString());
-        return true;
-    }
+    // Use your brush shape's smart trace
+    //HitResult = FindDiggerManager()->ActiveBrush->SmartTrace(RayOrigin, End);
+
+    // if (HitResult.bBlockingHit)
+    // {
+    //     UE_LOG(LogTemp, Log, TEXT("Hit at: %s"), *HitResult.ImpactPoint.ToString());
+    //     return true;
+    // }
 
     return false;
 }
+
+
 
 
 

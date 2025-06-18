@@ -26,7 +26,8 @@ public:
 	FBrushStroke CreateBrushStroke(const FHitResult& HitResult, bool bIsDig) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Brush")
-	bool GetCameraHitLocation(FHitResult& OutHitResult) const;
+	bool GetCameraHitLocation(FHitResult& OutHitResult);
+	void DebugDrawLineIfEnabled( FVector& Start, FVector& End, FColor Color, float Duration) const;
 
 	// Use virtual, not pure virtual
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Voxel")
@@ -114,10 +115,45 @@ private:
 	UPROPERTY()
 	UWorld* World;
 public:
-	FHitResult PerformComplexTrace(const FVector& Start, const FVector& End, AActor* IgnoredActor) const;
-	bool IsHoleBPActor(AActor* Actor) const;
-	FHitResult TraceThroughHole(const FHitResult& HoleHit, const FVector& End, AActor* IgnoredActor) const;
-	FHitResult TraceBehindLandscape(const FHitResult& LandscapeHit, const FVector& End, AActor* IgnoredActor, AActor* HoleActor) const;
+	
+	// Public so you can toggle from blueprint or details panel
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Debug")
+	bool bEnableDebugDrawing = false;
+
+	void DebugDrawPointIfEnabled(FVector& Location, FColor Color, float Size, float Duration) const;
+	void DebugDrawSphereIfEnabled(FVector& Location, FColor Color, float Size, float Duration) const;
+	UFUNCTION(BlueprintCallable, Category="Debug")
+	void SetDebugDrawingEnabled(bool bEnabled);
+
+	UFUNCTION(BlueprintCallable, Category="Debug")
+	bool GetDebugDrawingEnabled();
+	
+	FHitResult PerformComplexTrace(FVector& Start, FVector& End, AActor* IgnoredActor) const;
+	bool IsLandscape(const AActor* Actor) const;
+	bool IsProceduralMesh(const AActor* Actor) const;
+
+	FHitResult RecursiveTraceThroughHoles(
+		FVector& Start,
+		FVector& End,
+		TArray<AActor*>& IgnoredActors,
+		bool bPassedThroughHole,
+		bool bIgnoreHolesNow,
+		int32 Depth
+	) const;
+
+	FHitResult RecursiveTraceThroughHoles_Internal(
+	FVector& Start,
+	FVector& End,
+	TArray<AActor*>& IgnoredActors,
+	bool bPassedThroughHole,
+	bool bIgnoreHolesNow,
+	int32 Depth,
+	const FVector& OriginalDirection
+	) const;
+	
+	FHitResult SmartTrace(const FVector& Start, const FVector& End);
+
+	bool IsHoleBPActor(const AActor* Actor) const;
 
 	FRotator BrushRotation;
 	float BrushLength;

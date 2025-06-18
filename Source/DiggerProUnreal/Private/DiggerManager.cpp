@@ -93,8 +93,10 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
     BrushStroke.BrushLength = EditorBrushLength;
     BrushStroke.BrushAngle = EditorBrushAngle;
 
-    UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushInEditor] EditorBrushPosition (World): %s"), *EditorBrushPosition.ToString());
+    //UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushInEditor] EditorBrushPosition (World): %s"), *EditorBrushPosition.ToString());
 
+    //ApplyBrushToAllChunks(BrushStroke, true);
+    
     ApplyBrushToAllChunks(BrushStroke);
     ProcessDirtyChunks();
 
@@ -172,13 +174,13 @@ void ADiggerManager::InitializeBrushShapes()
     BrushShapeMap.Add(EVoxelBrushType::Cone, NewObject<UConeBrushShape>(this));
     
     // Log initialization for debugging
-    UE_LOG(LogTemp, Warning, TEXT("Initializing brush shapes..."));
+    /*UE_LOG(LogTemp, Warning, TEXT("Initializing brush shapes..."));
     for (const auto& Pair : BrushShapeMap)
     {
         UE_LOG(LogTemp, Warning, TEXT("Initialized %s for brush type %d"), 
             *Pair.Value->GetClass()->GetName(), 
             (int32)Pair.Key);
-    }
+    }*/
 
     // If there's an ActiveBrush member, we should probably handle it differently
     // Can you show me the ActiveBrush related code so we can fix that?
@@ -255,6 +257,10 @@ void ADiggerManager::ApplyBrushToAllChunksPIE(FBrushStroke& BrushStroke)
     ApplyBrushToAllChunks(BrushStroke);
 }
 
+void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke, bool ForceUpdate)
+{
+    ApplyBrushToAllChunks(BrushStroke);
+}
 
 void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
 {
@@ -265,12 +271,12 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
         return;
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: === BRUSH STROKE DEBUG ==="));
+    /*UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: === BRUSH STROKE DEBUG ==="));
     UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Position: %s"), *BrushStroke.BrushPosition.ToString());
     UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Radius: %f"), BrushStroke.BrushRadius);
     UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Falloff: %f"), BrushStroke.BrushFalloff);
     UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Strength: %f"), BrushStroke.BrushStrength);
-    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: bDig: %s"), BrushStroke.bDig ? TEXT("true") : TEXT("false"));
+    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: bDig: %s"), BrushStroke.bDig ? TEXT("true") : TEXT("false"));*/
     
     if (FVoxelConversion::LocalVoxelSize <= 0.0f)
     {
@@ -306,11 +312,11 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
                 FIntVector ChunkCoords(X, Y, Z);
                 
                 // Add this logging
-                UE_LOG(LogTemp, Warning, TEXT("Trying to get/create chunk at: %s"), *ChunkCoords.ToString());
+                //UE_LOG(LogTemp, Warning, TEXT("Trying to get/create chunk at: %s"), *ChunkCoords.ToString());
                 
                 if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
                 {
-                    UE_LOG(LogTemp, Warning, TEXT("Successfully got chunk at: %s"), *ChunkCoords.ToString());
+                    //UE_LOG(LogTemp, Warning, TEXT("Successfully got chunk at: %s"), *ChunkCoords.ToString());
                     Chunk->ApplyBrushStroke(BrushStroke, ActiveBrushShape);
                 }
                 else
@@ -340,8 +346,8 @@ void ADiggerManager::SetVoxelAtWorldPosition(const FVector& WorldPos, float Valu
     {
         Chunk->GetSparseVoxelGrid()->SetVoxel(LocalVoxelIndex, Value, true);
 
-        UE_LOG(LogTemp, Display, TEXT("[SetVoxelAtWorldPosition] WorldPos: %s → Chunk: %s, Voxel: %s, Value: %.2f"),
-            *WorldPos.ToString(), *ChunkCoords.ToString(), *LocalVoxelIndex.ToString(), Value);
+        /*UE_LOG(LogTemp, Display, TEXT("[SetVoxelAtWorldPosition] WorldPos: %s → Chunk: %s, Voxel: %s, Value: %.2f"),
+            *WorldPos.ToString(), *ChunkCoords.ToString(), *LocalVoxelIndex.ToString(), Value);*/
     }
     else
     {
@@ -1323,10 +1329,13 @@ void ADiggerManager::BeginPlay()
     UE_LOG(LogTemp, Warning, TEXT("=== PIE STARTED - CHUNK STATUS ==="));
     UE_LOG(LogTemp, Warning, TEXT("ChunkMap contains %d chunks"), ChunkMap.Num());
     
+    int ChunkCount = 0;
     for (auto& ChunkPair : ChunkMap)
     {
+        ChunkCount++;
         UE_LOG(LogTemp, Warning, TEXT("Found chunk at: %s"), *ChunkPair.Key.ToString());
     }
+    UE_LOG(LogTemp, Warning, TEXT("ChunkCount: %i"), ChunkCount);
 
     if (!EnsureWorldReference())
     {
@@ -1334,9 +1343,17 @@ void ADiggerManager::BeginPlay()
     }
 
     UpdateVoxelSize();
+        
+    // ensure brushes are ready for PIE usage
     ActiveBrush->InitializeBrush(ActiveBrush->GetBrushType(),ActiveBrush->GetBrushSize(),ActiveBrush->GetBrushLocation(),this);
     InitializeBrushShapes();
 
+    DestroyAllHoleBPs();
+    ClearProceduralMeshes();
+    //ClearAllVoxelData();
+    //InitializeTerrainCache(); // or lazy-init fallback
+    LoadAllChunks();
+    
     // Start the timer to process dirty chunks
     if (World)
     {
@@ -1363,6 +1380,48 @@ void ADiggerManager::BeginPlay()
         RecreateIslandFromSaveData(SavedIsland);
     }
 }
+
+
+void ADiggerManager::DestroyAllHoleBPs()
+{
+    if (!HoleBP) return; // Ensure the reference is valid
+
+    World = GetSafeWorld();
+    if (!World) return;
+
+    for (TActorIterator<AActor> It(World, HoleBP); It; ++It)
+    {
+        AActor* HoleActor = *It;
+        if (HoleActor && IsValid(HoleActor))
+        {
+            HoleActor->Destroy();
+        }
+    }
+}
+
+
+
+void ADiggerManager::ClearHolesFromChunkMap()
+{
+    UE_LOG(LogTemp, Warning, TEXT("Clearing Spawned Holes From Chunk Grid:"));
+
+    if (ChunkMap.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No chunks in ChunkMap!"));
+        return;
+    }
+
+    // Assuming you have a map or array of chunks
+    for (auto& ChunkPair : ChunkMap)
+    {
+        UVoxelChunk* Chunk = ChunkPair.Value;
+        if (Chunk)
+        {
+            Chunk->ClearSpawnedHoles();
+        }
+    }
+}
+
 
 
 UStaticMesh* ADiggerManager::CreateStaticMeshFromRawData(
@@ -1467,6 +1526,49 @@ UStaticMesh* ADiggerManager::CreateStaticMeshFromRawData(
     return StaticMesh;
 }
 
+void ADiggerManager::ClearAllVoxelData()
+{
+    UE_LOG(LogTemp, Warning, TEXT("Clearing all voxel data..."));
+
+    // // Clear the sparse voxel grid
+    // if (SparseVoxelGrid)
+    // {
+    //     SparseVoxelGrid->Clear(); // Assumes you have a Clear() method in your grid class
+    // }
+
+    // Destroy all spawned voxel chunks (Actors or Components)
+    // for (AActor* ChunkActor : SpawnedChunks)
+    // {
+    //     if (IsValid(ChunkActor))
+    //     {
+    //         ChunkActor->Destroy();
+    //     }
+    // }
+    // SpawnedChunks.Empty();
+
+    // Destroy any mesh components stored directly on the DiggerManager
+    ClearProceduralMeshes();
+
+    // Reset any saved brush stroke data or undo queues
+    //UndoQueue.Empty(); // if you have one
+    // StrokeHistory.Empty(); // if applicable
+
+    UE_LOG(LogTemp, Warning, TEXT("All voxel data cleared."));
+}
+
+void ADiggerManager::ClearProceduralMeshes()
+{
+        if (ProceduralMesh)
+        {
+            ProceduralMesh->ClearAllMeshSections();
+            ProceduralMesh->MarkRenderStateDirty(); // Optional: forces update to visual
+            UE_LOG(LogTemp, Warning, TEXT("Procedural mesh cleared."));
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("No ProceduralMesh found to clear."));
+        }
+}
 
 
 void ADiggerManager::BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction)
@@ -2117,11 +2219,11 @@ void ADiggerManager::ProcessDirtyChunks()
         UVoxelChunk* Chunk = Elem.Value;
         if (Chunk)
         {
-            Chunk->UpdateIfDirty();
+            Chunk->ForceUpdate();
         }
     }
 
-    if (World)
+    /*if (World)
     {
         AsyncTask(ENamedThreads::GameThread, [this]()
         {
@@ -2135,7 +2237,7 @@ void ADiggerManager::ProcessDirtyChunks()
                 UE_LOG(LogTemp, Error, TEXT("World is null when resetting the ProcessDirtyChunks timer."));
             }
         });
-    }
+    }*/
 }
 
 

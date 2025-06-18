@@ -494,13 +494,15 @@ void UMarchingCubes::AddSkirtMesh(
         Triangles.Add(SkirtB);
         Triangles.Add(SkirtA);
     }
+	
+	// Fix: Set normals for skirt vertices at correct index
+	Normals.SetNum(Vertices.Num()); // Ensure size match
+	for (int32 i = 0; i < NumRim; ++i)
+	{
+		FVector Normal = DiggerManager->GetLandscapeNormalAt(Vertices[SkirtVertexIndices[i]]);
+		Normals.Insert(Normal, SkirtVertexIndices[i]); // Set at the right vertex index
+	}
 
-    // Add normals for new skirt vertices (use landscape normal)
-    for (int32 i = 0; i < NumRim; ++i)
-    {
-        FVector LandscapeNormal = DiggerManager->GetLandscapeNormalAt(Vertices[SkirtVertexIndices[i]]);
-        Normals.Add(LandscapeNormal);
-    }
 }
 
 
@@ -919,6 +921,11 @@ void UMarchingCubes::GenerateMeshFromGrid(
     for (int32 i = 0; i < OutVertices.Num(); ++i) {
         OutVertices[i] += TotalOffset;
     }
+
+	/*TArray<int32> RimVertices;
+	FindRimVertices(OutVertices, OutTriangles, RimVertices);
+	AddSkirtMesh(RimVertices, OutVertices, OutTriangles, OutNormals);*/
+
 
     if (IsDebugging()) {
         UE_LOG(LogTemp, Log, TEXT("Mesh generated from grid: %d vertices, %d triangles."), OutVertices.Num(), OutTriangles.Num());

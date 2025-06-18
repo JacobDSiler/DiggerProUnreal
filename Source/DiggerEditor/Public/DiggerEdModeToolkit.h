@@ -116,6 +116,8 @@ private:
 	float AdvancedCubeHalfExtentX=.5f;
 	float AdvancedCubeHalfExtentZ=1.f;
 	bool bUseAdvancedCubeBrush = false;
+	
+	ADiggerManager* Manager;
 
 public:
 	[[nodiscard]] bool UseSurfaceNormalRotation() const
@@ -289,6 +291,8 @@ private:
 	TSharedPtr<SUniformGridPanel> IslandGrid;
 	TSharedPtr<FAssetThumbnailPool> AssetThumbnailPool;
 	TSharedRef<SWidget> MakeSaveLoadSection();
+	ECheckBoxState IsBrushDebugEnabled();
+	void OnBrushDebugCheckChanged(ECheckBoxState NewState);
 	bool bBrushDig = false;
 	void RebuildCustomBrushGrid();
 };
