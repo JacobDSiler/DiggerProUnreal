@@ -1,5 +1,6 @@
 #include "VoxelBrushShape.h"
 
+#include "DiggerDebug.h"
 #include "DiggerManager.h"
 #include "EngineUtils.h"
 #include "Landscape.h"
@@ -30,7 +31,10 @@ bool UVoxelBrushShape::EnsureDiggerManager()
 
     if (!DiggerManager)
     {
-        UE_LOG(LogTemp, Error, TEXT("DiggerManager is null!"));
+        if (DiggerDebug::Manager)
+        {
+            UE_LOG(LogTemp, Error, TEXT("DiggerManager is null!"));
+        }
         return true;
     }
     return false;
@@ -98,7 +102,10 @@ bool UVoxelBrushShape::GetCameraHitLocation(FHitResult& OutHitResult)
         static bool bWarned = false;
         if (!bWarned)
         {
-            UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation called in editor mode. This method is intended for runtime use with a PlayerController."));
+            if (DiggerDebug::Casts)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation called in editor mode. This method is intended for runtime use with a PlayerController."));
+            }
             bWarned = true;
         }
         return false;
@@ -108,28 +115,40 @@ bool UVoxelBrushShape::GetCameraHitLocation(FHitResult& OutHitResult)
     SetWorld(GetWorld());
     if (!World)
     {
-        UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No valid world found"));
+        if (DiggerDebug::Casts || DiggerDebug::Context)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No valid world found"));
+        }
         return false;
     }
 
     APlayerController* PlayerController = World->GetFirstPlayerController();
     if (!PlayerController)
     {
-        UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No PlayerController found"));
+        if (DiggerDebug::Casts)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No PlayerController found"));
+        }
         return false;
     }
 
     float MouseX, MouseY;
     if (!PlayerController->GetMousePosition(MouseX, MouseY))
     {
-        UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Could not get mouse position"));
+        if (DiggerDebug::Casts)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Could not get mouse position"));
+        }
         return false;
     }
 
     FVector WorldPosition, WorldDirection;
     if (!PlayerController->DeprojectScreenPositionToWorld(MouseX, MouseY, WorldPosition, WorldDirection))
     {
-        UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Could not deproject mouse position"));
+        if (DiggerDebug::Casts)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Could not deproject mouse position"));
+        }
         return false;
     }
 
@@ -149,14 +168,20 @@ bool UVoxelBrushShape::GetCameraHitLocation(FHitResult& OutHitResult)
 
         if (OutHitResult.GetActor())
         {
-            UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Final Hit Actor: %s, Component: %s"), 
-                *OutHitResult.GetActor()->GetName(), 
-                OutHitResult.GetComponent() ? *OutHitResult.GetComponent()->GetName() : TEXT("None"));
+            if (DiggerDebug::Casts)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Final Hit Actor: %s, Component: %s"), 
+                    *OutHitResult.GetActor()->GetName(), 
+                    OutHitResult.GetComponent() ? *OutHitResult.GetComponent()->GetName() : TEXT("None"));
+            }
         }
         return true;
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No valid hit found."));
+    if (DiggerDebug::Casts)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No valid hit found."));
+    }
     return false;
 }
 
@@ -164,7 +189,10 @@ FHitResult UVoxelBrushShape::PerformComplexTrace(FVector& Start, FVector& End, A
 {
     if (!World)
     {
-        UE_LOG(LogTemp, Error, TEXT("World is null in PerformComplexTrace!"));
+        if (DiggerDebug::Casts || DiggerDebug::Context)
+        {
+            UE_LOG(LogTemp, Error, TEXT("World is null in PerformComplexTrace!"));
+        }
         return FHitResult();
     }
 
@@ -182,10 +210,9 @@ FHitResult UVoxelBrushShape::RecursiveTraceThroughHoles_Internal(
     FVector& Start,
     FVector& End,
     TArray<AActor*>& IgnoredActors,
-    bool bPassedThroughHole,
-    bool bIgnoreHolesNow,
     int32 Depth,
-    const FVector& OriginalDirection
+    const FVector& OriginalDirection,
+    bool bPassedThroughHole
 ) const
 {
     if (Depth > 32)
@@ -203,33 +230,57 @@ FHitResult UVoxelBrushShape::RecursiveTraceThroughHoles_Internal(
 
     AActor* HitActor = Hit.GetActor();
 
-    // 1. If we hit a HoleBP and we are not in "ignore holes" mode, ignore it and keep tracing
-    if (!bIgnoreHolesNow && IsHoleBPActor(HitActor))
+    // If we hit a HoleBP, ignore it and keep tracing
+    if (IsHoleBPActor(HitActor))
     {
-        IgnoredActors.Add(HitActor);
+        bPassedThroughHole = true;
+        if (!IgnoredActors.Contains(HitActor))
+        {
+            IgnoredActors.Add(HitActor); // Only add HoleBP
+        }
         FVector NewStart = Hit.Location + OriginalDirection * 0.1f;
-        return RecursiveTraceThroughHoles_Internal(NewStart, End, IgnoredActors, true, false, Depth + 1, OriginalDirection);
+        return RecursiveTraceThroughHoles_Internal(NewStart, End, IgnoredActors, Depth + 1, OriginalDirection, true);
     }
 
-    // 2. If we hit the landscape after passing through a hole, jump forward and ignore all holes from now on
+    // When we hit the landscape
     if (IsLandscape(HitActor))
     {
         if (bPassedThroughHole)
         {
-            IgnoredActors.Add(HitActor);
-            FVector NewStart = Hit.Location + OriginalDirection * 100.0f; // Jump forward 100cm
-            return RecursiveTraceThroughHoles_Internal(NewStart, End, IgnoredActors, bPassedThroughHole, true, Depth + 1, OriginalDirection);
+            if (!IgnoredActors.Contains(HitActor))
+            {
+                IgnoredActors.Add(HitActor); // Only add Landscape
+            }
+            if (DiggerDebug::Casts)
+            {
+                UE_LOG(LogTemp, Error,
+                       TEXT(
+                           "Hit Landscape after passing through a hole, hopping Backward 1cm before the trace continues!"
+                       ));
+            }
+            FVector NewStart = Hit.Location + OriginalDirection * -1; // Jump back 1cm
+            return RecursiveTraceThroughHoles_Internal(NewStart, End, IgnoredActors, Depth + 1, OriginalDirection,
+                                                       bPassedThroughHole);
         }
         else
         {
-            // No holes passed, return nothing (terminal miss)
-            return FHitResult();
+            if (DiggerDebug::Casts)
+            {
+                UE_LOG(LogTemp, Error, TEXT("Returning a landscape hit with !bPassedThroughHole!"));
+            }
+            // If we haven't passed through a hole, return the landscape hit
+            return Hit;
         }
     }
 
-    // 3. If we hit a mesh (hole mesh or anything else), return it!
+    if (DiggerDebug::Casts)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Returning Fallback Hit!"));
+    }
+    // Return the first non-HoleBP, non-landscape hit (e.g., procedural mesh)
     return Hit;
 }
+
 
 
 
@@ -243,7 +294,7 @@ FHitResult UVoxelBrushShape::RecursiveTraceThroughHoles(
 ) const
 {
     const FVector OriginalDirection = (End - Start).GetSafeNormal();
-    return RecursiveTraceThroughHoles_Internal(Start, End, IgnoredActors, bPassedThroughHole, bIgnoreHolesNow, Depth, OriginalDirection);
+    return RecursiveTraceThroughHoles_Internal(Start, End, IgnoredActors, 0, OriginalDirection, false);
 }
 
 
@@ -252,11 +303,17 @@ FHitResult UVoxelBrushShape::SmartTrace(const FVector& Start, const FVector& End
     World = GetSafeWorld();
     if (!World)
     {
-        UE_LOG(LogTemp, Error, TEXT("SmartTrace: World is null!"));
+        if (DiggerDebug::Casts || DiggerDebug::Context)
+        {
+            UE_LOG(LogTemp, Error, TEXT("SmartTrace: World is null!"));
+        }
         return FHitResult();
     }
 
-    //UE_LOG(LogTemp, Warning, TEXT("SmartTrace: Start=%s End=%s"), *Start.ToString(), *End.ToString());
+    if (DiggerDebug::Casts)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SmartTrace: Start=%s End=%s"), *Start.ToString(), *End.ToString());
+    }
 
     FHitResult FirstHit;
     FCollisionQueryParams Params;
@@ -266,12 +323,19 @@ FHitResult UVoxelBrushShape::SmartTrace(const FVector& Start, const FVector& End
 
     if (!bHit || !FirstHit.GetActor())
     {
-        //UE_LOG(LogTemp, Warning, TEXT("SmartTrace: No hit at all!"));
+        if (DiggerDebug::Casts)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("SmartTrace: No hit at all!"));
+        }
         return FHitResult();
     }
 
-    //UE_LOG(LogTemp, Warning, TEXT("SmartTrace: First hit %s at %s"), *FirstHit.GetActor()->GetName(), *FirstHit.Location.ToString());
-    // Make Sure the Manager Is Set and Valid. Otherwise it will exit early.
+    if (DiggerDebug::Casts)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SmartTrace: First hit %s at %s"), *FirstHit.GetActor()->GetName(), *FirstHit.Location.ToString());
+    }
+
+    // Make Sure the Manager Is Set and Valid. Otherwise, it will exit early.
     EnsureDiggerManager();
     
     if (IsHoleBPActor(FirstHit.GetActor()))
@@ -297,35 +361,52 @@ bool UVoxelBrushShape::IsHoleBPActor(const AActor* Actor) const
 {
     if (!Actor)
     {
-        UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: Actor is null."));
+        if (DiggerDebug::Casts)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: Actor is null."));
+        }
         return false;
     }
     if (!DiggerManager)
     {
-        UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: DiggerManager is null."));
+        if (DiggerDebug::Casts || DiggerDebug::Manager)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: DiggerManager is null."));
+        }
         return false;
     }
     if (!DiggerManager->HoleBP)
     {
-        UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: DiggerManager->HoleBP is null."));
+        if (DiggerDebug::Casts || DiggerDebug::Manager)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: DiggerManager->HoleBP is null."));
+        }
         return false;
     }
-
-    UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: Hit actor class: %s, HoleBP class: %s"),
-        *Actor->GetClass()->GetName(),
-        *DiggerManager->HoleBP->GetClass()->GetName());
+    if (DiggerDebug::Casts || DiggerDebug::Manager)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: Hit actor class: %s, HoleBP class: %s"),
+            *Actor->GetClass()->GetName(),
+            *DiggerManager->HoleBP->GetClass()->GetName());
+    }
 
     if (Actor->IsA(DiggerManager->HoleBP))
     {
-        UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: Hit a HoleBP at location %s."), *Actor->GetActorLocation().ToString());
+        if (DiggerDebug::Casts || DiggerDebug::Manager)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: Hit a HoleBP at location %s."), *Actor->GetActorLocation().ToString());
+        }
         return true;
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: Hit actor %s (class: %s) at location %s, not a HoleBP."),
-            *Actor->GetName(),
-            *Actor->GetClass()->GetName(),
-            *Actor->GetActorLocation().ToString());
+        if (DiggerDebug::Casts)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: Hit actor %s (class: %s) at location %s, not a HoleBP."),
+                *Actor->GetName(),
+                *Actor->GetClass()->GetName(),
+                *Actor->GetActorLocation().ToString());
+        }
         return false;
     }
 }
@@ -335,7 +416,7 @@ bool UVoxelBrushShape::IsHoleBPActor(const AActor* Actor) const
 // Helper to identify a Landscape actor
 bool UVoxelBrushShape::IsLandscape(const AActor* Actor) const
 {
-    return Actor && Actor->IsA(ALandscape::StaticClass());
+    return Actor && Actor->IsA(ALandscapeProxy::StaticClass());
 }
 
 // Helper to identify a Procedural Mesh actor

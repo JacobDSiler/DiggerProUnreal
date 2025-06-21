@@ -116,6 +116,32 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         ]
     ]
 
+        // --- Filled/Hollow UI: Visible for shapes that support it ---
++ SVerticalBox::Slot().AutoHeight().Padding(4)
+[
+    SNew(SBox)
+    .Visibility_Lambda([this]()
+    {
+        EVoxelBrushType BrushType = GetCurrentBrushType();
+        return (BrushType == EVoxelBrushType::Cone || 
+                BrushType == EVoxelBrushType::Cylinder) ? EVisibility::Visible : EVisibility::Collapsed;
+    })
+    [
+        SNew(SCheckBox)
+        .IsChecked_Lambda([this]()
+        {
+            return bIsFilled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+        })
+        .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+        {
+            bIsFilled = (NewState == ECheckBoxState::Checked);
+        })
+        [
+            SNew(STextBlock).Text(FText::FromString("Filled"))
+        ]
+    ]
+]
+
 
     // --- Advanced Cube Brush Checkbox and Roll-down ---
     + SVerticalBox::Slot().AutoHeight().Padding(4)
@@ -251,12 +277,12 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         
         
 
-    // --- Cone Angle UI: Only visible for Cone brush ---
+    // --- Cone Angle UI: Only visible for Cone and cylinder brushes ---
     + SVerticalBox::Slot().AutoHeight().Padding(4)
     [
         SNew(SBox)
         .Visibility_Lambda([this]() {
-            return (GetCurrentBrushType() == EVoxelBrushType::Cone) ? EVisibility::Visible : EVisibility::Collapsed;
+            return (GetCurrentBrushType() == EVoxelBrushType::Cone || GetCurrentBrushType() == EVoxelBrushType::Cylinder) ? EVisibility::Visible : EVisibility::Collapsed;
         })
         [
             MakeLabeledSliderRow(
@@ -300,7 +326,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     ]
 
     // --- Brush Radius, Strength, Falloff ---
-  /*  + SVerticalBox::Slot().AutoHeight().Padding(8, 16, 8, 4)
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 16, 8, 4)
     [
         MakeLabeledSliderRow(
             FText::FromString("Radius"),
@@ -335,7 +361,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             0.0f, 0.01f,
             false, &DummyFloat
         )
-    ]*/
+    ]
 
     // --- Rotate Brush Section (roll-down) ---
     + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
@@ -648,6 +674,11 @@ void FDiggerEdModeToolkit::OnIslandDetectedHandler(const FIslandData& NewIslandD
     }
 }
 
+bool FDiggerEdModeToolkit::GetBrushIsFilled()
+{
+    return bIsFilled;
+}
+
 void FDiggerEdModeToolkit::AddIsland(const FIslandData& Island)
 {
     UE_LOG(LogTemp, Error, TEXT("AddIsland called on toolkit: %p, IslandID: %d"), this, Island.IslandID);
@@ -899,6 +930,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
         { EVoxelBrushType::Stairs,       TEXT("Stairs"),        TEXT("Stairs Brush") },
         { EVoxelBrushType::Custom,       TEXT("Custom"),        TEXT("Custom Mesh Brush") },
         { EVoxelBrushType::Smooth,       TEXT("Smooth"),        TEXT("Smooth Brush") },
+        { EVoxelBrushType::Noise,       TEXT("Noise"),        TEXT("Noise Brush") },
         { EVoxelBrushType::Debug,        TEXT("Debug"),         TEXT("Debug Clicked Chunk Brush") }
     };
 

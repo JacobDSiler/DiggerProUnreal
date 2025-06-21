@@ -13,6 +13,7 @@ enum class EVoxelBrushType : uint8 {
 	Cylinder,
 	Capsule,
 	Smooth,
+	Noise,
 	Debug,
 	Custom,
 	AdvancedCube,

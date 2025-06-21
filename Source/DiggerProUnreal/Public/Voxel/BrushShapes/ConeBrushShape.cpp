@@ -1,95 +1,88 @@
-// ConeBrushShape.cpp
 #include "ConeBrushShape.h"
-#include "VoxelConversion.h"
-#include "Math/UnrealMathUtility.h"
 
-// UConeBrushShape.cpp
+#include "FBrushStroke.h"
+#include "VoxelConversion.h"
+
 float UConeBrushShape::CalculateSDF_Implementation(
     const FVector& WorldPos,
-    const FVector& BrushCenter,
-    float Radius,
-    float Strength,
-    float Falloff,
-    float TerrainHeight,
-    bool bDig) const
+    const FBrushStroke& Stroke,
+    float TerrainHeight
+) const
 {
-    // Get brush parameters
-    float Height = 50.f;
-    float Angle = 60.f;
-    bool bFilled = true;
-//    FRotator BrushRotation = FRotator(180.f,0.f,0.f);
-    FVector BrushOffset = FVector(0);
+    const FVector LocalPos = WorldPos - Stroke.BrushPosition;
     
-    // Apply offset to brush center
-    FVector AdjustedBrushCenter = BrushCenter + BrushOffset;
-    
-    // Transform to brush space
-    FTransform BrushTransform(BrushRotation, AdjustedBrushCenter);
-    FTransform InvBrushTransform = BrushTransform.Inverse();
-    FVector LocalPos = InvBrushTransform.TransformPosition(WorldPos);
-    
-    // Calculate cone parameters
-    float AngleRad = FMath::DegreesToRadians(Angle);
-    float RadiusAtBase = Height * FMath::Tan(AngleRad);
-    
-    // Calculate SDF for cone (matching your original logic)
-    float radiusAtZ = (LocalPos.Z / Height) * RadiusAtBase;
-    float d = FVector2D(LocalPos.X, LocalPos.Y).Size() - radiusAtZ;
-    
-    float dist;
-    if (bFilled)
+    // Apply rotation if needed
+    FVector RotatedPos = LocalPos;
+    if (!Stroke.BrushRotation.IsZero())
     {
-        // Hard caps: bottom at Z=0, top at Z=Height
-        float cappedZ = FMath::Clamp(LocalPos.Z, 0.0f, Height);
-        radiusAtZ = (cappedZ / Height) * RadiusAtBase;
-        d = FVector2D(LocalPos.X, LocalPos.Y).Size() - radiusAtZ;
-
-        // Only inside the cylinder-ish cone body
-        float dz = 0.0f;
-        if (LocalPos.Z < 0.0f) dz = LocalPos.Z;
-        else if (LocalPos.Z > Height) dz = LocalPos.Z - Height;
-
-        dist = FMath::Max(d, dz); // flat bottom/top cap
+        RotatedPos = Stroke.BrushRotation.UnrotateVector(LocalPos);
+    }
+    
+    const float ConeHeight = Stroke.BrushLength;
+    const float ConeRadius = Stroke.BrushRadius;
+    
+    // Project onto cone axis (Z-up from brush position)
+    const float Height = RotatedPos.Z;
+    const float RadialDistance = FVector2D(RotatedPos.X, RotatedPos.Y).Size();
+    
+    float ConeSDF;
+    
+    if (Height < 0.0f)
+    {
+        // Below cone base
+        if (RadialDistance <= ConeRadius)
+        {
+            ConeSDF = -Height; // Distance to base plane
+        }
+        else
+        {
+            ConeSDF = FVector2D(RadialDistance - ConeRadius, -Height).Size();
+        }
+    }
+    else if (Height > ConeHeight)
+    {
+        // Above cone tip
+        ConeSDF = FVector2D(RadialDistance, Height - ConeHeight).Size();
     }
     else
     {
-        // Keep the soft SDF for shell-style cones
-        dist = FMath::Max(d, -LocalPos.Z);
-        dist = FMath::Min(dist, FMath::Max(d, LocalPos.Z - Height));
+        // Within cone height range
+        const float NormalizedHeight = Height / ConeHeight;
+        const float ConeRadiusAtHeight = ConeRadius * (1.0f - NormalizedHeight);
+        
+        if (Stroke.bIsFilled)
+        {
+            // Solid cone
+            ConeSDF = RadialDistance - ConeRadiusAtHeight;
+        }
+        else
+        {
+            // Hollow cone shell
+            const float ShellThickness = FMath::Max(FVoxelConversion::LocalVoxelSize * 2.0f, ConeRadius * 0.08f);
+            ConeSDF = FMath::Abs(RadialDistance - ConeRadiusAtHeight) - ShellThickness;
+        }
     }
     
-    // Early out if outside influence
-    if (dist > Falloff)
-        return 0.0f;
-    
-    // Skip interior if not filled (for hollow cones)
-    const float SDFTransitionBand = FVoxelConversion::LocalVoxelSize * 2.0f;
-    if (!bFilled && dist < -SDFTransitionBand)
+    // Apply falloff
+    if (ConeSDF > -Stroke.BrushFalloff && ConeSDF < Stroke.BrushFalloff && Stroke.BrushFalloff > 0.0f)
     {
-        return 0.0f;
+        const float FalloffFactor = 1.0f - (FMath::Abs(ConeSDF) / Stroke.BrushFalloff);
+        ConeSDF = ConeSDF * FalloffFactor;
     }
     
-    // Fix for tip issue: Add a small bias to ensure the tip is properly handled
-    if (!bDig && LocalPos.Z < FVoxelConversion::LocalVoxelSize)
-    {
-        // Near the tip, make sure the SDF is negative enough
-        dist = FMath::Min(dist, -0.1f);
-    }
+    // Handle terrain interaction
+    float FinalSDF;
     
-    // Convert distance to SDF value
-    float SDFValue;
-    if (bDig)
+    if (Stroke.bDig)
     {
-        SDFValue = dist <= 0.0f ? 
-            FVoxelConversion::SDF_AIR : 
-            FMath::Lerp(FVoxelConversion::SDF_AIR, 0.0f, dist / Falloff);
+        // Subtractive mode - only affect areas inside the shape
+        FinalSDF = (ConeSDF <= 0.0f) ? ConeSDF * Stroke.BrushStrength : 0.0f;
     }
     else
     {
-        SDFValue = dist <= 0.0f ? 
-            FVoxelConversion::SDF_SOLID : 
-            FMath::Lerp(FVoxelConversion::SDF_SOLID, 0.0f, dist / Falloff);
+        // Additive mode - only add material where shape is solid
+        FinalSDF = (ConeSDF <= 0.0f) ? -ConeSDF * Stroke.BrushStrength : 0.0f;
     }
-
-    return SDFValue * Strength;
+    
+    return FinalSDF;
 }

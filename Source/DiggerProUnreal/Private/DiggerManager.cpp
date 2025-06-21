@@ -60,9 +60,17 @@
 #include "Voxel/BrushShapes/SphereBrushShape.h"
 
 // Save and Load
+#include "DiggerDebug.h"
+#include "DiggerEdMode.h"
 #include "HAL/PlatformFilemanager.h"
 #include "Misc/FileHelper.h"
 #include "Engine/Engine.h"
+#include "Voxel/BrushShapes/CapsuleBrushShape.h"
+#include "Voxel/BrushShapes/CylinderBrushShape.h"
+#include "Voxel/BrushShapes/IcosphereBrushShape.h"
+#include "Voxel/BrushShapes/PyramidBrushShape.h"
+#include "Voxel/BrushShapes/SmoothBrushShape.h"
+#include "Voxel/BrushShapes/TorusBrushShape.h"
 
 // Editor Tool Specific Includes
 #if WITH_EDITOR
@@ -81,7 +89,6 @@ class StaticMeshAttributes;
 
 
 
-
 void ADiggerManager::ApplyBrushInEditor(bool bDig)
 {
     FBrushStroke BrushStroke;
@@ -91,9 +98,13 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
     BrushStroke.BrushType = EditorBrushType;
     BrushStroke.bDig = bDig; // Use the parameter, not EditorBrushDig
     BrushStroke.BrushLength = EditorBrushLength;
+    BrushStroke.bIsFilled = EditorBrushIsFilled;
     BrushStroke.BrushAngle = EditorBrushAngle;
 
-    //UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushInEditor] EditorBrushPosition (World): %s"), *EditorBrushPosition.ToString());
+    if (DiggerDebug::Brush || DiggerDebug::Casts)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushInEditor] EditorBrushPosition (World): %s"), *EditorBrushPosition.ToString());
+    }
 
     //ApplyBrushToAllChunks(BrushStroke, true);
     
@@ -147,7 +158,10 @@ ADiggerManager::ADiggerManager()
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("Material M_ProcGrid required in /Content/Materials/ folder. Please ensure it is there."));
+        if (DiggerDebug::UserConv)
+        {
+            UE_LOG(LogTemp, Error, TEXT("Material M_ProcGrid required in /Content/Materials/ folder. Please ensure it is there."));
+        }
     }
 }
 
@@ -172,6 +186,12 @@ void ADiggerManager::InitializeBrushShapes()
     BrushShapeMap.Add(EVoxelBrushType::Sphere, NewObject<USphereBrushShape>(this));
     BrushShapeMap.Add(EVoxelBrushType::Cube, NewObject<UCubeBrushShape>(this));
     BrushShapeMap.Add(EVoxelBrushType::Cone, NewObject<UConeBrushShape>(this));
+    BrushShapeMap.Add(EVoxelBrushType::Cylinder, NewObject<UCylinderBrushShape>(this));
+    BrushShapeMap.Add(EVoxelBrushType::Capsule, NewObject<UCapsuleBrushShape>(this));
+    BrushShapeMap.Add(EVoxelBrushType::Torus, NewObject<UTorusBrushShape>(this));
+    BrushShapeMap.Add(EVoxelBrushType::Pyramid, NewObject<UPyramidBrushShape>(this));
+    BrushShapeMap.Add(EVoxelBrushType::Icosphere, NewObject<UIcosphereBrushShape>(this));
+    BrushShapeMap.Add(EVoxelBrushType::Smooth, NewObject<USmoothBrushShape>(this));
     
     // Log initialization for debugging
     /*UE_LOG(LogTemp, Warning, TEXT("Initializing brush shapes..."));
@@ -244,14 +264,20 @@ void ADiggerManager::ApplyBrushToAllChunksPIE(FBrushStroke& BrushStroke)
     FHitResult HitResult;
     if (!ActiveBrush->GetCameraHitLocation(HitResult))
     {
-        UE_LOG(LogTemp, Warning, TEXT("No valid hit found"));
+        if (DiggerDebug::Brush)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("No valid hit found"));
+        }
         return;
     }
 
     // Create brush stroke with the hit location and brush settings
     BrushStroke = ActiveBrush->CreateBrushStroke(HitResult, ActiveBrush->GetDig());
-    
-    UE_LOG(LogTemp, Warning, TEXT("PIE Brush applied at: %s"), *BrushStroke.BrushPosition.ToString());
+
+    if (DiggerDebug::UserConv)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("PIE Brush applied at: %s"), *BrushStroke.BrushPosition.ToString());
+    }
     
     // Apply the brush
     ApplyBrushToAllChunks(BrushStroke);
@@ -267,7 +293,10 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
     const UVoxelBrushShape* ActiveBrushShape = GetActiveBrushShape(BrushStroke.BrushType);
     if (!ActiveBrushShape)
     {
-        UE_LOG(LogTemp, Error, TEXT("ActiveBrushShape is null for brush type %d"), (int32)BrushStroke.BrushType);
+        if (DiggerDebug::Brush)
+        {
+            UE_LOG(LogTemp, Error, TEXT("ActiveBrushShape is null for brush type %d"), (int32)BrushStroke.BrushType);
+        }
         return;
     }
 
@@ -312,16 +341,25 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
                 FIntVector ChunkCoords(X, Y, Z);
                 
                 // Add this logging
-                //UE_LOG(LogTemp, Warning, TEXT("Trying to get/create chunk at: %s"), *ChunkCoords.ToString());
+                if (DiggerDebug::Chunks)
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("Trying to get/create chunk at: %s"), *ChunkCoords.ToString());
+                }
                 
                 if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
                 {
-                    //UE_LOG(LogTemp, Warning, TEXT("Successfully got chunk at: %s"), *ChunkCoords.ToString());
-                    Chunk->ApplyBrushStroke(BrushStroke, ActiveBrushShape);
+                    if (DiggerDebug::Chunks)
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Successfully got chunk at: %s"), *ChunkCoords.ToString());
+                    }
+                    Chunk->ApplyBrushStroke(BrushStroke);
                 }
                 else
                 {
-                    UE_LOG(LogTemp, Error, TEXT("Failed to get/create chunk at: %s"), *ChunkCoords.ToString());
+                    if (DiggerDebug::Chunks)
+                    {
+                        UE_LOG(LogTemp, Error, TEXT("Failed to get/create chunk at: %s"), *ChunkCoords.ToString());
+                    }
                 }
             }
         }
@@ -333,7 +371,10 @@ void ADiggerManager::SetVoxelAtWorldPosition(const FVector& WorldPos, float Valu
     // Safety checks
     if (TerrainGridSize <= 0.0f || Subdivisions <= 0)
     {
-        UE_LOG(LogTemp, Error, TEXT("SetVoxelAtWorldPosition: Invalid TerrainGridSize or Subdivisions!"));
+        if (DiggerDebug::Space || DiggerDebug::Chunks)
+        {
+            UE_LOG(LogTemp, Error, TEXT("SetVoxelAtWorldPosition: Invalid TerrainGridSize or Subdivisions!"));
+        }
         return;
     }
 
@@ -346,12 +387,18 @@ void ADiggerManager::SetVoxelAtWorldPosition(const FVector& WorldPos, float Valu
     {
         Chunk->GetSparseVoxelGrid()->SetVoxel(LocalVoxelIndex, Value, true);
 
-        /*UE_LOG(LogTemp, Display, TEXT("[SetVoxelAtWorldPosition] WorldPos: %s → Chunk: %s, Voxel: %s, Value: %.2f"),
-            *WorldPos.ToString(), *ChunkCoords.ToString(), *LocalVoxelIndex.ToString(), Value);*/
+        if (DiggerDebug::Space || DiggerDebug::Chunks)
+        {
+            UE_LOG(LogTemp, Display, TEXT("[SetVoxelAtWorldPosition] WorldPos: %s → Chunk: %s, Voxel: %s, Value: %.2f"),
+                   *WorldPos.ToString(), *ChunkCoords.ToString(), *LocalVoxelIndex.ToString(), Value);
+        }
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("SetVoxelAtWorldPosition: Failed to get or create chunk at %s"), *ChunkCoords.ToString());
+        if (DiggerDebug::Space || DiggerDebug::Chunks)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("SetVoxelAtWorldPosition: Failed to get or create chunk at %s"), *ChunkCoords.ToString());
+        }
     }
 }
 
@@ -360,36 +407,52 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
 {
     if (!IsInGameThread())
     {
-        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: Not called from game thread!"));
+        if (DiggerDebug::Brush || DiggerDebug::Threads)
+        {
+            UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: Not called from game thread!"));
+        }
         return;
     }
 
     UWorld* CurrentWorld = GetSafeWorld();
     if (!CurrentWorld)
     {
-        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: GetSafeWorld() returned null!"));
+        if (DiggerDebug::Context)
+        {
+            UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: GetSafeWorld() returned null!"));
+        }
         return;
     }
 
     // Ensure parameters are valid
     if (TerrainGridSize <= 0.0f || Subdivisions <= 0)
     {
-        UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: Invalid TerrainGridSize or Subdivisions!"));
+        if (DiggerDebug::Brush || DiggerDebug::Space)
+        {
+            UE_LOG(LogTemp, Error, TEXT("DebugBrushPlacement: Invalid TerrainGridSize or Subdivisions!"));
+        }
         return;
     }
 
     VoxelSize = TerrainGridSize / Subdivisions;
     float ChunkWorldSize = ChunkSize * TerrainGridSize;
 
-    UE_LOG(LogTemp, Display, TEXT("ChunkSize=%d, Subdivisions=%d, VoxelSize=%.2f, ChunkWorldSize=%.2f"),
-        ChunkSize, Subdivisions, VoxelSize, ChunkWorldSize);
+
+    if (DiggerDebug::Space)
+    {
+        UE_LOG(LogTemp, Display, TEXT("ChunkSize=%d, Subdivisions=%d, VoxelSize=%.2f, ChunkWorldSize=%.2f"),
+               ChunkSize, Subdivisions, VoxelSize, ChunkWorldSize);
+    }
 
     // Compute chunk coordinates from world position
     FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(ClickPosition);
 
 
-    UE_LOG(LogTemp, Display, TEXT("ClickPos: %s → ChunkCoords: %s"),
-        *ClickPosition.ToString(), *ChunkCoords.ToString());
+    if (DiggerDebug::Chunks || DiggerDebug::Space || DiggerDebug::Brush)
+    {
+        UE_LOG(LogTemp, Display, TEXT("ClickPos: %s → ChunkCoords: %s"),
+               *ClickPosition.ToString(), *ChunkCoords.ToString());
+    }
 
     // Fetch or create the relevant chunk
     if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
@@ -402,7 +465,10 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("Failed to get or create chunk at %s"), *ChunkCoords.ToString());
+        if (DiggerDebug::Chunks || DiggerDebug::Space)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Failed to get or create chunk at %s"), *ChunkCoords.ToString());
+        }
         return;
     }
 
@@ -418,15 +484,21 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
     FIntVector LocalVoxel = FVoxelConversion::WorldToLocalVoxel(ClickPosition);
     FVector LocalVoxelToWorld = FVoxelConversion::LocalVoxelToWorld(LocalVoxel);
 
-    UE_LOG(LogTemp, Error, TEXT("LocalInChunk: %s, LocalVoxel: %s, WorldPosition: %s"),
-        *LocalInChunk.ToString(), *LocalVoxel.ToString(), *LocalVoxelToWorld.ToString());
+    if (DiggerDebug::Space || DiggerDebug::Voxels || DiggerDebug::Chunks)
+    {
+        UE_LOG(LogTemp, Error, TEXT("LocalInChunk: %s, LocalVoxel: %s, WorldPosition: %s"),
+               *LocalInChunk.ToString(), *LocalVoxel.ToString(), *LocalVoxelToWorld.ToString());
+    }
 
     // World-space center of the voxel
     FVector VoxelCenter = ChunkOrigin +
                           FVector(LocalVoxel) * VoxelSize +
                           FVector(VoxelSize * 0.5f);
 
-    UE_LOG(LogTemp, Display, TEXT("VoxelCenter: %s"), *VoxelCenter.ToString());
+    if (DiggerDebug::Voxels)
+    {
+        UE_LOG(LogTemp, Display, TEXT("VoxelCenter: %s"), *VoxelCenter.ToString());
+    }
     
     
     try
@@ -496,7 +568,10 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
         DrawDebugSphere(CurrentWorld, SelectedVoxelCenter, 20.0f, 16, FColor::Magenta, false, 30.0f);
         DrawDebugString(CurrentWorld, SelectedVoxelCenter + FVector(0, 0, 25.0f), TEXT("Voxel"), nullptr, FColor::White, 30.0f);
 
-        UE_LOG(LogTemp, Warning, TEXT("DebugBrushPlacement: Debug visuals drawn successfully"));
+        if (DiggerDebug::Brush)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("DebugBrushPlacement: Debug visuals drawn successfully"));
+        }
     }
     catch (...)
     {
@@ -507,8 +582,11 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
     DrawDiagonalDebugVoxels(ChunkCoords);
     //Individual voxels right nearest the click position.
     DebugDrawVoxelAtWorldPosition(ClickPosition, FColor::White, 25/*= 5.0f*/, 2.f);
-    
-    UE_LOG(LogTemp, Warning, TEXT("DebugBrushPlacement: completed"));
+
+    if (DiggerDebug::Brush)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("DebugBrushPlacement: completed"));
+    }
 }
 
 void ADiggerManager::DebugDrawVoxelAtWorldPosition(const FVector& WorldPosition, FColor BoxColor, float Duration /*= 5.0f*/, float Thickness /*= 2.0f*/)
@@ -2050,6 +2128,13 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     FRotator SpawnRotation = Stroke.BrushRotation;
     FVector SpawnScale = FVector(Stroke.BrushRadius / 47.0f);
 
+    // Early out if subterranean
+    if (GetLandscapeHeightAt(SpawnLocation) > SpawnLocation.Z + Stroke.BrushRadius * 0.6f)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Subterranean hit at %s, not spawning hole."), *SpawnLocation.ToString());
+        return;
+    }
+
     if (SpawnLocation.IsNearlyZero())
     {
         SpawnLocation.Z = 100.f;
@@ -2058,6 +2143,19 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     FHitResult HitResult;
     if (ActiveBrush->GetCameraHitLocation(HitResult))
     {
+
+        AActor* HitActor = HitResult.GetActor();
+        if (!HitActor)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("No actor hit, not spawning hole."));
+            return;
+        }
+        if (!ActiveBrush->IsLandscape(HitActor))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Hit actor is not landscape (is %s), not spawning hole."), *HitActor->GetName());
+            return;
+        }
+
         FVector SafeNormal = HitResult.ImpactNormal.GetSafeNormal();
         if (SafeNormal.IsNearlyZero() || FMath::Abs(FVector::DotProduct(SafeNormal, FVector::UpVector)) < 0.1f)
         {
@@ -2073,7 +2171,6 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 
     if (TargetChunk)
     {
-        // Save and spawn from the chunk
         TargetChunk->SaveHoleData(SpawnLocation, SpawnRotation, SpawnScale);
         TargetChunk->SpawnHoleFromData(FSpawnedHoleData(SpawnLocation, SpawnRotation, SpawnScale));
         UE_LOG(LogTemp, Log, TEXT("Delegated hole spawn to chunk at location %s"), *SpawnLocation.ToString());
@@ -2083,6 +2180,8 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
         UE_LOG(LogTemp, Error, TEXT("No chunk found at location %s"), *SpawnLocation.ToString());
     }
 }
+
+
 
 
 
@@ -2624,7 +2723,7 @@ void ADiggerManager::Tick(float DeltaTime)
 
 FString ADiggerManager::GetChunkFilePath(const FIntVector& ChunkCoords) const
 {
-    FString FileName = FString::Printf(TEXT("Chunk%d-%d-%d%s"), 
+    FString FileName = FString::Printf(TEXT("Chunk_%d_%d_%d%s"), 
         ChunkCoords.X, ChunkCoords.Y, ChunkCoords.Z, *CHUNK_FILE_EXTENSION);
     
     return FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY / FileName;
@@ -2849,7 +2948,7 @@ void ADiggerManager::RefreshSavedChunkCache()
             FString CoordString = BaseName.RightChop(5); // Remove "Chunk" prefix
             
             TArray<FString> CoordParts;
-            CoordString.ParseIntoArray(CoordParts, TEXT("-"), true);
+            CoordString.ParseIntoArray(CoordParts, TEXT("_"), true);
             
             if (CoordParts.Num() == 3)
             {
@@ -2868,8 +2967,11 @@ void ADiggerManager::RefreshSavedChunkCache()
     static int32 LastCachedCount = -1;
     if (CachedSavedChunkCoordinates.Num() != LastCachedCount)
     {
-        UE_LOG(LogTemp, VeryVerbose, TEXT("Refreshed saved chunk cache: found %d files"), 
-            CachedSavedChunkCoordinates.Num());
+        if (DiggerDebug::Chunks)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Refreshed saved chunk cache: found %d files"), 
+                CachedSavedChunkCoordinates.Num());
+        }
         LastCachedCount = CachedSavedChunkCoordinates.Num();
     }
 }
@@ -2885,7 +2987,10 @@ bool ADiggerManager::DeleteChunkFile(const FIntVector& ChunkCoords)
     
     if (!FPaths::FileExists(FilePath))
     {
-        UE_LOG(LogTemp, Warning, TEXT("Cannot delete chunk file - file does not exist: %s"), *FilePath);
+        if (DiggerDebug::IO)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Cannot delete chunk file - file does not exist: %s"), *FilePath);
+        }
         return false;
     }
     
@@ -2894,14 +2999,20 @@ bool ADiggerManager::DeleteChunkFile(const FIntVector& ChunkCoords)
     
     if (bDeleteSuccess)
     {
-        UE_LOG(LogTemp, Log, TEXT("Successfully deleted chunk file for chunk %s"), *ChunkCoords.ToString());
+        if (DiggerDebug::IO)
+        {
+            UE_LOG(LogTemp, Log, TEXT("Successfully deleted chunk file for chunk %s"), *ChunkCoords.ToString());
+        }
         
         // Invalidate cache after deletion
         InvalidateSavedChunkCache();
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to delete chunk file for chunk %s"), *ChunkCoords.ToString());
+        if (DiggerDebug::IO)
+        {
+            UE_LOG(LogTemp, Error, TEXT("Failed to delete chunk file for chunk %s"), *ChunkCoords.ToString());
+        }
     }
     
     return bDeleteSuccess;

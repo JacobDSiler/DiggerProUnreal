@@ -1,91 +1,80 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DiggerEdModeToolkit.h"
+#include "EdMode.h"
 #include "EditorModeManager.h"
 #include "DiggerEdModeToolkit.h"
-#include "EdMode.h"
 
-class FDiggerEdModeToolkit;
 class ADiggerManager;
 
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnDiggerModeChanged, bool);
 
-// SOLUTION 1: Override CapturedMouseMove (RECOMMENDED)
-// This is the most professional and clean approach used by Epic's tools
-
-class FDiggerEdMode : public FEdMode
+class DIGGEREDITOR_API FDiggerEdMode final : public FEdMode
 {
-private:
-	bool bIsPainting = false;
-	bool bPaintingEnabled = false; // Toggle for paint mode
-	FVector2D LastPaintLocation;
-    
 public:
-	// Override these key functions
-	virtual bool CapturedMouseMove(FEditorViewportClient* InViewportClient, FViewport* InViewport, int32 InMouseX, int32 InMouseY) override;
-	virtual bool StartTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport) override;
-	virtual bool EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport) override;
-	virtual bool InputKey(FEditorViewportClient* ViewportClient, FViewport* Viewport, FKey Key, EInputEvent Event) override;
-	virtual bool DisallowMouseDeltaTracking() const override { return bIsPainting; }
-    
-	// Add paint mode toggle
-	void SetPaintMode(bool bEnabled) { bPaintingEnabled = bEnabled; }
-	bool IsPaintModeEnabled() const { return bPaintingEnabled; }
+    FDiggerEdMode();
+    virtual ~FDiggerEdMode() override;
 
-	// Add Handle Click Simple
-	bool HandleClickSimple(const FVector& RayOrigin, const FVector& RayDirection);
+    // FEdMode interface overrides
+    virtual void Enter() override;
+    virtual void Exit() override;
+    virtual void Tick(FEditorViewportClient* ViewportClient, float DeltaTime) override;
+    virtual void Render(const FSceneView* View, FViewport* Viewport, FPrimitiveDrawInterface* PDI) override;
+    virtual bool HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click) override;
+    virtual bool InputKey(FEditorViewportClient* ViewportClient, FViewport* Viewport, FKey Key, EInputEvent Event) override;
+    virtual bool InputDelta(FEditorViewportClient* InViewportClient, FViewport* InViewport, FVector& InDrag, FRotator& InRot, FVector& InScale) override;
+    virtual bool StartTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport) override;
+    virtual bool EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport) override;
+    virtual bool CapturedMouseMove(FEditorViewportClient* InViewportClient, FViewport* InViewport, int32 InMouseX, int32 InMouseY) override;
+    virtual bool UsesToolkits() const override;
+    virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
 
-private:
-	// Add these member variables for continuous clicking support
-	bool bIsContinuouslyApplying = false;
-	bool bMouseButtonDown = false;
-	FVector2D LastMousePosition;
-	float ContinuousApplicationTimer = 0.0f;
-	float ContinuousApplicationInterval = 0.05f; // Apply every 50ms during drag
-    
-	// Store the click settings for continuous application
-	struct FContinuousClickSettings
-	{
-		bool bFinalBrushDig = false;
-		FRotator FinalRotation = FRotator::ZeroRotator;
-		bool bCtrlPressed = false;
-		bool bRightClick = false;
-		bool bIsValid = false;
-	} ContinuousSettings;
+    // Custom methods
+    bool GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVector& OutHitLocation, FHitResult& OutHit);
+    void SetPaintMode(bool bEnabled) { bPaintingEnabled = bEnabled; }
+    bool IsPaintModeEnabled() const { return bPaintingEnabled; }
+    bool HandleClickSimple(const FVector& RayOrigin, const FVector& RayDirection);
+    void StartContinuousApplication(const FViewportClick& Click);
+    void StopContinuousApplication();
+    void ApplyContinuousBrush(FEditorViewportClient* InViewportClient);
+    bool ShouldApplyContinuously() const;
+    ADiggerManager* FindDiggerManager();
 
-public:
-	// Override these functions in your header
-	virtual bool InputDelta(FEditorViewportClient* InViewportClient, FViewport* InViewport, FVector& InDrag, FRotator& InRot, FVector& InScale) override;
+    // Toolkit helper
+    TSharedPtr<FDiggerEdModeToolkit> GetDiggerToolkit()
+    {
+        return StaticCastSharedPtr<FDiggerEdModeToolkit>(Toolkit);
+    }
+
+    // Static helpers and members
+    static bool IsDiggerModeActive();
+    static FOnDiggerModeChanged OnDiggerModeChanged;
+    static const FEditorModeID EM_DiggerEdModeId;
 
 private:
-	// Helper functions
-	void StartContinuousApplication(const FViewportClick& Click);
-	void StopContinuousApplication();
-	void ApplyContinuousBrush(FEditorViewportClient* InViewportClient);
-	bool ShouldApplyContinuously() const;
+    // Paint/continuous application state
+    bool bIsPainting = false;
+    bool bPaintingEnabled = false;
+    FVector2D LastPaintLocation;
+    bool bIsContinuouslyApplying = false;
+    bool bMouseButtonDown = false;
+    FVector2D LastMousePosition;
+    float ContinuousApplicationTimer = 0.0f;
+    float ContinuousApplicationInterval = 0.05f;
 
-public:
-	const static FEditorModeID EM_DiggerEdModeId;
+    struct FContinuousClickSettings
+    {
+        bool bFinalBrushDig = false;
+        FRotator FinalRotation = FRotator::ZeroRotator;
+        bool bCtrlPressed = false;
+        bool bRightClick = false;
+        bool bIsValid = false;
+    } ContinuousSettings;
 
-	FDiggerEdMode();  // ✅ Add this
-	virtual ~FDiggerEdMode(); // ✅ And this
+    TSharedPtr<FModeToolkit> Toolkit;
 
-	virtual void Enter() override;
-	bool GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVector& OutHitLocation, FHitResult& OutHit);
-	virtual void Render(const FSceneView* View, FViewport* Viewport, FPrimitiveDrawInterface* PDI) override;
-	bool HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click);
-	virtual void Exit() override;
-	virtual void Tick(FEditorViewportClient* ViewportClient, float DeltaTime) override;
-	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
-	virtual bool UsesToolkits() const override;
-	// Your custom stuff
-	ADiggerManager* FindDiggerManager(); // Add this for Step 2
-
-	
-	// Helper to get your custom toolkit
-	TSharedPtr<FDiggerEdModeToolkit> GetDiggerToolkit()
-	{
-		return StaticCastSharedPtr<FDiggerEdModeToolkit>(GetToolkit());
-	}
-
+    // Static state
+    static bool bIsDiggerModeCurrentlyActive;
 };

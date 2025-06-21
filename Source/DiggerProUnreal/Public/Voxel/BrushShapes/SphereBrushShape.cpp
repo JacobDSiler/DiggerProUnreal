@@ -1,78 +1,54 @@
 #include "SphereBrushShape.h"
+
+#include "FBrushStroke.h"
 #include "VoxelConversion.h"
-#include "Math/UnrealMathUtility.h"
 
 float USphereBrushShape::CalculateSDF_Implementation(
-    const FVector& WorldPos,
-    const FVector& BrushCenter,
-    float Radius,
-    float Strength,
-    float Falloff,
-    float TerrainHeight, // This TerrainHeight is passed from the brush application logic
-    bool bDig
+const FVector& WorldPos,
+const FBrushStroke& Stroke,
+float TerrainHeight
 ) const
 {
-
-    // Calculate distance from brush center
-    float Distance = FVector::Dist(WorldPos, BrushCenter);
-
-    // Early out if outside the brush's influence
-    float OuterRadius = Radius + Falloff;
+    // Apply brush offset
+    FVector AdjustedBrushPos = Stroke.BrushPosition + Stroke.BrushOffset;
+    
+    float Distance = FVector::Dist(WorldPos, AdjustedBrushPos);
+    float OuterRadius = Stroke.BrushRadius + Stroke.BrushFalloff;
+    
     if (Distance > OuterRadius)
         return 0.0f;
 
-    // Calculate SDF value based on distance
     float SDFValue;
-
-    // Determine if the current WorldPos is below the terrain height provided to the brush
-    // Note: This TerrainHeight should ideally be the landscape height at WorldPos.XY
     bool bIsBelowTerrain = WorldPos.Z < TerrainHeight;
 
-    if (bDig)
+    if (Stroke.bDig)
     {
-        // For digging operations (creating air)
-        if (Distance <= Radius)
+        if (Distance <= Stroke.BrushRadius)
         {
-            // Inside the main radius: full air value
             SDFValue = FVoxelConversion::SDF_AIR;
         }
         else
         {
-            // In the falloff zone: blend from air
-            float t = (Distance - Radius) / Falloff;
+            float t = (Distance - Stroke.BrushRadius) / Stroke.BrushFalloff;
             t = FMath::SmoothStep(0.0f, 1.0f, t);
-
-            if (bIsBelowTerrain)
-            {
-                // Below terrain, digging: blend from air (SDF_AIR) to solid (SDF_SOLID) in the falloff.
-                // This explicitly creates a solid boundary at the edge of the brush below terrain.
-                SDFValue = FMath::Lerp(FVoxelConversion::SDF_AIR, FVoxelConversion::SDF_SOLID, t);
-            }
-            else
-            {
-                // Above terrain, digging: blend from air (SDF_AIR) to zero.
-                SDFValue = FMath::Lerp(FVoxelConversion::SDF_AIR, 0.0f, t);
-            }
+            SDFValue = bIsBelowTerrain ? 
+                FMath::Lerp(FVoxelConversion::SDF_AIR, FVoxelConversion::SDF_SOLID, t) :
+                FMath::Lerp(FVoxelConversion::SDF_AIR, 0.0f, t);
         }
     }
-    else // !bDig (Adding)
+    else
     {
-        // For adding operations (creating solid)
-        if (Distance <= Radius)
+        if (Distance <= Stroke.BrushRadius)
         {
-            // Inside the main radius: full solid value
             SDFValue = FVoxelConversion::SDF_SOLID;
         }
         else
         {
-            // In the falloff zone: blend from solid to zero.
-            // This behavior is generally fine regardless of terrain height for adding.
-            float t = (Distance - Radius) / Falloff;
+            float t = (Distance - Stroke.BrushRadius) / Stroke.BrushFalloff;
             t = FMath::SmoothStep(0.0f, 1.0f, t);
             SDFValue = FMath::Lerp(FVoxelConversion::SDF_SOLID, 0.0f, t);
         }
     }
 
-    // Apply strength
-    return SDFValue * Strength;
+    return SDFValue * Stroke.BrushStrength;
 }

@@ -2,6 +2,7 @@
 #include "DiggerManager.h"
 #include "DrawDebugHelpers.h"
 #include "C:\Users\serpe\Documents\Unreal Projects\DiggerProUnreal\Source\DiggerProUnreal\Public\Voxel\FVoxelSDFHelper.h"
+#include "DiggerDebug.h"
 #include "VoxelChunk.h"
 #include "VoxelConversion.h"
 #include "Engine/World.h"
@@ -383,7 +384,10 @@ TMap<FVector, float> USparseVoxelGrid::GetVoxels() const
     for (const auto& VoxelPair : VoxelData)
     {
         Voxels.Add(FVector(VoxelPair.Key), VoxelPair.Value.SDFValue);
-        //UE_LOG(LogTemp, Warning, TEXT("Voxel at %s has SDF value: %f"), *VoxelPair.Key.ToString(), VoxelPair.Value.SDFValue);
+        if (DiggerDebug::Voxels)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Voxel at %s has SDF value: %f"), *VoxelPair.Key.ToString(), VoxelPair.Value.SDFValue);
+        }
     }
 
     return Voxels;
@@ -429,8 +433,11 @@ bool USparseVoxelGrid::CollectIslandAtPosition(const FVector& Center, TArray<FIn
     // Convert world position to voxel space using the helper
     FIntVector StartVoxel = FVoxelConversion::WorldToLocalVoxel(Center);
 
-    // Log conversion info
-    UE_LOG(LogTemp, Warning, TEXT("Island extraction started at world position: %s (voxel space: %s)"), *Center.ToString(), *StartVoxel.ToString());
+    if (DiggerDebug::Islands || DiggerDebug::Space)
+    {
+        // Log conversion info
+        UE_LOG(LogTemp, Warning, TEXT("Island extraction started at world position: %s (voxel space: %s)"), *Center.ToString(), *StartVoxel.ToString());
+    }
 
     // SDF threshold (use your default or expose as parameter)
     float SDFThreshold = 0.0f;
@@ -445,23 +452,30 @@ bool USparseVoxelGrid::CollectIslandAtPosition(const FVector& Center, TArray<FIn
     // Early out if the start voxel is not solid
     if (!IsSolid(StartVoxel))
     {
-        UE_LOG(LogTemp, Warning, TEXT("Start voxel is not solid. Aborting extraction."));
+        if (DiggerDebug::Islands || DiggerDebug::Voxels)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Start voxel is not solid. Aborting extraction."));
+        }
 
         // Log surrounding voxel data for debugging
-        for (int32 dx = -1; dx <= 1; ++dx)
-        for (int32 dy = -1; dy <= 1; ++dy)
-        for (int32 dz = -1; dz <= 1; ++dz)
+        if (DiggerDebug::Islands || DiggerDebug::Voxels)
         {
-            FIntVector P = StartVoxel + FIntVector(dx, dy, dz);
-            const FVoxelData* D = VoxelData.Find(P);
-            if (D)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("Neighbor voxel %s: SDF=%f"), *P.ToString(), D->SDFValue);
-            }
-            else
-            {
-                UE_LOG(LogTemp, Warning, TEXT("Neighbor voxel %s: not found"), *P.ToString());
-            }
+            for (int32 dx = -1; dx <= 1; ++dx)
+                for (int32 dy = -1; dy <= 1; ++dy)
+                    for (int32 dz = -1; dz <= 1; ++dz)
+                    {
+                        FIntVector P = StartVoxel + FIntVector(dx, dy, dz);
+                        const FVoxelData* D = VoxelData.Find(P);
+            
+                        if (D)
+                        {
+                            UE_LOG(LogTemp, Warning, TEXT("Neighbor voxel %s: SDF=%f"), *P.ToString(), D->SDFValue);
+                        }
+                        else
+                        {
+                            UE_LOG(LogTemp, Warning, TEXT("Neighbor voxel %s: not found"), *P.ToString());
+                        }
+                    }
         }
 
         return false;
@@ -539,7 +553,10 @@ bool USparseVoxelGrid::ExtractIslandAtPosition(const FVector& WorldPosition, USp
 
     if (!IsSolid(StartVoxel))
     {
-        UE_LOG(LogTemp, Warning, TEXT("ExtractIslandAtPosition: Start voxel %s is not solid."), *StartVoxel.ToString());
+        if (DiggerDebug::Islands || DiggerDebug::Voxels)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("ExtractIslandAtPosition: Start voxel %s is not solid."), *StartVoxel.ToString());
+        }
         return false;
     }
 
@@ -628,7 +645,10 @@ bool USparseVoxelGrid::ExtractIslandAtPosition(const FVector& WorldPosition, USp
 
     // CRITICAL: Remove extracted voxels from the original grid
     // This is the part that wasn't working correctly
-    UE_LOG(LogTemp, Warning, TEXT("Removing %d voxels from source grid"), AllConnectedVoxels.Num());
+    if (DiggerDebug::Islands || DiggerDebug::Voxels)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Removing %d voxels from source grid"), AllConnectedVoxels.Num());
+    }
     
     for (const FIntVector& Voxel : AllConnectedVoxels)
     {
@@ -723,9 +743,12 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
             Island.ReferenceVoxel = IslandVoxels[0];
             
             Islands.Add(Island);
-            
-            UE_LOG(LogTemp, Warning, TEXT("Detected island at %s with %d voxels. Reference voxel: %s"),
-                *Center.ToString(), IslandVoxels.Num(), *Island.ReferenceVoxel.ToString());
+
+            if (DiggerDebug::Islands || DiggerDebug::Voxels)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Detected island at %s with %d voxels. Reference voxel: %s"),
+                    *Center.ToString(), IslandVoxels.Num(), *Island.ReferenceVoxel.ToString());
+            }
         }
     }
     

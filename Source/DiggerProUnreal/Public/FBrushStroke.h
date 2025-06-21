@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "VoxelBrushTypes.h"
-#include "VoxelBrushShape.h"
 #include "FBrushStroke.generated.h"
 
 USTRUCT(BlueprintType)
@@ -67,9 +66,13 @@ struct FBrushStroke
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Brush")
     bool bSpiral;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Brush")
+    bool bIsFilled;
+
     UPROPERTY(Transient)
     UVoxelBrushShape* BrushShape;
 
+    // In FBrushStroke constructor
     FBrushStroke()
         : BrushType(EVoxelBrushType::Sphere)
         , BrushPosition(FVector::ZeroVector)
@@ -77,8 +80,8 @@ struct FBrushStroke
         , BrushStrength(1.0f)
         , BrushFalloff(0.2f)
         , BrushRotation(FRotator::ZeroRotator)
-        , BrushLength(100.0f)
-        , BrushAngle(45.0f)
+        , BrushLength(200.0f)
+        , BrushAngle(0.0f)  // 0 degrees for strict shapes by default
         , BrushOffset(FVector::ZeroVector)
         , bDig(true)
         , bUseAdvancedCubeBrush(false)
@@ -88,6 +91,7 @@ struct FBrushStroke
         , TorusInnerRadius(25.0f)
         , NumSteps(5)
         , bSpiral(false)
+        , bIsFilled(false)
         , BrushShape(nullptr)
     {}
 };

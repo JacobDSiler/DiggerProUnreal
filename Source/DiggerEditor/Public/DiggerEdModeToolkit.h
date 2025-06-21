@@ -87,7 +87,7 @@ public:
 		UE_LOG(LogTemp, Log, TEXT("SetBrushRotation -> Pitch: %f, Yaw: %f, Roll: %f"), BrushRotX, BrushRotY, BrushRotZ);
 	}
 
-
+	bool GetBrushIsFilled();
 
 private:
 
@@ -110,6 +110,7 @@ private:
 	float TorusInnerRadius=.2f;
 	float MinTorusInnerRadius=1.f;
 	float MaxTorusInnerRadius=5.f;
+	bool bIsFilled=true;
 	float MinCubeExtent=1.f;
 	float MaxCubeExtent=12.f;
 	float AdvancedCubeHalfExtentY=2.f;

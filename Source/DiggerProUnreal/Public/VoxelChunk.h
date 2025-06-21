@@ -4,6 +4,7 @@
 #include "LandscapeProxy.h"
 #include "UObject/NoExportTypes.h"
 #include "FSpawnedHoleData.h"
+#include "VoxelBrushTypes.h"
 #include "VoxelChunk.generated.h"
 
 class UVoxelBrushShape;
@@ -50,12 +51,11 @@ public:
     void DebugPrintVoxelData() const;
 
     // Brush application
-    void ApplyBrushStroke(const FBrushStroke& Stroke, const UVoxelBrushShape* BrushShape);
+    UFUNCTION(BlueprintCallable, Category = "Voxel")
+    void ApplyBrushStroke(const FBrushStroke& Stroke);
     void WriteToOverflows(const FIntVector& LocalVoxelCoords, int32 StorageX, int32 StorageY, int32 StorageZ, float SDF,
                           bool bDig);
-    void WriteToNeighborOverflows(const FIntVector& LocalVoxelCoords, int32 StorageX, int32 StorageY, int32 StorageZ,
-                                  float SDF, bool bDig);
-    UVoxelChunk* GetNeighborChunk(const FIntVector& Offset);
+    void InitializeBrushShapes();
 
     // Update functions
     UFUNCTION(BlueprintCallable, Category  =Custom)
@@ -106,10 +106,18 @@ public:
     //void ForceRegenerateMesh();
 
 private:
+    // Cached brush shapes for performance
+    UPROPERTY()
+    TMap<EVoxelBrushType, UVoxelBrushShape*> CachedBrushShapes;
+    UVoxelBrushShape* GetBrushShapeForType(EVoxelBrushType BrushType);
+
+    
     void ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig);
     void ApplyIcosphereBrush(FVector3d BrushPosition, float Radius, FRotator Rotation, bool bDig);
     void ApplyStairsBrush(FVector3d BrushPosition, float Width, float Height, float Depth, int32 NumSteps,
                           bool bSpiral, bool bDig, const FRotator& Rotation);
+    FVector CalculateBrushBounds(const FBrushStroke& Stroke) const;
+    void CalculateBrushBounds(const FBrushStroke& Stroke, FVector& OutMin, FVector& OutMax);
     float CalculateDiggingSDF(float Distance, float InnerRadius, float Radius, float OuterRadius, float TransitionZone,
                               float ExistingSDF, bool bIsAboveTerrain, float HeightDifferenceFromTerrain);
 

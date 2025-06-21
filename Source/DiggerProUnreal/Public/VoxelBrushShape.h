@@ -29,24 +29,19 @@ public:
 	bool GetCameraHitLocation(FHitResult& OutHitResult);
 	void DebugDrawLineIfEnabled( FVector& Start, FVector& End, FColor Color, float Duration) const;
 
-	// Use virtual, not pure virtual
+	// In VoxelBrushShape.h
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category="Voxel")
 	float CalculateSDF(
 		const FVector& WorldPos,
-		const FVector& BrushCenter,
-		float Radius,
-		float Strength,
-		float Falloff,
-		float TerrainHeight,
-		bool bDig
+		const FBrushStroke& Stroke,
+		float TerrainHeight
 	) const;
+
 	virtual float CalculateSDF_Implementation(
 		const FVector& WorldPos,
-		const FVector& BrushCenter,
-		float Radius,
-		float Strength,
-		float Falloff, float TerrainHeight, bool bDig
-	) const { return 0.0f; } // Default implementation
+		const FBrushStroke& Stroke,
+		float TerrainHeight
+	) const { return 0.0f; }
 	
 	
 	UFUNCTION(BlueprintCallable, Category = "Brush")
@@ -142,13 +137,11 @@ public:
 	) const;
 
 	FHitResult RecursiveTraceThroughHoles_Internal(
-	FVector& Start,
-	FVector& End,
-	TArray<AActor*>& IgnoredActors,
-	bool bPassedThroughHole,
-	bool bIgnoreHolesNow,
-	int32 Depth,
-	const FVector& OriginalDirection
+		FVector& Start,
+		FVector& End,
+		TArray<AActor*>& IgnoredActors,
+		int32 Depth,
+		const FVector& OriginalDirection, bool bPassedThroughHole
 	) const;
 	
 	FHitResult SmartTrace(const FVector& Start, const FVector& End);

@@ -138,9 +138,7 @@ public:
                                         FCustomSDFBrush& OutBrush);
     void DebugBrushPlacement(const FVector& ClickPosition);
     void DebugDrawVoxelAtWorldPosition(const FVector& WorldPosition, FColor BoxColor, float Duration, float Thickness);
-    void DrawDebugChunkWithOverflow(FIntVector ChunkCoords);
-    void DrawVoxelDebugBounds(const FVector& ChunkOrigin,
-                              float DebugDuration);
+
     void DrawDiagonalDebugVoxels(FIntVector ChunkCoords);
     UStaticMesh* ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName);
     AIslandActor* SpawnIslandActorFromIslandAtPosition(const FVector& IslandCenter, bool bEnablePhysics);
@@ -245,6 +243,9 @@ public:
     
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
     FRotator EditorBrushRotation;
+    
+    UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
+    bool EditorBrushIsFilled;
 
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
     float EditorBrushLength;
