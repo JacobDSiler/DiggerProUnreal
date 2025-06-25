@@ -91,6 +91,8 @@ class StaticMeshAttributes;
 
 void ADiggerManager::ApplyBrushInEditor(bool bDig)
 {
+    UE_LOG(LogTemp, Error, TEXT("ApplyBrushInEditor Called!"));
+    
     FBrushStroke BrushStroke;
     BrushStroke.BrushPosition = EditorBrushPosition + EditorBrushOffset;
     BrushStroke.BrushRadius = EditorBrushRadius;
@@ -100,7 +102,20 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
     BrushStroke.BrushLength = EditorBrushLength;
     BrushStroke.bIsFilled = EditorBrushIsFilled;
     BrushStroke.BrushAngle = EditorBrushAngle;
+    BrushStroke.HoleShape = EditorBrushHoleShape;
+    BrushStroke.bUseAdvancedCubeBrush = EditorbUseAdvancedCubeBrush;
+    BrushStroke.AdvancedCubeHalfExtentX = EditorCubeHalfExtentX;
+    BrushStroke.AdvancedCubeHalfExtentY = EditorCubeHalfExtentY;
+    BrushStroke.AdvancedCubeHalfExtentZ = EditorCubeHalfExtentZ;
 
+    UE_LOG(LogTemp, Warning, TEXT("DiggerManager.cpp: Extent X: %.2f  Extent Y: %.2f  Extent Z: %.2f"),
+    BrushStroke.AdvancedCubeHalfExtentX,
+    BrushStroke.AdvancedCubeHalfExtentY,
+    BrushStroke.AdvancedCubeHalfExtentZ);
+
+
+    
+    
     if (DiggerDebug::Brush || DiggerDebug::Casts)
     {
         UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushInEditor] EditorBrushPosition (World): %s"), *EditorBrushPosition.ToString());
@@ -128,8 +143,34 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
 void ADiggerManager::OnConstruction(const FTransform& Transform)
 {
     Super::OnConstruction(Transform);
+
+    // Initialize the Hole Shape Library
+    InitHoleShapeLibrary();
+
     FVoxelConversion::InitFromConfig(ChunkSize,Subdivisions, TerrainGridSize, GetActorLocation());
 }
+
+
+void ADiggerManager::InitHoleShapeLibrary()
+{
+    if (!HoleShapeLibrary)
+    {
+        // Load class dynamically
+        const FStringClassReference LibraryClassRef(TEXT("/Game/Blueprints/MyHoleShapeLibrary.MyHoleShapeLibrary_C"));
+        UClass* LoadedClass = LibraryClassRef.TryLoadClass<UHoleShapeLibrary>();
+
+        if (LoadedClass)
+        {
+            HoleShapeLibrary = NewObject<UHoleShapeLibrary>(this, LoadedClass);
+            UE_LOG(LogTemp, Warning, TEXT("HoleShapeLibrary created at runtime successfully."));
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("Failed to load MyHoleShapeLibrary class dynamically."));
+        }
+    }
+}
+
 
 
 ADiggerManager::ADiggerManager()
@@ -145,9 +186,7 @@ ADiggerManager::ADiggerManager()
     // Initialize the voxel grid and marching cubes
     SparseVoxelGrid = CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid"));
     MarchingCubes = CreateDefaultSubobject<UMarchingCubes>(TEXT("MarchingCubes"));
-
-    // Initialize the brush component
-    ActiveBrush = CreateDefaultSubobject<UVoxelBrushShape>(TEXT("ActiveBrush"));
+    
     
 
     // Load the material in the constructor
@@ -175,6 +214,7 @@ void ADiggerManager::PostInitProperties()
         InitializeBrushShapes();
     }
 }
+
 
 // In ADiggerManager.cpp
 void ADiggerManager::InitializeBrushShapes()
@@ -2172,7 +2212,7 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     if (TargetChunk)
     {
         TargetChunk->SaveHoleData(SpawnLocation, SpawnRotation, SpawnScale);
-        TargetChunk->SpawnHoleFromData(FSpawnedHoleData(SpawnLocation, SpawnRotation, SpawnScale));
+        TargetChunk->SpawnHoleFromData(FSpawnedHoleData(SpawnLocation, SpawnRotation, SpawnScale, Stroke.HoleShape));
         UE_LOG(LogTemp, Log, TEXT("Delegated hole spawn to chunk at location %s"), *SpawnLocation.ToString());
     }
     else
@@ -2554,6 +2594,7 @@ UVoxelChunk* ADiggerManager::GetOrCreateChunkAtChunk(const FIntVector& ChunkCoor
     if (NewChunk)
     {
         NewChunk->InitializeChunk(ChunkCoords, this);
+        NewChunk->InitializeDiggerManager(this);
         ChunkMap.Add(ChunkCoords, NewChunk);
         UE_LOG(LogTemp, Log, TEXT("Created a new chunk at position: %s"), *ChunkCoords.ToString());
         return NewChunk;
@@ -2820,7 +2861,8 @@ void ADiggerManager::CreateHoleAt(FVector WorldPosition, FRotator Rotation, FVec
     FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(WorldPosition);
     if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
     {
-        Chunk->SpawnHole(HoleBPClass, WorldPosition, Rotation, Scale);
+        //ToDo: set shape type based on brush used!
+        Chunk->SpawnHole(HoleBPClass, WorldPosition, Rotation, Scale, EHoleShapeType::Sphere);
     }
 }
 

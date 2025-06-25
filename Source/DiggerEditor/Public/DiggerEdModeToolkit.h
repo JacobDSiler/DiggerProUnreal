@@ -24,6 +24,26 @@ enum class EIslandOriginMode : uint8
 class FDiggerEdModeToolkit : public FModeToolkit
 {
 public:
+	void SetUseAdvancedCubeBrush(bool bInUse)
+	{
+		bUseAdvancedCubeBrush = bInUse;
+	}
+	
+	[[nodiscard]] float GetAdvancedCubeHalfExtentY() const
+	{
+		return AdvancedCubeHalfExtentY;
+	}
+
+	[[nodiscard]] float GetAdvancedCubeHalfExtentX() const
+	{
+		return AdvancedCubeHalfExtentX;
+	}
+
+	[[nodiscard]] float GetAdvancedCubeHalfExtentZ() const
+	{
+		return AdvancedCubeHalfExtentZ;
+	}
+
 	void ClearIslands();
 	void RebuildIslandGrid();
 	
@@ -111,13 +131,20 @@ private:
 	float MinTorusInnerRadius=1.f;
 	float MaxTorusInnerRadius=5.f;
 	bool bIsFilled=true;
-	float MinCubeExtent=1.f;
-	float MaxCubeExtent=12.f;
+	float MinCubeExtent=20.f;
+	float MaxCubeExtent=600.f;
 	float AdvancedCubeHalfExtentY=2.f;
 	float AdvancedCubeHalfExtentX=.5f;
 	float AdvancedCubeHalfExtentZ=1.f;
-	bool bUseAdvancedCubeBrush = false;
-	
+	bool bUseAdvancedCubeBrush = true;
+
+public:
+	[[nodiscard]] bool IsUsingAdvancedCubeBrush() const
+	{
+		return bUseAdvancedCubeBrush;
+	}
+
+private:
 	ADiggerManager* Manager;
 
 public:

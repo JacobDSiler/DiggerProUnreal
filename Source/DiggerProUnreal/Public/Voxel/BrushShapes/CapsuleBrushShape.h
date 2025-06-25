@@ -14,4 +14,6 @@ public:
 		const FBrushStroke& Stroke,
 		float TerrainHeight
 	) const override;
+
+	virtual bool IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const override;
 };

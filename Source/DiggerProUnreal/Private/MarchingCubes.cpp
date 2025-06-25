@@ -7,6 +7,8 @@
 #include "UDynamicMesh.h"
 #include "Async/Async.h"
 
+
+
 FIntVector UMarchingCubes::GetCornerOffset(int32 Index)
 {
 	static const FIntVector Offsets[8] = {
@@ -1080,12 +1082,13 @@ void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVe
 
 
     // Ensure the material is set once
-   // if (DiggerManager->GetTerrainMaterial() && 
-       // (DiggerManager->ProceduralMesh->GetNumMaterials() == 0 || 
-         //DiggerManager->ProceduralMesh->GetMaterial(0) != DiggerManager->GetTerrainMaterial())) {
-        DiggerManager->ProceduralMesh->SetMaterial(SectionIndex, DiggerManager->GetTerrainMaterial());
-        //UE_LOG(LogTemp, Warning, TEXT("Setting Material on SectionIndex: %d"), SectionIndex);
-    //}
+	DiggerManager->ProceduralMesh->SetMaterial(SectionIndex, DiggerManager->GetTerrainMaterial());
+
+	// Send the OnMeshReady Callback
+	if (OnMeshReady.IsBound())
+	{
+		OnMeshReady.Execute();
+	}
 }
 
 

@@ -24,7 +24,8 @@ float UNoiseBrushShape::CalculateSDF_Implementation(
 	const float NoiseZ = WorldPos.Z * NoiseScale;
     
 	// Simple 3D noise using sine waves (you could use Perlin noise here)
-	const float Noise = (FMath::Sin(NoiseX) + FMath::Sin(NoiseY) + FMath::Sin(NoiseZ)) / 3.0f;
+	// Replace in UNoiseBrushShape::CalculateSDF_Implementation:
+	const float Noise = HashNoise3D(WorldPos * 0.1f);
 	const float NoiseValue = (Noise + 1.0f) * 0.5f; // Normalize to 0-1
     
 	// Apply spherical falloff
@@ -44,3 +45,13 @@ float UNoiseBrushShape::CalculateSDF_Implementation(
     
 	return Stroke.bDig ? FalloffSDF * Stroke.BrushStrength : -FalloffSDF * Stroke.BrushStrength;
 }
+
+bool UNoiseBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const
+{
+	// Temporary fallback - use simple sphere bounds
+	const FVector Delta = WorldPos - Stroke.BrushPosition;
+	const float DistanceSq = Delta.SizeSquared();
+	const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
+	return DistanceSq <= RadiusSq;
+}
+

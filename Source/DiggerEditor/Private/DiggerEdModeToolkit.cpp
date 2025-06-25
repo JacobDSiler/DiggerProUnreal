@@ -162,7 +162,9 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
                 })
                 .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
                 {
-                    bUseAdvancedCubeBrush = (NewState == ECheckBoxState::Checked);
+                        bUseAdvancedCubeBrush = (NewState == ECheckBoxState::Checked);
+                        UE_LOG(LogTemp, Warning, TEXT("UI: bUseAdvancedCubeBrush: %s"), bUseAdvancedCubeBrush ? TEXT("true") : TEXT("false"));
+                        
                 })
                 [
                     SNew(STextBlock).Text(FText::FromString("Use Advanced Cube Brush"))
@@ -363,7 +365,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         )
     ]
 
-    // --- Rotate Brush Section (roll-down) ---
+        /// --- Rotate Brush Section (roll-down) ---
     + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
     [
         SNew(SButton)
@@ -374,6 +376,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     [
         SNew(SVerticalBox)
         .Visibility_Lambda([this]() { return bShowRotation ? EVisibility::Visible : EVisibility::Collapsed; })
+
         + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
         [
             MakeRotationRow(FText::FromString("X"), BrushRotX)
@@ -386,6 +389,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         [
             MakeRotationRow(FText::FromString("Z"), BrushRotZ)
         ]
+
         // Checkbox for surface normal rotation
         + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
         [
@@ -403,6 +407,21 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             ]
         ]
 
+        // ✅ Reset Button - newly added
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 4)
+        [
+            SNew(SButton)
+            .Text(FText::FromString("Reset All Rotations"))
+            .HAlign(HAlign_Fill)
+            .ButtonStyle(FAppStyle::Get(), "FlatButton.Success")
+            .OnClicked_Lambda([this]()
+            {
+                BrushRotX = 0.0f;
+                BrushRotY = 0.0f;
+                BrushRotZ = 0.0f;
+                return FReply::Handled();
+            })
+        ]
     ]
 
     // --- Offset Brush Section (roll-down) ---
@@ -443,6 +462,20 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             [
                 SNew(STextBlock).Text(FText::FromString("Rotate to Surface Normal"))
             ]
+        ]
+
+        // ✅ Reset Button - newly added
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 4)
+        [
+            SNew(SButton)
+            .Text(FText::FromString("Reset All Offsets"))
+            .HAlign(HAlign_Fill)
+            .ButtonStyle(FAppStyle::Get(), "FlatButton.Success")
+            .OnClicked_Lambda([this]()
+            {
+                BrushOffset = FVector::ZeroVector;
+                return FReply::Handled();
+            })
         ]
     ]
 
@@ -852,59 +885,56 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeLabeledSliderRow(
                 .Text_Lambda([bExpanded]() { return *bExpanded ? FText::FromString("^") : FText::FromString("^"); })
             ]
         ]
-        // Slider (conditionally visible)
-        /*+ SHorizontalBox::Slot()
-        .FillWidth(1.0f)
-        .Padding(0, 0, 8, 0)
-        [
-            SNew(SBox)
-            .Visibility_Lambda([bExpanded]() { return *bExpanded ? EVisibility::Visible : EVisibility::Collapsed; })
-            [
-                SNew(SSlider)
-                .Value_Lambda([=]() {
-                    float Value = Getter();
-                    return (Value - MinValue) / (MaxValue - MinValue);
-                })
-                .OnValueChanged_Lambda([=](float NewValue) {
-                    Setter(MinValue + NewValue * (MaxValue - MinValue));
-                })
-            ]
-        ]*/
-        // Numeric entry (conditionally visible)
+        // Numeric entry (Slider, conditionally visible)
         + SHorizontalBox::Slot()
-        .AutoWidth()
-        [
-            SNew(SBox)
-            .Visibility_Lambda([bExpanded]() { return *bExpanded ? EVisibility::Visible : EVisibility::Collapsed; })
-            [
-                SNew(SNumericEntryBox<float>)
-                .Value_Lambda([=]() { return Getter(); })
-                .OnValueChanged_Lambda([=](float NewValue) {
-                    Setter(FMath::Clamp(NewValue, MinValue, MaxValue));
-                })
-                .MinValue(MinValue)
-                .MaxValue(MaxValue)
-                .AllowSpin(true)
-                .MinDesiredValueWidth(50)
-                .Delta(Step)
-            ]
-        ]
-        // Quick set buttons
-        + SHorizontalBox::Slot()
-        .AutoWidth()
-        .Padding(2, 0)
-        [
-            MakeQuickSetButtons(QuickSetValues, Setter, TargetForMirror, bIsAngle)
-        ]
-        // Reset button
-        + SHorizontalBox::Slot()
-        .AutoWidth()
-        .Padding(8, 0)
-        [
-            SNew(SButton)
-            .Text(FText::FromString("Reset"))
-            .OnClicked_Lambda([=]() { Setter(ResetValue); return FReply::Handled(); })
-        ];
+.AutoWidth()
+[
+    SNew(SBox)
+    .Visibility_Lambda([bExpanded]() { return *bExpanded ? EVisibility::Visible : EVisibility::Collapsed; })
+    [
+        SNew(SNumericEntryBox<float>)
+        .Value_Lambda([=]() { return Getter(); })
+        .OnValueChanged_Lambda([=](float NewValue) {
+            float ClampedValue = FMath::Clamp(NewValue, MinValue, MaxValue);
+
+            if (bIsAngle)
+            {
+                ClampedValue = FMath::Fmod(ClampedValue, 360.0f);
+                if (ClampedValue < 0.0f)
+                {
+                    ClampedValue += 360.0f;
+                }
+            }
+
+            Setter(ClampedValue);
+        })
+        .MinValue(MinValue)
+        .MaxValue(MaxValue)
+        .MinSliderValue(MinValue)
+        .MaxSliderValue(MaxValue)
+        .AllowSpin(true)
+        .MinDesiredValueWidth(50)
+        .Delta(Step)
+    ]
+]
+
+// Quick set buttons
++ SHorizontalBox::Slot()
+.AutoWidth()
+.Padding(2, 0)
+[
+    MakeQuickSetButtons(QuickSetValues, Setter, TargetForMirror, bIsAngle)
+]
+
+// Reset button
++ SHorizontalBox::Slot()
+.AutoWidth()
+.Padding(8, 0)
+[
+    SNew(SButton)
+    .Text(FText::FromString("Reset"))
+    .OnClicked_Lambda([=]() { Setter(ResetValue); return FReply::Handled(); })
+];
 }
 
 
@@ -986,7 +1016,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
         ]
 
         // Brush radius slider
-        + SVerticalBox::Slot().AutoHeight().Padding(8, 16, 8, 4)
+        /*+ SVerticalBox::Slot().AutoHeight().Padding(8, 16, 8, 4)
         [
             MakeLabeledSliderRow(
                 FText::FromString("Radius"),
@@ -994,7 +1024,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
                 [this](float NewValue) { BrushRadius = FMath::Clamp(NewValue, 10.0f, 256.0f); },
                 10.0f, 256.0f, {10.0f, 64.0f, 128.0f, 256.0f}, 10.0f
             )
-        ];
+        ]*/;
 }
 
 // Add this method to your FDiggerEdModeToolkit class
@@ -1267,14 +1297,15 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationRow(const FText& Label, do
     return MakeLabeledSliderRow(
         Label,
         [&Value]() { return float(Value); },
-        [&Value](float NewValue) { Value = double(FMath::Fmod(NewValue, 360.0f)); },
+        [&Value](float NewValue) { Value = double(NewValue); }, // raw set
         0.0f, 360.0f,
-        TArray<float>({45.f, 90.f, 180.f}),
+        {45.f, 90.f, 180.f},
         0.0f, 1.0f,
         true, // bIsAngle
-        &DummyFloat // Mirror button not supported for double
+        &DummyFloat
     );
 }
+
 
 // For float
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationRow(const FText& Label, float& Value)
@@ -1300,8 +1331,8 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, doub
         Label,
         [&Value]() { return float(Value); },
         [&Value](float NewValue) { Value = double(NewValue); },
-        -100.0f, 100.0f,
-        TArray<float>({-10.f, 0.f, 10.f}),
+        -1000.0f, 1000.0f,
+        TArray<float>({-100.f, 0.f, 100.f}),
         0.0f, 1.0f,
         false, &DummyFloat
     );
@@ -1315,8 +1346,8 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, floa
         Label,
         [&Value]() { return Value; },
         [&Value](float NewValue) { Value = NewValue; },
-        -100.0f, 100.0f,
-        TArray<float>({-10.f, 0.f, 10.f}),
+        -1000.0f, 1000.0f,
+        TArray<float>({-100.f, 0.f, 100.f}),
         0.0f, 1.0f,
         false, &DummyFloat
     );
@@ -1535,6 +1566,25 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationSection(float& RotX, float
                     0.0f, 360.0f, {45.0f, 90.0f, 180.0f}, 0.0f
                 )
             ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 4)
+            [
+                SNew(SButton)
+                .Text(FText::FromString("Reset All Rotations"))
+                .HAlign(HAlign_Fill)
+                .ButtonStyle(FAppStyle::Get(), "FlatButton.Success")
+                .OnClicked_Lambda([&RotX, &RotY, &RotZ]() 
+                { 
+                    RotX = 0.0f;
+                    RotY = 0.0f;
+                    RotZ = 0.0f;
+                    return FReply::Handled(); 
+                })
+                .Visibility_Lambda([this]()
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("bShowRotation: %s"), bShowRotation ? TEXT("true") : TEXT("false"));
+                    return bShowRotation ? EVisibility::Visible : EVisibility::Collapsed;
+                })
+            ]
         ];
 }
 
@@ -1578,6 +1628,25 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetSection(FVector& Offset)
                     [&Offset](float NewValue) { Offset.Z = NewValue; },
                     -100.0f, 100.0f, {-10.0f, 0.0f, 10.0f}, 0.0f
                 )
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 4)
+            [
+                SNew(SButton)
+                .Text(FText::FromString("Reset All Offsets"))
+                .HAlign(HAlign_Fill)
+                .ButtonStyle(FAppStyle::Get(), "FlatButton.Success")
+                .OnClicked_Lambda([&Offset]() 
+                { 
+                    Offset.X = 0.0f;
+                    Offset.Y = 0.0f;
+                    Offset.Z = 0.0f;
+                    return FReply::Handled(); 
+                })
+                .Visibility_Lambda([this]()
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("bShowRotation: %s"), bShowRotation ? TEXT("true") : TEXT("false"));
+                    return bShowOffset ? EVisibility::Visible : EVisibility::Collapsed;
+                })
             ]
         ];
 }

@@ -14,6 +14,7 @@
 #include "Async/Async.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/FileHelper.h"
+#include "Misc/OutputDeviceNull.h"
 #include "Serialization/BufferArchive.h"
 #include "Voxel/BrushShapes/CapsuleBrushShape.h"
 #include "Voxel/BrushShapes/ConeBrushShape.h"
@@ -128,6 +129,12 @@ void UVoxelChunk::InitializeMeshComponent(UProceduralMeshComponent* MeshComponen
 void UVoxelChunk::InitializeDiggerManager(ADiggerManager* InDiggerManager)
 {
 	if(!DiggerManager) DiggerManager = InDiggerManager;
+	if (!HoleShapeLibrary && DiggerManager->HoleShapeLibrary)
+	{
+		//Todo: Wrap this in De=igger debug Chunk level || ShapeLibrary  Check
+		UE_LOG(LogTemp, Warning, TEXT("Chunk HoleShapeLibrary set successfully from the manager!"));
+		HoleShapeLibrary = DiggerManager->HoleShapeLibrary;
+	}
 }
 
 void UVoxelChunk::RestoreAllHoles()
@@ -138,38 +145,84 @@ void UVoxelChunk::RestoreAllHoles()
 	}
 }
 
+void UVoxelChunk::OnMarchingMeshComplete() const
+{
+	UE_LOG(LogTemp, Warning, TEXT("MeshReady Callback received! Now Setting the ShapeType for the holeBP!"));
+	UStaticMesh* HoleMesh = HoleShapeLibrary->GetMeshForShape(EHoleShapeType::Sphere);
+	
+}
+
 
 // In UVoxelChunk.cpp
 void UVoxelChunk::SpawnHoleFromData(const FSpawnedHoleData& HoleData)
 {
-	if (!HoleBP || !GetWorld())
+	
+	if (!HoleShapeLibrary)
 	{
-		UE_LOG(LogTemp, Error, TEXT("HoleBP or World invalid during SpawnHoleFromData"));
+		UE_LOG(LogTemp, Error, TEXT("HoleShapeLibrary is not set in SpawnHoleFromData"));
 		return;
 	}
+	
+    if (!HoleBP)
+    {
+        UE_LOG(LogTemp, Error, TEXT("HoleBP is not set in SpawnHoleFromData"));
+    }
+    if (!GetWorld())
+    {
+        UE_LOG(LogTemp, Error, TEXT("GetWorld() returned null in SpawnHoleFromData"));
+    }
 
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	SpawnParams.bNoFail = true;
+    if (!HoleBP || !GetWorld())
+    {
+        UE_LOG(LogTemp, Error, TEXT("Missing dependencies in SpawnHoleFromData"));
+        return;
+    }
 
-	AActor* SpawnedHole = GetWorld()->SpawnActor<AActor>(HoleBP, HoleData.Location, HoleData.Rotation, SpawnParams);
-	if (SpawnedHole)
-	{
-		SpawnedHole->SetActorScale3D(HoleData.Scale);
+    AActor* SpawnedHole = SpawnTransientActor(GetWorld(), HoleBP, HoleData.Location, HoleData.Rotation, HoleData.Scale);
+    if (!SpawnedHole)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to spawn hole actor"));
+        return;
+    }
 
-		// Add spawned actor to tracking array
-		SpawnedHoleInstances.Add(SpawnedHole);
+    // Add the spawned actor to the tracking list
+    SpawnedHoleInstances.Add(SpawnedHole);
+
+    // Get the corresponding mesh for the hole shape
+    UStaticMesh* HoleMesh = HoleShapeLibrary->GetMeshForShape(HoleData.Shape.ShapeType);
+    if (HoleMesh)
+    {
+        // Call the InitializeHoleMesh function on the BP actor
+        if (UFunction* InitFunc = SpawnedHole->FindFunction(FName("InitializeHoleMesh")))
+        {
+            struct FInitHoleParams
+            {
+                UStaticMesh* Mesh;
+            };
+
+            UE_LOG(LogTemp, Warning, TEXT("Spawned a hole!"));
+
+            FInitHoleParams Params{ HoleMesh };
+            SpawnedHole->ProcessEvent(InitFunc, &Params);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("InitializeHoleMesh not found on spawned hole actor"));
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No mesh found for shape %s"), *UEnum::GetValueAsString(HoleData.Shape.ShapeType));
+    }
 
 #if WITH_EDITOR
-		if (GIsEditor)
-		{
-			FString NewLabel = FString::Printf(TEXT("HoleBP_%d"), FMath::RandRange(0, 999999));
-			SpawnedHole->SetActorLabel(NewLabel);
-		}
+    if (GIsEditor)
+    {
+        FString NewLabel = FString::Printf(TEXT("HoleBP_%s"), *UEnum::GetValueAsString(HoleData.Shape.ShapeType));
+        SpawnedHole->SetActorLabel(NewLabel);
+    }
 #endif
-	}
 }
-
 
 
 // In UVoxelChunk.cpp
@@ -368,7 +421,6 @@ void UVoxelChunk::SpawnHoleMeshes()
 {
 	if (!World || !HoleBP) return;
 
-	// Ensure SpawnedHoleInstances matches HoleDataArray size
 	while (SpawnedHoleInstances.Num() < HoleDataArray.Num())
 	{
 		SpawnedHoleInstances.Add(nullptr);
@@ -379,23 +431,10 @@ void UVoxelChunk::SpawnHoleMeshes()
 		if (SpawnedHoleInstances[i]) continue;
 
 		const FSpawnedHoleData& HoleData = HoleDataArray[i];
-		FTransform SpawnTransform(HoleData.Rotation, HoleData.Location, HoleData.Scale);
-
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		SpawnParams.ObjectFlags |= RF_Transient;
-
-		AActor* Spawned = World->SpawnActor<AActor>(HoleBP, SpawnTransform, SpawnParams);
-
-		if (Spawned)
-		{
-			Spawned->SetFlags(RF_Transient);
-			Spawned->ClearFlags(RF_Transactional);
-			Spawned->SetActorLabel(TEXT("Runtime Hole"));
-			SpawnedHoleInstances[i] = Spawned;
-		}
+		SpawnHoleFromData(HoleData);
 	}
 }
+
 
 AActor* UVoxelChunk::SpawnTransientActor(UWorld* InWorld, TSubclassOf<AActor> ActorClass, FVector Location, FRotator Rotation, FVector Scale)
 {
@@ -468,7 +507,7 @@ AActor* UVoxelChunk::SpawnTransientActor(UWorld* InWorld, TSubclassOf<AActor> Ac
 	return Spawned;
 }
 
-void UVoxelChunk::SpawnHole(TSubclassOf<AActor> HoleBPClass, FVector Location, FRotator Rotation, FVector Scale)
+void UVoxelChunk::SpawnHole(TSubclassOf<AActor> HoleBPClass, FVector Location, FRotator Rotation, FVector Scale, EHoleShapeType ShapeType)
 {
 	if (!HoleBPClass)
 	{
@@ -516,12 +555,21 @@ void UVoxelChunk::SpawnHole(TSubclassOf<AActor> HoleBPClass, FVector Location, F
 
 	if (SpawnedHole)
 	{
+		// ✅ Construct HoleShape and assign it to HoleData
+		FHoleShape Shape;
+		Shape.ShapeType = ShapeType;
+
 		FSpawnedHoleData HoleData{ Location, Rotation, Scale };
+		HoleData.Shape = Shape;
+
 		HoleDataArray.Add(HoleData);
+
 
 		if (DiggerDebug::Holes || DiggerDebug::Chunks)
 		{
-			UE_LOG(LogTemp, Log, TEXT("Spawned HoleBP in Chunk at %s with scale %s"), *Location.ToString(), *Scale.ToString());
+			UE_LOG(LogTemp, Log, TEXT("Spawned HoleBP in Chunk at %s with shape %s"),
+				*Location.ToString(),
+				*UEnum::GetValueAsString(ShapeType));
 		}
 	}
 	else
@@ -532,6 +580,7 @@ void UVoxelChunk::SpawnHole(TSubclassOf<AActor> HoleBPClass, FVector Location, F
 		}
 	}
 }
+
 
 
 
@@ -713,55 +762,57 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     // Track air voxels placed below terrain for shell generation
     TArray<FIntVector> AirVoxelsBelowTerrain;
     
-    for (int32 X = MinX; X <= MaxX; ++X)
-    {
-        for (int32 Y = MinY; Y <= MaxY; ++Y)
-        {
-            for (int32 Z = MinZ; Z < MaxZ-1; ++Z)
-            {
-                // Convert voxel coordinates to center-aligned world position
-                const FVector WorldPos = ChunkOrigin + FVector(
-                    (X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
-                    (Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
-                    (Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
-                );
-                
-                // Fast distance check using squared distance to avoid sqrt
-                const FVector Delta = WorldPos - Stroke.BrushPosition;
-                const float DistanceSq = Delta.SizeSquared();
-                if (DistanceSq > MaxBrushBoundSq)
-                    continue;
-                
-                // Only calculate actual distance when needed
-                const float Distance = FMath::Sqrt(DistanceSq);
-                
-                // Get terrain height and check position
-                const float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
-                const bool bAboveTerrain = WorldPos.Z >= TerrainHeight;
-                
-                // Calculate SDF value using the specific brush shape
-                const float SDF = BrushShape->CalculateSDF(
-                   WorldPos,
-                   Stroke,  // Pass the entire stroke
-                   TerrainHeight
-                );
-                
-                // Skip if SDF is not changing anything
-                if (FMath::IsNearlyZero(SDF))
-                    continue;
-                
-                // Apply voxel modification based on operation type
-                if (Stroke.bDig && !bAboveTerrain)
-                {
-                    // Digging below terrain - explicitly set to air
-                    SparseVoxelGrid->SetVoxel(X, Y, Z, SDF_AIR_Strength, true);
-                    AirVoxelsBelowTerrain.Add(FIntVector(X, Y, Z));
-                }
-                else if (!Stroke.bDig || bAboveTerrain)
-                {
-                    // Adding (anywhere) or digging above terrain - use normal SDF
-                    SparseVoxelGrid->SetVoxel(X, Y, Z, SDF, Stroke.bDig);
-                }
+	for (int32 X = MinX; X <= MaxX; ++X)
+	{
+		for (int32 Y = MinY; Y <= MaxY; ++Y)
+		{
+			for (int32 Z = MinZ; Z < MaxZ-1; ++Z)
+			{
+				
+				// Convert voxel coordinates to center-aligned world position
+				const FVector WorldPos = ChunkOrigin + FVector(
+					(X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+					(Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+					(Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
+				);
+
+				// Calculate Bounds Check
+				// In ApplyBrushStroke, replace the bounds check with:
+				if (!BrushShape->IsWithinBounds(WorldPos, Stroke))
+					continue;
+				
+				// Get terrain height and check position
+				const float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
+				const bool bAboveTerrain = WorldPos.Z >= TerrainHeight;
+
+				// Calculate SDF value using the specific brush shape
+				const float SDF = BrushShape->CalculateSDF(
+				   WorldPos,
+				   Stroke,
+				   TerrainHeight
+				);
+
+				// FIXED: Proper digging logic that respects the SDF shape
+				if (Stroke.bDig)
+				{
+					// For digging, we want to create air where the SDF indicates we're inside the shape
+					if (SDF > 0) // SDF > 0 means we want air here
+					{
+						SparseVoxelGrid->SetVoxel(X, Y, Z, SDF, true);
+						if (!bAboveTerrain)
+						{
+							AirVoxelsBelowTerrain.Add(FIntVector(X, Y, Z));
+						}
+					}
+				}
+				else
+				{
+					// For adding, we want to create solid where SDF is negative
+					if (SDF < 0)
+					{
+						SparseVoxelGrid->SetVoxel(X, Y, Z, SDF, false);
+					}
+				}
                 
                 ModifiedVoxels++;
             }
@@ -1287,60 +1338,86 @@ void UVoxelChunk::ApplyStairsBrush(FVector3d BrushPosition, float Width, float H
 
 FVector UVoxelChunk::CalculateBrushBounds(const FBrushStroke& Stroke) const
 {
+	auto CalculateRotatedBounds = [](const FVector& HalfExtents, const FRotator& Rotation, float Falloff) -> FVector
+	{
+		static constexpr float EPSILON = 0.01f;
+
+		if (Rotation.IsNearlyZero())
+		{
+			return HalfExtents + Falloff + FVector(EPSILON);
+		}
+
+		TArray<FVector> Corners = {
+			FVector(-1, -1, -1), FVector(-1, -1, 1),
+			FVector(-1,  1, -1), FVector(-1,  1, 1),
+			FVector( 1, -1, -1), FVector( 1, -1, 1),
+			FVector( 1,  1, -1), FVector( 1,  1, 1)
+		};
+
+		FBox RotatedBox(EForceInit::ForceInit);
+		for (const FVector& Corner : Corners)
+		{
+			RotatedBox += Rotation.RotateVector(Corner * HalfExtents);
+		}
+
+		return RotatedBox.GetExtent() + Falloff + FVector(EPSILON);
+	};
+
+
 	switch (Stroke.BrushType)
 	{
 	case EVoxelBrushType::Sphere:
 	case EVoxelBrushType::Icosphere:
 	case EVoxelBrushType::Smooth:
 	case EVoxelBrushType::Noise:
+		// Rotation doesn't matter for true spherical brushes
 		return FVector(Stroke.BrushRadius + Stroke.BrushFalloff);
-            
+
 	case EVoxelBrushType::Cube:
-		if (Stroke.bUseAdvancedCubeBrush)
 		{
-			return FVector(
-				Stroke.AdvancedCubeHalfExtentX + Stroke.BrushFalloff,
-				Stroke.AdvancedCubeHalfExtentY + Stroke.BrushFalloff,
-				Stroke.AdvancedCubeHalfExtentZ + Stroke.BrushFalloff
-			);
+			const FVector HalfExtents = Stroke.bUseAdvancedCubeBrush
+				? FVector(
+					Stroke.AdvancedCubeHalfExtentX,
+					Stroke.AdvancedCubeHalfExtentY,
+					Stroke.AdvancedCubeHalfExtentZ)
+				: FVector(Stroke.BrushRadius);
+
+			return CalculateRotatedBounds(HalfExtents, Stroke.BrushRotation, Stroke.BrushFalloff);
 		}
-		else
-		{
-			return FVector(Stroke.BrushRadius + Stroke.BrushFalloff);
-		}
-            
+
 	case EVoxelBrushType::Cylinder:
 	case EVoxelBrushType::Capsule:
-		return FVector(
-			Stroke.BrushRadius + Stroke.BrushFalloff,
-			Stroke.BrushRadius + Stroke.BrushFalloff,
-			(Stroke.BrushLength * 0.5f) + Stroke.BrushFalloff
-		);
-            
+		{
+			const FVector HalfExtents = FVector(
+				Stroke.BrushRadius,
+				Stroke.BrushRadius,
+				Stroke.BrushLength * 0.5f
+			);
+			return CalculateRotatedBounds(HalfExtents, Stroke.BrushRotation, Stroke.BrushFalloff);
+		}
+
 	case EVoxelBrushType::Cone:
 	case EVoxelBrushType::Pyramid:
 		{
-			// Calculate bounding sphere that encompasses the entire cone
 			const float AngleRad = FMath::DegreesToRadians(Stroke.BrushAngle);
 			const float RadiusAtBase = Stroke.BrushLength * FMath::Tan(AngleRad);
-			const float BoundingSphereRadius = FMath::Sqrt(FMath::Square(Stroke.BrushLength) + FMath::Square(RadiusAtBase)) + Stroke.BrushFalloff;
-			return FVector(BoundingSphereRadius);
+			const FVector HalfExtents = FVector(RadiusAtBase, RadiusAtBase, Stroke.BrushLength * 0.5f);
+			return CalculateRotatedBounds(HalfExtents, Stroke.BrushRotation, Stroke.BrushFalloff);
 		}
-            
+
 	case EVoxelBrushType::Torus:
 		{
 			const float OuterRadius = Stroke.BrushRadius + Stroke.TorusInnerRadius;
-			return FVector(
-				OuterRadius + Stroke.BrushFalloff,
-				OuterRadius + Stroke.BrushFalloff,
-				Stroke.BrushRadius + Stroke.BrushFalloff
-			);
+			const FVector HalfExtents = FVector(OuterRadius, OuterRadius, Stroke.BrushRadius);
+			return CalculateRotatedBounds(HalfExtents, Stroke.BrushRotation, Stroke.BrushFalloff);
 		}
-            
+
 	default:
 		return FVector(Stroke.BrushRadius + Stroke.BrushFalloff);
 	}
 }
+
+
 
 // Helper function for digging SDF calculation
 float UVoxelChunk::CalculateDiggingSDF(
@@ -1912,6 +1989,11 @@ void UVoxelChunk::GenerateMesh() const
 
 	if (MarchingCubesGenerator != nullptr)
 	{
+		MarchingCubesGenerator->OnMeshReady.BindLambda([this]()
+		{
+			this->OnMarchingMeshComplete();
+		});
+
 		MarchingCubesGenerator->GenerateMesh(this);
 	}
 

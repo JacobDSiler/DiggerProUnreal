@@ -4,17 +4,16 @@
 #include "VoxelConversion.h"
 
 float USphereBrushShape::CalculateSDF_Implementation(
-const FVector& WorldPos,
-const FBrushStroke& Stroke,
-float TerrainHeight
+    const FVector& WorldPos,
+    const FBrushStroke& Stroke,
+    float TerrainHeight
 ) const
 {
     // Apply brush offset
     FVector AdjustedBrushPos = Stroke.BrushPosition + Stroke.BrushOffset;
-    
     float Distance = FVector::Dist(WorldPos, AdjustedBrushPos);
     float OuterRadius = Stroke.BrushRadius + Stroke.BrushFalloff;
-    
+
     if (Distance > OuterRadius)
         return 0.0f;
 
@@ -51,4 +50,13 @@ float TerrainHeight
     }
 
     return SDFValue * Stroke.BrushStrength;
+}
+
+bool USphereBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const
+{
+    // Temporary fallback - use simple sphere bounds
+    const FVector Delta = WorldPos - Stroke.BrushPosition;
+    const float DistanceSq = Delta.SizeSquared();
+    const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
+    return DistanceSq <= RadiusSq;
 }

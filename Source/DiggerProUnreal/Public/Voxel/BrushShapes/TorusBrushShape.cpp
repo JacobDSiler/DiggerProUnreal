@@ -69,3 +69,9 @@ float UTorusBrushShape::CalculateSDF_Implementation(
 
     return SDFValue * Stroke.BrushStrength;
 }
+
+bool UTorusBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const
+{
+    return Super::IsWithinBounds(WorldPos, Stroke);
+}
+

@@ -72,3 +72,12 @@ float UCapsuleBrushShape::CalculateSDF_Implementation(
 
     return SDFValue * Stroke.BrushStrength;
 }
+
+bool UCapsuleBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const
+{
+    // Temporary fallback - use simple sphere bounds
+    const FVector Delta = WorldPos - Stroke.BrushPosition;
+    const float DistanceSq = Delta.SizeSquared();
+    const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
+    return DistanceSq <= RadiusSq;
+}

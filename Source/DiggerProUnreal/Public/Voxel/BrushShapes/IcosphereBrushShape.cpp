@@ -94,3 +94,12 @@ float UIcosphereBrushShape::GetIcosphereDistortion(const FVector& NormalizedPos,
     
     return Distortion;
 }
+
+bool UIcosphereBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const
+{
+    // Temporary fallback - use simple sphere bounds
+    const FVector Delta = WorldPos - Stroke.BrushPosition;
+    const float DistanceSq = Delta.SizeSquared();
+    const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
+    return DistanceSq <= RadiusSq;
+}

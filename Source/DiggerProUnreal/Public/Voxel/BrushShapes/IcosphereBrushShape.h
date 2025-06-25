@@ -16,4 +16,6 @@ public:
 		float TerrainHeight
 	) const override;
 	float GetIcosphereDistortion(const FVector& NormalizedPos, int32 Subdivisions) const;
+
+	virtual bool IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const override;
 };

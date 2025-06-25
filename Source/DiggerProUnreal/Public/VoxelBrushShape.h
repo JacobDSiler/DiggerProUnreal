@@ -93,6 +93,9 @@ public:
 		this->bIsDigging = setBDig;
 	}
 
+	// In UVoxelBrushShape.h
+	virtual bool IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const;
+
 protected:
 	//Brush Settings
 	// Size and location of the brush

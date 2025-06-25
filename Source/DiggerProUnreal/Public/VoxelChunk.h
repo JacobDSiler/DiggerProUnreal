@@ -4,6 +4,7 @@
 #include "LandscapeProxy.h"
 #include "UObject/NoExportTypes.h"
 #include "FSpawnedHoleData.h"
+#include "HoleShapeLibrary.h"
 #include "VoxelBrushTypes.h"
 #include "VoxelChunk.generated.h"
 
@@ -28,6 +29,10 @@ public:
     void InitializeMeshComponent(UProceduralMeshComponent* MeshComponent);
     void InitializeDiggerManager(ADiggerManager* InDiggerManager);
     void RestoreAllHoles();
+    void OnMarchingMeshComplete() const;
+
+    UPROPERTY(EditAnywhere)
+    UHoleShapeLibrary* HoleShapeLibrary;
 
     // In UVoxelChunk.h
     UFUNCTION()
@@ -40,7 +45,7 @@ public:
 
 
     UFUNCTION(BlueprintCallable)
-    void SpawnHole(TSubclassOf<AActor> HoleBPClass, FVector Location, FRotator Rotation, FVector Scale);
+    void SpawnHole(TSubclassOf<AActor> HoleBPClass, FVector Location, FRotator Rotation, FVector Scale, EHoleShapeType ShapeType);
 
     UFUNCTION(BlueprintCallable)
     bool RemoveNearestHole(FVector Location, float MaxDistance = 100.0f);
@@ -117,7 +122,7 @@ private:
     void ApplyStairsBrush(FVector3d BrushPosition, float Width, float Height, float Depth, int32 NumSteps,
                           bool bSpiral, bool bDig, const FRotator& Rotation);
     FVector CalculateBrushBounds(const FBrushStroke& Stroke) const;
-    void CalculateBrushBounds(const FBrushStroke& Stroke, FVector& OutMin, FVector& OutMax);
+
     float CalculateDiggingSDF(float Distance, float InnerRadius, float Radius, float OuterRadius, float TransitionZone,
                               float ExistingSDF, bool bIsAboveTerrain, float HeightDifferenceFromTerrain);
 

@@ -12,9 +12,8 @@
 #include "VoxelBrushTypes.h"
 #include "Engine/StaticMeshActor.h"
 #include "GameFramework/Actor.h"
-// Define the FBrushStroke struct
-//#include "C:\Users\serpe\Documents\Unreal Projects\DiggerProUnreal\Source\DiggerProUnreal\Public\FBrushStroke.h"
 #include "FBrushStroke.h"
+#include "HoleShapeLibrary.h"
 
 #include "AssetToolsModule.h"
 #include "FCustomSDFBrush.h"
@@ -177,7 +176,7 @@ public:
     // Native C++ delegates (not UObject/Blueprint)
     DECLARE_MULTICAST_DELEGATE(FIslandsDetectionStartedEvent);
     FIslandsDetectionStartedEvent OnIslandsDetectionStarted;
-    
+
 
     DECLARE_MULTICAST_DELEGATE_OneParam(FIslandDetectedEvent, const FIslandData&);
     FIslandDetectedEvent OnIslandDetected;
@@ -217,6 +216,9 @@ public:
 
     UPROPERTY(EditAnywhere, Category="Digger Brush")
     UVoxelBrushShape* BrushShape;
+
+    UPROPERTY(EditAnywhere)
+    UHoleShapeLibrary* HoleShapeLibrary;
         
     // Reference to the terrain hole Blueprint
     UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Holes")
@@ -234,6 +236,9 @@ public:
 
     UPROPERTY(EditAnywhere, Category="Brush")
     EVoxelBrushType EditorBrushType = EVoxelBrushType::Sphere;
+    
+    UPROPERTY(EditAnywhere, Category="Hole")
+    EHoleShapeType EditorBrushHoleShape = EHoleShapeType::Cube;
 
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
     float EditorBrushRadius = 100.0f;
@@ -258,6 +263,18 @@ public:
 
     UFUNCTION(CallInEditor, Category="Digger Brush|Actions")
     void ApplyBrushInEditor(bool bDig);
+
+    UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
+    bool EditorbUseAdvancedCubeBrush;
+    
+    UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
+    float EditorCubeHalfExtentX;
+    
+    UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
+    float EditorCubeHalfExtentY;
+    
+    UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
+    float EditorCubeHalfExtentZ;
 
     UFUNCTION(BlueprintCallable, Category = "Voxel Editing")
     void SetVoxelAtWorldPosition(const FVector& WorldPos, float Value);
@@ -309,6 +326,7 @@ public:
     // Editor support
     virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
     void OnConstruction(const FTransform& Transform);
+    void InitHoleShapeLibrary();
     virtual void PostEditMove(bool bFinished) override;
     virtual void PostEditUndo() override;
 

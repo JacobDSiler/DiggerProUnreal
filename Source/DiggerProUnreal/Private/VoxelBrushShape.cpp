@@ -435,6 +435,12 @@ void UVoxelBrushShape::DebugDrawLineIfEnabled(FVector& Start, FVector& End, FCol
     }
 }
 
+
+bool UVoxelBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const
+{
+    return true;
+}
+
 void UVoxelBrushShape::DebugDrawPointIfEnabled(FVector& Location, FColor Color, float Size, float Duration) const
 {
     if (World && bEnableDebugDrawing)

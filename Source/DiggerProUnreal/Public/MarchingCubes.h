@@ -8,6 +8,9 @@ class ADiggerManager;
 class UVoxelChunk;
 class USparseVoxelGrid;
 
+//Mesh Ready Delegate
+DECLARE_DELEGATE(FOnMeshReady);
+
 UCLASS()
 class DIGGERPROUNREAL_API UMarchingCubes : public UObject
 {
@@ -77,7 +80,10 @@ public:
 	UPROPERTY(EditAnywhere, Category="Landscape Transition")
 	float TransitionSharpness = 2.0f;
 
-//	void GenerateMeshForIsland(USparseVoxelGrid* IslandGrid, TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs, TArray<FColor>& Colors, TArray<FProcMeshTangent>& Tangents);
+	// On Mesh Ready Callback
+	FOnMeshReady OnMeshReady;
+
+	//	void GenerateMeshForIsland(USparseVoxelGrid* IslandGrid, TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs, TArray<FColor>& Colors, TArray<FProcMeshTangent>& Tangents);
 
 private:
 	// Helper functions for mesh generation

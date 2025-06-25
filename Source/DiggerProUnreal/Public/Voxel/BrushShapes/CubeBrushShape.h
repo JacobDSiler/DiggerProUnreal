@@ -15,4 +15,8 @@ public:
         const FBrushStroke& Stroke,
         float TerrainHeight
     ) const override;
+
+    
+    // In UVoxelCubeBrushShape.h
+    bool IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const override;
 };

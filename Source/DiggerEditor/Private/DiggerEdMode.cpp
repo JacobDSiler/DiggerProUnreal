@@ -115,6 +115,7 @@ void FDiggerEdMode::Render(const FSceneView* View, FViewport* Viewport, FPrimiti
     }
 }
 
+
 bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click)
 {
     FVector HitLocation;
@@ -180,6 +181,25 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
                 Digger->EditorBrushDig = bFinalBrushDig;
                 Digger->EditorBrushRotation = FinalRotation;
                 Digger->EditorBrushAngle = DiggerToolkit->GetBrushAngle();
+                Digger->EditorBrushHoleShape = GetHoleShapeForBrush(BrushType);
+
+                if(DiggerToolkit->IsUsingAdvancedCubeBrush())
+                {
+            
+                    Digger->EditorbUseAdvancedCubeBrush = true;
+                    Digger->EditorCubeHalfExtentX = DiggerToolkit->GetAdvancedCubeHalfExtentX();
+                    Digger->EditorCubeHalfExtentY = DiggerToolkit->GetAdvancedCubeHalfExtentY();
+                    Digger->EditorCubeHalfExtentZ = DiggerToolkit->GetAdvancedCubeHalfExtentZ();
+                    UE_LOG(LogTemp, Warning, TEXT("DiggerEdMode.cpp: Extent X: %.2f  Extent Y: %.2f  Extent Z: %.2f"),
+                   Digger->EditorCubeHalfExtentX,
+                   Digger->EditorCubeHalfExtentY,
+                   Digger->EditorCubeHalfExtentZ);
+
+                }
+                else
+                {
+                    Digger->EditorbUseAdvancedCubeBrush = false;
+                }
 
                 FVector Offset = DiggerToolkit->GetBrushOffset();
                 FVector OffsetXY = FVector(Offset.X, Offset.Y, 0.f);
@@ -388,6 +408,8 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
             return;
         }
 
+        EVoxelBrushType BrushType = DiggerToolkit->GetCurrentBrushType();
+
         FRotator FinalRotation = ContinuousSettings.FinalRotation;
         if (DiggerToolkit->UseSurfaceNormalRotation())
         {
@@ -401,7 +423,27 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
         Digger->EditorBrushRotation = FinalRotation;
         Digger->EditorBrushIsFilled = DiggerToolkit->GetBrushIsFilled();
         Digger->EditorBrushAngle = DiggerToolkit->GetBrushAngle();
+        Digger->EditorBrushHoleShape = GetHoleShapeForBrush(BrushType);
 
+        
+        if(DiggerToolkit->IsUsingAdvancedCubeBrush())
+        {
+            
+            Digger->EditorbUseAdvancedCubeBrush = true;
+            Digger->EditorCubeHalfExtentX = DiggerToolkit->GetAdvancedCubeHalfExtentX();
+            Digger->EditorCubeHalfExtentY = DiggerToolkit->GetAdvancedCubeHalfExtentY();
+            Digger->EditorCubeHalfExtentZ = DiggerToolkit->GetAdvancedCubeHalfExtentZ();
+            UE_LOG(LogTemp, Warning, TEXT("DiggerEdMode.cpp: Extent X: %.2f  Extent Y: %.2f  Extent Z: %.2f"),
+           Digger->EditorCubeHalfExtentX,
+           Digger->EditorCubeHalfExtentY,
+           Digger->EditorCubeHalfExtentZ);
+
+        }
+        else
+        {
+            Digger->EditorbUseAdvancedCubeBrush = false;
+        }
+        
         FVector Offset = DiggerToolkit->GetBrushOffset();
         FVector OffsetXY = FVector(Offset.X, Offset.Y, 0.f);
         float ZDistance = Offset.Z;

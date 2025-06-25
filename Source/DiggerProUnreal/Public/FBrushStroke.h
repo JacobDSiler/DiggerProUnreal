@@ -4,6 +4,34 @@
 #include "VoxelBrushTypes.h"
 #include "FBrushStroke.generated.h"
 
+// Helper function to map brush type to hole shape
+FORCEINLINE EHoleShapeType GetHoleShapeForBrush(EVoxelBrushType BrushType)
+{
+    switch (BrushType)
+    {
+    case EVoxelBrushType::Sphere:
+    case EVoxelBrushType::Icosphere:
+        return EHoleShapeType::Sphere;
+    case EVoxelBrushType::Cube:
+        return EHoleShapeType::Cube;
+    case EVoxelBrushType::Cylinder:
+        return EHoleShapeType::Cylinder;
+    case EVoxelBrushType::Capsule:
+        return EHoleShapeType::Capsule;
+    case EVoxelBrushType::Cone:
+        return EHoleShapeType::Cone;
+    case EVoxelBrushType::Torus:
+        return EHoleShapeType::Torus;
+    case EVoxelBrushType::Pyramid:
+        return EHoleShapeType::Pyramid;
+    case EVoxelBrushType::Stairs:
+        return EHoleShapeType::Stairs;
+        // Add more mappings as needed
+    default:
+        return EHoleShapeType::Sphere; // Fallback/default
+    }
+}
+
 USTRUCT(BlueprintType)
 struct FBrushStroke
 {
@@ -68,9 +96,16 @@ struct FBrushStroke
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Brush")
     bool bIsFilled;
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Brush")
+    float WallThickness;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hole")
+    EHoleShapeType HoleShape;
 
     UPROPERTY(Transient)
     UVoxelBrushShape* BrushShape;
+
 
     // In FBrushStroke constructor
     FBrushStroke()
@@ -92,6 +127,8 @@ struct FBrushStroke
         , NumSteps(5)
         , bSpiral(false)
         , bIsFilled(false)
+        , WallThickness(1.5f)
+        , HoleShape(EHoleShapeType::Sphere)
         , BrushShape(nullptr)
     {}
 };

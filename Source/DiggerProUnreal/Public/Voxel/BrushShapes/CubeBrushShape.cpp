@@ -3,76 +3,117 @@
 #include "FBrushStroke.h"
 #include "VoxelConversion.h"
 
+
 float UCubeBrushShape::CalculateSDF_Implementation(
     const FVector& WorldPos,
     const FBrushStroke& Stroke,
     float TerrainHeight
 ) const
 {
-    // Create transform from brush rotation and position
-    FTransform BrushTransform(Stroke.BrushRotation, Stroke.BrushPosition);
-    FTransform InvBrushTransform = BrushTransform.Inverse();
-    
-    // Transform world position to local brush space
-    FVector LocalPos = InvBrushTransform.TransformPosition(WorldPos);
-    
-    const float Height = Stroke.BrushLength;
-    const float Angle = Stroke.BrushAngle; // You'll need to add this to FBrushStroke
-    const float AngleRad = FMath::DegreesToRadians(Angle);
-    const float RadiusAtBase = Height * FMath::Tan(AngleRad);
-    
-    // Calculate SDF for cone
-    float radiusAtZ = (LocalPos.Z / Height) * RadiusAtBase;
-    float d = FVector2D(LocalPos.X, LocalPos.Y).Size() - radiusAtZ;
-    
-    float dist;
-    if (Stroke.bIsFilled)
+    FVector Center = Stroke.BrushPosition + Stroke.BrushOffset;
+    FVector LocalPos = WorldPos - Center;
+    if (!Stroke.BrushRotation.IsNearlyZero())
     {
-        // Hard caps: bottom at Z=0, top at Z=Height
-        float cappedZ = FMath::Clamp(LocalPos.Z, 0.0f, Height);
-        radiusAtZ = (cappedZ / Height) * RadiusAtBase;
-        d = FVector2D(LocalPos.X, LocalPos.Y).Size() - radiusAtZ;
-        
-        // Only inside the cylinder-ish cone body
-        float dz = 0.0f;
-        if (LocalPos.Z < 0.0f) dz = LocalPos.Z;
-        else if (LocalPos.Z > Height) dz = LocalPos.Z - Height;
-        
-        dist = FMath::Max(d, dz); // flat bottom/top cap
+        LocalPos = Stroke.BrushRotation.UnrotateVector(LocalPos);
+    }
+
+    FVector HalfExtents = Stroke.bUseAdvancedCubeBrush
+        ? FVector(
+            Stroke.AdvancedCubeHalfExtentX,
+            Stroke.AdvancedCubeHalfExtentY,
+            Stroke.AdvancedCubeHalfExtentZ
+        )
+        : FVector(Stroke.BrushRadius);
+
+    // Calculate distance to each face
+    const float DistX = FMath::Abs(LocalPos.X) - HalfExtents.X;
+    const float DistY = FMath::Abs(LocalPos.Y) - HalfExtents.Y;
+    const float DistZ = FMath::Abs(LocalPos.Z) - HalfExtents.Z;
+
+    float Distance;
+    if (DistX <= 0 && DistY <= 0 && DistZ <= 0)
+    {
+        Distance = FMath::Max(FMath::Max(DistX, DistY), DistZ);
     }
     else
     {
-        // Hollow cone shell
-        const float ShellThickness = FMath::Max(FVoxelConversion::LocalVoxelSize * 1.5f, RadiusAtBase * 0.05f);
-        
-        // Calculate base cone SDF
-        float baseDist = FMath::Max(d, -LocalPos.Z);
-        baseDist = FMath::Min(baseDist, FMath::Max(d, LocalPos.Z - Height));
-        
-        // Convert to shell
-        if (FMath::Abs(baseDist) < ShellThickness)
+        const float OutsideX = FMath::Max(DistX, 0.0f);
+        const float OutsideY = FMath::Max(DistY, 0.0f);
+        const float OutsideZ = FMath::Max(DistZ, 0.0f);
+        Distance = FMath::Sqrt(OutsideX * OutsideX + OutsideY * OutsideY + OutsideZ * OutsideZ);
+    }
+
+    float t = 0.0f;
+    if (Stroke.BrushFalloff > 0.0f)
+    {
+        t = FMath::Clamp(Distance / Stroke.BrushFalloff, 0.0f, 1.0f);
+        t = FMath::SmoothStep(0.0f, 1.0f, t);
+    }
+
+    float SDFValue = 0.0f;
+
+    if (Stroke.bDig)
+    {
+        if (Distance <= 0.0f)
         {
-            dist = FMath::Abs(baseDist) - ShellThickness;
+            SDFValue = FVoxelConversion::SDF_AIR;
         }
         else
         {
-            dist = FMath::Max(baseDist, ShellThickness);
+            SDFValue = FMath::Lerp(FVoxelConversion::SDF_AIR, FVoxelConversion::SDF_SOLID, t);
         }
     }
-    
-    // Fix for tip issue: Add a small bias to ensure the tip is properly handled
-    if (!Stroke.bDig && LocalPos.Z < FVoxelConversion::LocalVoxelSize)
+    else
     {
-        // Near the tip, make sure the SDF is negative enough
-        dist = FMath::Min(dist, -0.1f);
+        if (Distance <= 0.0f)
+        {
+            SDFValue = FVoxelConversion::SDF_SOLID;
+        }
+        else
+        {
+            SDFValue = FMath::Lerp(FVoxelConversion::SDF_SOLID, 0.0f, t);
+        }
     }
-    
-    // Apply falloff if within falloff range
-    if (Stroke.BrushFalloff > 0.0f && FMath::Abs(dist) < Stroke.BrushFalloff)
+
+    return SDFValue * Stroke.BrushStrength;
+}
+
+
+bool UCubeBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const
+{
+    const FVector Center = Stroke.BrushPosition + Stroke.BrushOffset;
+    FVector LocalPos = WorldPos - Center;
+
+    // Match the rotation logic exactly as used in CalculateSDF
+    if (!Stroke.BrushRotation.IsNearlyZero())
     {
-        const float FalloffFactor = 1.0f - (FMath::Abs(dist) / Stroke.BrushFalloff);
-        dist = dist * FalloffFactor;
+        LocalPos = Stroke.BrushRotation.UnrotateVector(LocalPos);
     }
-    
-    return dist;
+
+    const FVector HalfExtents = Stroke.bUseAdvancedCubeBrush
+        ? FVector(
+            Stroke.AdvancedCubeHalfExtentX,
+            Stroke.AdvancedCubeHalfExtentY,
+            Stroke.AdvancedCubeHalfExtentZ
+        )
+        : FVector(Stroke.BrushRadius);
+
+    // Same box SDF logic from CalculateSDF
+    FVector Q = FVector(
+        FMath::Abs(LocalPos.X),
+        FMath::Abs(LocalPos.Y),
+        FMath::Abs(LocalPos.Z)
+    ) - HalfExtents;
+
+    float OutsideDistance = FVector(
+        FMath::Max(Q.X, 0.f),
+        FMath::Max(Q.Y, 0.f),
+        FMath::Max(Q.Z, 0.f)
+    ).Size();
+
+    float InsideDistance = FMath::Min(FMath::Max(FMath::Max(Q.X, Q.Y), Q.Z), 0.f);
+
+    float Distance = OutsideDistance + InsideDistance;
+
+    return Distance <= 0.0f;
 }
