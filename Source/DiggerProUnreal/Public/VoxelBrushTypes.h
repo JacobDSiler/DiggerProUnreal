@@ -20,6 +20,7 @@ enum class EVoxelBrushType : uint8 {
 	Torus,
 	Pyramid,
 	Icosphere,
-	Stairs
+	Stairs,
+	Light
 };
 

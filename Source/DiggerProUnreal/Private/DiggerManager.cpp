@@ -62,9 +62,15 @@
 // Save and Load
 #include "DiggerDebug.h"
 #include "DiggerEdMode.h"
+#include "Components/LightComponent.h"
+#include "Components/PointLightComponent.h"
+#include "Components/SpotLightComponent.h"
+#include "Engine/DirectionalLight.h"
 #include "HAL/PlatformFilemanager.h"
 #include "Misc/FileHelper.h"
 #include "Engine/Engine.h"
+#include "Engine/PointLight.h"
+#include "Engine/SpotLight.h"
 #include "Voxel/BrushShapes/CapsuleBrushShape.h"
 #include "Voxel/BrushShapes/CylinderBrushShape.h"
 #include "Voxel/BrushShapes/IcosphereBrushShape.h"
@@ -147,6 +153,17 @@ void ADiggerManager::OnConstruction(const FTransform& Transform)
     // Initialize the Hole Shape Library
     InitHoleShapeLibrary();
 
+    // Populate Landscape Height Cache.
+    for (TActorIterator<ALandscapeProxy> It(GetWorld()); It; ++It)
+    {
+        ALandscapeProxy* Landscape = *It;
+        if (Landscape)
+        {
+            HeightCacheLoadingSet.Add(Landscape);
+            PopulateLandscapeHeightCache(Landscape);
+        }
+    }
+    
     FVoxelConversion::InitFromConfig(ChunkSize,Subdivisions, TerrainGridSize, GetActorLocation());
 }
 
@@ -156,7 +173,7 @@ void ADiggerManager::InitHoleShapeLibrary()
     if (!HoleShapeLibrary)
     {
         // Load class dynamically
-        const FStringClassReference LibraryClassRef(TEXT("/Game/Blueprints/MyHoleShapeLibrary.MyHoleShapeLibrary_C"));
+        const FSoftClassPath LibraryClassRef(TEXT("/Game/Blueprints/MyHoleShapeLibrary.MyHoleShapeLibrary_C"));
         UClass* LoadedClass = LibraryClassRef.TryLoadClass<UHoleShapeLibrary>();
 
         if (LoadedClass)
@@ -204,7 +221,53 @@ ADiggerManager::ADiggerManager()
     }
 }
 
+void ADiggerManager::SpawnLight(const FBrushStroke& Stroke)
+{
+    World = GetSafeWorld();
+    if (!World)
+    {
+        UE_LOG(LogTemp, Error, TEXT("SpawnLight: Invalid World"));
+        return;
+    }
 
+    AActor* NewLight = nullptr;
+
+    switch (Stroke.LightType)
+    {
+    case ELightBrushType::Point:
+        NewLight = World->SpawnActor<APointLight>(APointLight::StaticClass(), Stroke.BrushPosition, Stroke.BrushRotation);
+        break;
+    case ELightBrushType::Spot:
+        NewLight = World->SpawnActor<ASpotLight>(ASpotLight::StaticClass(), Stroke.BrushPosition, Stroke.BrushRotation);
+        break;
+    case ELightBrushType::Directional:
+        NewLight = World->SpawnActor<ADirectionalLight>(ADirectionalLight::StaticClass(), Stroke.BrushPosition, Stroke.BrushRotation);
+        break;
+    default:
+        UE_LOG(LogTemp, Warning, TEXT("Unknown light type!"));
+        break;
+    }
+
+    if (NewLight)
+    {
+        if (APointLight* Point = Cast<APointLight>(NewLight))
+        {
+            if (UPointLightComponent* PointComp = Cast<UPointLightComponent>(Point->GetLightComponent()))
+            {
+                PointComp->SetAttenuationRadius(Stroke.BrushRadius);
+                PointComp->SetIntensity(Stroke.BrushStrength);
+            }
+        }
+        else if (ASpotLight* Spot = Cast<ASpotLight>(NewLight))
+        {
+            if (USpotLightComponent* SpotComp = Cast<USpotLightComponent>(Spot->GetLightComponent()))
+            {
+                SpotComp->SetAttenuationRadius(Stroke.BrushRadius);
+                SpotComp->SetIntensity(Stroke.BrushStrength);
+            }
+        }
+    }
+}
 
 void ADiggerManager::PostInitProperties()
 {
@@ -392,7 +455,18 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
                     {
                         UE_LOG(LogTemp, Warning, TEXT("Successfully got chunk at: %s"), *ChunkCoords.ToString());
                     }
-                    Chunk->ApplyBrushStroke(BrushStroke);
+                    
+                    ENetMode NetMode = GetWorld()->GetNetMode();
+                    if (NetMode == NM_Standalone)
+                    {
+                        // Single player: call the local method directly
+                        Chunk->ApplyBrushStroke(BrushStroke);
+                    }
+                    else
+                    {
+                        // Multiplayer: call the multicast function (from the server)
+                        Chunk->MulticastApplyBrushStroke(BrushStroke);
+                    }
                 }
                 else
                 {
@@ -1461,6 +1535,21 @@ void ADiggerManager::BeginPlay()
     }
 
     UpdateVoxelSize();
+
+    // Clear caches if needed
+    LandscapeHeightCaches.Empty();
+    HeightCacheLoadingSet.Empty();
+
+    // Find all landscapes and start async cache
+    for (TActorIterator<ALandscapeProxy> It(GetWorld()); It; ++It)
+    {
+        ALandscapeProxy* Landscape = *It;
+        if (Landscape)
+        {
+            HeightCacheLoadingSet.Add(Landscape);
+            PopulateLandscapeHeightCacheAsync(Landscape);
+        }
+    }
         
     // ensure brushes are ready for PIE usage
     ActiveBrush->InitializeBrush(ActiveBrush->GetBrushType(),ActiveBrush->GetBrushSize(),ActiveBrush->GetBrushLocation(),this);
@@ -1897,6 +1986,39 @@ float ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
     return HeightResult.GetValue();
 }
 
+void ADiggerManager::PopulateLandscapeHeightCache(ALandscapeProxy* Landscape)
+{
+    if (!Landscape) return;
+
+    const float LocalVoxelSize = VoxelSize;
+    FBox Bounds = Landscape->GetComponentsBoundingBox();
+
+    TMap<FIntPoint, float> LocalMap;
+
+    FVector Min = Bounds.Min;
+    FVector Max = Bounds.Max;
+
+    for (float X = Min.X; X < Max.X; X += LocalVoxelSize)
+    {
+        for (float Y = Min.Y; Y < Max.Y; Y += LocalVoxelSize)
+        {
+            FVector SamplePos(X, Y, 0);
+            TOptional<float> Sampled = SampleLandscapeHeight(Landscape, SamplePos);
+            if (Sampled.IsSet())
+            {
+                int32 GridX = FMath::FloorToInt(X / LocalVoxelSize);
+                int32 GridY = FMath::FloorToInt(Y / LocalVoxelSize);
+                FIntPoint Key(GridX, GridY);
+                LocalMap.Add(Key, Sampled.GetValue());
+            }
+        }
+    }
+
+    LandscapeHeightCaches.FindOrAdd(Landscape) = MakeShared<TMap<FIntPoint, float>>(LocalMap);
+    HeightCacheLoadingSet.Remove(Landscape);
+
+    UE_LOG(LogTemp, Warning, TEXT("Synchronous height cache complete for landscape: %s (%d entries)"), *Landscape->GetName(), LocalMap.Num());
+}
 
 void ADiggerManager::PopulateLandscapeHeightCacheAsync(ALandscapeProxy* Landscape)
 {
@@ -1948,77 +2070,6 @@ void ADiggerManager::PopulateLandscapeHeightCacheAsync(ALandscapeProxy* Landscap
 
 
 
-float ADiggerManager::GetCachedLandscapeHeightAt(const FVector& WorldPos)
-{
-    ALandscapeProxy* Landscape = GetLandscapeProxyAt(WorldPos);
-    if (!IsValid(Landscape)) return 0.0f;
-
-    const int32 GridX = FMath::FloorToInt(WorldPos.X / VoxelSize);
-    const int32 GridY = FMath::FloorToInt(WorldPos.Y / VoxelSize);
-    const FIntPoint Key(GridX, GridY);
-
-    // Get or create the per-landscape height cache
-    TSharedPtr<TMap<FIntPoint, float>> HeightCache = GetOrCreateLandscapeHeightCache(Landscape);
-    if (!HeightCache.IsValid()) return 0.0f;
-
-    // If the cache is not already being loaded, trigger async population
-    if (!HeightCacheLoadingSet.Contains(Landscape))
-    {
-        HeightCacheLoadingSet.Add(Landscape);
-        PopulateLandscapeHeightCacheAsync(Landscape);
-    }
-
-    // Try returning cached value
-    if (float* Cached = HeightCache->Find(Key))
-    {
-        return *Cached;
-    }
-
-    // Fallback: sample landscape height directly
-    TOptional<float> SampledHeight = SampleLandscapeHeight(Landscape, WorldPos);
-    if (SampledHeight.IsSet())
-    {
-        const float Height = SampledHeight.GetValue();
-        HeightCache->Add(Key, Height);
-        return Height;
-    }
-
-    return 0.0f;
-}
-
-
-
-void ADiggerManager::PopulateLandscapeHeightCache(ALandscapeProxy* Landscape)
-{
-    if (!Landscape || LandscapeHeightCaches.Contains(Landscape)) return;
-
-    UE_LOG(LogTemp, Warning, TEXT("Populating height cache for landscape proxy: %s"), *Landscape->GetName());
-
-    TMap<FIntPoint, float>& HeightMap = *LandscapeHeightCaches.FindOrAdd(Landscape);
-
-    FBox Bounds = Landscape->GetComponentsBoundingBox();
-    FVector Min = Bounds.Min;
-    FVector Max = Bounds.Max;
-
-    for (float X = Min.X; X < Max.X; X += VoxelSize)
-    {
-        for (float Y = Min.Y; Y < Max.Y; Y += VoxelSize)
-        {
-            FVector SamplePos(X, Y, 0);
-            TOptional<float> Sampled = SampleLandscapeHeight(Landscape, SamplePos);
-            if (Sampled.IsSet())
-            {
-                int32 GridX = FMath::FloorToInt(X / VoxelSize);
-                int32 GridY = FMath::FloorToInt(Y / VoxelSize);
-                FIntPoint Key(GridX, GridY);
-                HeightMap.Add(Key, Sampled.GetValue());
-            }
-        }
-    }
-
-    UE_LOG(LogTemp, Warning, TEXT("Completed height cache for landscape proxy: %s. Cached %d entries."), *Landscape->GetName(), HeightMap.Num());
-}
-
 
 
 ALandscapeProxy* ADiggerManager::GetLandscapeProxyAt(const FVector& WorldPos)
@@ -2034,6 +2085,7 @@ ALandscapeProxy* ADiggerManager::GetLandscapeProxyAt(const FVector& WorldPos)
 
     return nullptr;
 }
+
 
 TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos)
 {

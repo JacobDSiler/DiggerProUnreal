@@ -12,6 +12,7 @@
 #include "VoxelConversion.h"
 #include "VoxelLogManager.h"
 #include "Async/Async.h"
+#include "Async/ParallelFor.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDeviceNull.h"
@@ -704,11 +705,16 @@ UVoxelBrushShape* UVoxelChunk::GetBrushShapeForType(EVoxelBrushType BrushType)
 	return CachedBrushShapes[EVoxelBrushType::Sphere];
 }
 
+void UVoxelChunk::MulticastApplyBrushStroke_Implementation(const FBrushStroke& Stroke)
+{
+	ApplyBrushStroke(Stroke);
+}
+
 void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 {
     // Get the specific brush shape for this stroke type
     UVoxelBrushShape* BrushShape = GetBrushShapeForType(Stroke.BrushType);
-    
+
     if (!DiggerManager || !BrushShape || !SparseVoxelGrid)
     {
         if (DiggerDebug::Brush || DiggerDebug::Manager || DiggerDebug::Voxels || DiggerDebug::Error)
@@ -720,22 +726,22 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
         }
         return;
     }
-    
+
     // Get chunk origin and voxel size - cache these values
     const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
     const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
     const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
     const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
     const float HalfVoxelSize = CachedVoxelSize * 0.5f;
-    
+
     // NEW: Get brush-specific bounds instead of just using radius
     FVector BrushBounds = CalculateBrushBounds(Stroke);
-    
+
     // Convert brush bounds to voxel space
     const float VoxelSpaceBoundsX = BrushBounds.X / CachedVoxelSize;
     const float VoxelSpaceBoundsY = BrushBounds.Y / CachedVoxelSize;
     const float VoxelSpaceBoundsZ = BrushBounds.Z / CachedVoxelSize;
-    
+
     // Convert brush position to local voxel coordinates
     const FVector LocalBrushPos = Stroke.BrushPosition - ChunkOrigin;
     const FIntVector VoxelCenter = FIntVector(
@@ -743,7 +749,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
         FMath::FloorToInt((LocalBrushPos.Y + HalfChunkSize) / CachedVoxelSize),
         FMath::FloorToInt((LocalBrushPos.Z + HalfChunkSize) / CachedVoxelSize)
     );
-    
+
     // Calculate bounding box with overflow support using brush-specific bounds
     const int32 MinX = FMath::Max(-1, FMath::FloorToInt(VoxelCenter.X - VoxelSpaceBoundsX));
     const int32 MaxX = FMath::Min(VoxelsPerChunk, FMath::CeilToInt(VoxelCenter.X + VoxelSpaceBoundsX));
@@ -751,92 +757,168 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     const int32 MaxY = FMath::Min(VoxelsPerChunk, FMath::CeilToInt(VoxelCenter.Y + VoxelSpaceBoundsY));
     const int32 MinZ = FMath::Max(-1, FMath::FloorToInt(VoxelCenter.Z - VoxelSpaceBoundsZ));
     const int32 MaxZ = FMath::Min(VoxelsPerChunk, FMath::CeilToInt(VoxelCenter.Z + VoxelSpaceBoundsZ));
-    
+
+    // Calculate safe sizes for each dimension
+    const int32 SizeX = MaxX - MinX + 1;
+    const int32 SizeY = MaxY - MinY + 1;
+    const int32 SizeZ = MaxZ - MinZ + 1;
+
+    // Bulletproof: Check for valid sizes before any allocation or work
+    if (SizeX <= 0 || SizeY <= 0 || SizeZ <= 0)
+    {
+        if (DiggerDebug::Error)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("ApplyBrushStroke: Invalid brush bounds: SizeX=%d SizeY=%d SizeZ=%d (MinX=%d MaxX=%d MinY=%d MaxY=%d MinZ=%d MaxZ=%d)"), 
+                SizeX, SizeY, SizeZ, MinX, MaxX, MinY, MaxY, MinZ, MaxZ);
+        }
+        return;
+    }
+
     // Pre-calculate values for optimization - use the largest bound for fast distance check
     const float MaxBrushBound = FMath::Max3(BrushBounds.X, BrushBounds.Y, BrushBounds.Z);
     const float MaxBrushBoundSq = MaxBrushBound * MaxBrushBound;
     const float SDF_AIR_Strength = FVoxelConversion::SDF_AIR * Stroke.BrushStrength;
-    
-    int32 ModifiedVoxels = 0;
 
-    // Track air voxels placed below terrain for shell generation
+    // Thread-safe counter and array
+    FThreadSafeCounter ModifiedVoxels;
     TArray<FIntVector> AirVoxelsBelowTerrain;
-    
-	for (int32 X = MinX; X <= MaxX; ++X)
-	{
-		for (int32 Y = MinY; Y <= MaxY; ++Y)
-		{
-			for (int32 Z = MinZ; Z < MaxZ-1; ++Z)
-			{
-				
-				// Convert voxel coordinates to center-aligned world position
-				const FVector WorldPos = ChunkOrigin + FVector(
-					(X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
-					(Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
-					(Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
-				);
 
-				// Calculate Bounds Check
-				// In ApplyBrushStroke, replace the bounds check with:
-				if (!BrushShape->IsWithinBounds(WorldPos, Stroke))
-					continue;
-				
-				// Get terrain height and check position
-				const float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
-				const bool bAboveTerrain = WorldPos.Z >= TerrainHeight;
+    // --- Precompute terrain heights on the game thread ---
+    int64 TotalVoxels = static_cast<int64>(SizeX) * static_cast<int64>(SizeY) * static_cast<int64>(SizeZ);
+    if (TotalVoxels > 100000000) // Arbitrary sanity limit, adjust as needed
+    {
+        UE_LOG(LogTemp, Error, TEXT("ApplyBrushStroke: Refusing to allocate TerrainHeights for %lld voxels (SizeX=%d SizeY=%d SizeZ=%d)"), TotalVoxels, SizeX, SizeY, SizeZ);
+        return;
+    }
 
-				// Calculate SDF value using the specific brush shape
-				const float SDF = BrushShape->CalculateSDF(
-				   WorldPos,
-				   Stroke,
-				   TerrainHeight
-				);
+    TArray<float> TerrainHeights;
+    TerrainHeights.SetNumUninitialized(static_cast<int32>(TotalVoxels));
 
-				// FIXED: Proper digging logic that respects the SDF shape
-				if (Stroke.bDig)
-				{
-					// For digging, we want to create air where the SDF indicates we're inside the shape
-					if (SDF > 0) // SDF > 0 means we want air here
-					{
-						SparseVoxelGrid->SetVoxel(X, Y, Z, SDF, true);
-						if (!bAboveTerrain)
-						{
-							AirVoxelsBelowTerrain.Add(FIntVector(X, Y, Z));
-						}
-					}
-				}
-				else
-				{
-					// For adding, we want to create solid where SDF is negative
-					if (SDF < 0)
-					{
-						SparseVoxelGrid->SetVoxel(X, Y, Z, SDF, false);
-					}
-				}
-                
-                ModifiedVoxels++;
+    // Helper lambda for safe flat index calculation
+    auto GetFlatIndex = [=](int32 X, int32 Y, int32 Z) -> int32
+    {
+        int32 x = X - MinX;
+        int32 y = Y - MinY;
+        int32 z = Z - MinZ;
+        check(x >= 0 && x < SizeX);
+        check(y >= 0 && y < SizeY);
+        check(z >= 0 && z < SizeZ);
+        return (x * SizeY * SizeZ) + (y * SizeZ) + z;
+    };
+
+    for (int32 X = MinX; X <= MaxX; ++X)
+    {
+        for (int32 Y = MinY; Y <= MaxY; ++Y)
+        {
+            for (int32 Z = MinZ; Z < MaxZ-1; ++Z)
+            {
+                const FVector WorldPos = ChunkOrigin + FVector(
+                    (X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+                    (Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+                    (Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
+                );
+                TOptional<float> Height = DiggerManager->SampleLandscapeHeight(DiggerManager->GetLandscapeProxyAt(WorldPos), WorldPos);
+                float TerrainHeight = Height.IsSet() ? Height.GetValue() : -10000000.f;
+                int32 FlatIndex = GetFlatIndex(X, Y, Z);
+                TerrainHeights[FlatIndex] = TerrainHeight;
             }
         }
     }
+
+    // Only run ParallelFor if all sizes are positive (already checked above)
+    ParallelFor(SizeX, [&](int32 XIndex)
+    {
+        int32 X = MinX + XIndex;
+        TArray<FIntVector> LocalAirVoxelsBelowTerrain;
+        int32 LocalModifiedVoxels = 0;
+
+        for (int32 Y = MinY; Y <= MaxY; ++Y)
+        {
+            for (int32 Z = MinZ; Z < MaxZ-1; ++Z)
+            {
+                // Convert voxel coordinates to center-aligned world position
+                const FVector WorldPos = ChunkOrigin + FVector(
+                    (X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+                    (Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+                    (Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
+                );
+
+                // Calculate Bounds Check
+                if (!BrushShape->IsWithinBounds(WorldPos, Stroke))
+                {
+                    continue;
+                }
+
+                // Get precomputed terrain height
+                int32 FlatIndex = GetFlatIndex(X, Y, Z);
+                float TerrainHeight = TerrainHeights[FlatIndex];
+                const bool bAboveTerrain = WorldPos.Z >= TerrainHeight;
+
+                // Calculate SDF value using the specific brush shape
+                const float SDF = BrushShape->CalculateSDF(
+                    WorldPos,
+                    Stroke,
+                    TerrainHeight
+                );
+
+                // Proper digging logic that respects the SDF shape
+                if (Stroke.bDig)
+                {
+                    // For digging, we want to create air where the SDF indicates we're inside the shape
+                    if (SDF > 0) // SDF > 0 means we want air here
+                    {
+                        SparseVoxelGrid->SetVoxel(X, Y, Z, SDF, true);
+                        if (!bAboveTerrain)
+                        {
+                            LocalAirVoxelsBelowTerrain.Add(FIntVector(X, Y, Z));
+                        }
+                    }
+                }
+                else
+                {
+                    // For adding, we want to create solid where SDF is negative
+                    if (SDF < 0)
+                    {
+                        SparseVoxelGrid->SetVoxel(X, Y, Z, SDF, false);
+                    }
+                }
+
+                LocalModifiedVoxels++;
+            }
+        }
+
+        // Lock and append local results to shared arrays/counters
+        if (LocalAirVoxelsBelowTerrain.Num() > 0)
+        {
+            FScopeLock Lock(&BrushStrokeMutex);
+            AirVoxelsBelowTerrain.Append(LocalAirVoxelsBelowTerrain);
+        }
+        if (LocalModifiedVoxels > 0)
+        {
+            ModifiedVoxels.Add(LocalModifiedVoxels);
+        }
+    });
 
     // Create shell of solid voxels around air voxels below terrain
     if (!AirVoxelsBelowTerrain.IsEmpty())
     {
         CreateSolidShellAroundAirVoxels(AirVoxelsBelowTerrain);
     }
-    
+
     // Optional: Log performance info in debug builds
     #if UE_BUILD_DEBUG
-    if (ModifiedVoxels > 0)
+    if (ModifiedVoxels.GetValue() > 0)
     {
         if (DiggerDebug::Chunks || DiggerDebug::Voxels)
         {
             UE_LOG(LogTemp, Message, TEXT("ApplyBrushStroke modified %d voxels in chunk %s using %s brush"), 
-                   ModifiedVoxels, *ChunkCoordinates.ToString(), *UEnum::GetValueAsString(Stroke.BrushType));
+                   ModifiedVoxels.GetValue(), *ChunkCoordinates.ToString(), *UEnum::GetValueAsString(Stroke.BrushType));
         }
     }
     #endif
 }
+
+
 
 void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels)
 {

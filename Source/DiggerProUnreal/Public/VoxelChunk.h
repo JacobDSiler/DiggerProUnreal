@@ -115,8 +115,15 @@ private:
     UPROPERTY()
     TMap<EVoxelBrushType, UVoxelBrushShape*> CachedBrushShapes;
     UVoxelBrushShape* GetBrushShapeForType(EVoxelBrushType BrushType);
-
     
+public:
+    UFUNCTION(NetMulticast, Reliable)
+    void MulticastApplyBrushStroke(const FBrushStroke& Stroke);
+
+private:
+    FCriticalSection BrushStrokeMutex;
+
+
     void ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig);
     void ApplyIcosphereBrush(FVector3d BrushPosition, float Radius, FRotator Rotation, bool bDig);
     void ApplyStairsBrush(FVector3d BrushPosition, float Width, float Height, float Depth, int32 NumSteps,

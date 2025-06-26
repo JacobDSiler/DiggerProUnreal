@@ -129,8 +129,11 @@ void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue, bool bDig)
 // Enhanced SetVoxel for better blending and transitions
 // USparseVoxelGrid.cpp
 
+// In USparseVoxelGrid.cpp
 void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig)
 {
+    // Lock the method in the VoxelData Mutex for threadsafe operation.
+    FScopeLock Lock(&VoxelDataMutex);
     constexpr float SDF_THRESHOLD = 0.001f;
 
     // Ignore negligible changes

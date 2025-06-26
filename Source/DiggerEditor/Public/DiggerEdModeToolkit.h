@@ -49,6 +49,7 @@ public:
 	
 	void AddIsland(const FIslandData& Island);
 	void BindIslandDelegates();
+	static ELightBrushType SelectedLightType;
 	virtual void Init(const TSharedPtr<IToolkitHost>& InitToolkitHost) override;
 	bool CanPaintWithCustomBrush() const;
 	void ScanCustomBrushFolder();
@@ -310,6 +311,14 @@ private:
 
 	void SetBrushDigPreviewOverride(bool bInDig);
 	void ClearBrushDigPreviewOverride();
+
+	TSharedPtr<SComboBox<TSharedPtr<ELightBrushType>>> LightTypeComboBox;
+	TArray<TSharedPtr<ELightBrushType>> LightTypeOptions;
+	
+	void PopulateLightTypeOptions();
+	TSharedRef<SWidget> MakeLightTypeComboWidget(TSharedPtr<ELightBrushType> InItem);
+	void OnLightTypeChanged(TSharedPtr<ELightBrushType> NewSelection, ESelectInfo::Type);
+	
 	TOptional<bool> TemporaryDigOverride;
 
 

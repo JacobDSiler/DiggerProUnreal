@@ -20,6 +20,7 @@
 
 // Slate UI - Widgets
 #include "BrushAssetEditorUtils.h"
+#include "DetailLayoutBuilder.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
@@ -36,6 +37,7 @@
 #define LOCTEXT_NAMESPACE "FDiggerEdModeToolkit"
 
 
+    ELightBrushType FDiggerEdModeToolkit::SelectedLightType = ELightBrushType::Point;
 
 // FDiggerEdModeToolkit::Init
 
@@ -44,6 +46,14 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     BindIslandDelegates();
 
     Manager = GetDiggerManager();
+
+    // In your Init() or constructor, before SNew(SVerticalBox):
+    LightTypeOptions.Empty();
+    for (int32 i = 0; i < StaticEnum<ELightBrushType>()->NumEnums() - 1; ++i)
+    {
+        LightTypeOptions.Add(MakeShared<ELightBrushType>((ELightBrushType)i));
+    }
+    
 
     AssetThumbnailPool = MakeShareable(new FAssetThumbnailPool(32, true));
     IslandGrid = SNew(SUniformGridPanel).SlotPadding(2.0f);
@@ -62,38 +72,50 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         MakeBrushShapeSection()
     ]
 
-        // --- Debug Voxels Checkbox: Only visible for DebugChunk brush ---
-    /*+ SVerticalBox::Slot().AutoHeight().Padding(4)
+        // --- Light Type UI: Only visible for Light brush ---
++ SVerticalBox::Slot().AutoHeight().Padding(4)
+[
+    SNew(SBox)
+    .Visibility_Lambda([this]()
+    {
+        return (GetCurrentBrushType() == EVoxelBrushType::Light) ? EVisibility::Visible : EVisibility::Collapsed;
+    })
     [
-        SNew(SBox)
-        .Visibility_Lambda([this]()
-        {
-            return (GetCurrentBrushType() == EVoxelBrushType::Debug) ? EVisibility::Visible : EVisibility::Collapsed;
-        })
+        SNew(SHorizontalBox)
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
         [
-            SNew(SCheckBox)
-            .IsChecked_Lambda([this]() { return bDebugVoxels; })
-            .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+            SNew(STextBlock)
+            .Text(FText::FromString("Light Type"))
+            .Font(IDetailLayoutBuilder::GetDetailFont())
+        ]
+        + SHorizontalBox::Slot().FillWidth(1.0f).Padding(8,0)
+        [
+            SNew(SComboBox<TSharedPtr<ELightBrushType>>)
+            .OptionsSource(&LightTypeOptions)
+            .OnGenerateWidget_Lambda([](TSharedPtr<ELightBrushType> InItem)
             {
-                bDebugVoxels = (NewState == ECheckBoxState::Checked);
+                return SNew(STextBlock)
+                    .Text(StaticEnum<ELightBrushType>()->GetDisplayNameTextByValue((int64)*InItem));
             })
+            .OnSelectionChanged_Lambda([this](TSharedPtr<ELightBrushType> NewSelection, ESelectInfo::Type)
+            {
+                if (NewSelection.IsValid())
+                {
+                    SelectedLightType = *NewSelection;
+                }
+            })
+            .InitiallySelectedItem(LightTypeOptions.Num() > 0 ? LightTypeOptions[0] : nullptr)
             [
-                SNew(STextBlock).Text(FText::FromString("Debug Voxels"))
+                SNew(STextBlock)
+                .Text_Lambda([this]()
+                {
+                    return StaticEnum<ELightBrushType>()->GetDisplayNameTextByValue((int64)SelectedLightType);
+                })
             ]
         ]
     ]
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 4)
-    [
-        SNew(SCheckBox)
-        .OnCheckStateChanged(this, &FDiggerEdModeToolkit::OnDetailedDebugCheckChanged)
-        .IsChecked(this, &FDiggerEdModeToolkit::IsDetailedDebugChecked)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString("Enable Detailed Debug"))
-        ]
-    ]*/
-
-
+]
+        
 
     // --- Height/Length UI: Only visible for Cylinder or Cone brush ---
     + SVerticalBox::Slot().AutoHeight().Padding(4)
@@ -116,31 +138,33 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         ]
     ]
 
-        // --- Filled/Hollow UI: Visible for shapes that support it ---
-+ SVerticalBox::Slot().AutoHeight().Padding(4)
-[
-    SNew(SBox)
-    .Visibility_Lambda([this]()
-    {
-        EVoxelBrushType BrushType = GetCurrentBrushType();
-        return (BrushType == EVoxelBrushType::Cone || 
-                BrushType == EVoxelBrushType::Cylinder) ? EVisibility::Visible : EVisibility::Collapsed;
-    })
+    // --- Filled/Hollow UI: Visible for shapes that support it ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
     [
-        SNew(SCheckBox)
-        .IsChecked_Lambda([this]()
+        SNew(SBox)
+        .Visibility_Lambda([this]()
         {
-            return bIsFilled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
-        })
-        .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
-        {
-            bIsFilled = (NewState == ECheckBoxState::Checked);
+            EVoxelBrushType BrushType = GetCurrentBrushType();
+            return (BrushType == EVoxelBrushType::Cone ||
+                       BrushType == EVoxelBrushType::Cylinder)
+                       ? EVisibility::Visible
+                       : EVisibility::Collapsed;
         })
         [
-            SNew(STextBlock).Text(FText::FromString("Filled"))
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this]()
+            {
+                return bIsFilled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+            })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+            {
+                bIsFilled = (NewState == ECheckBoxState::Checked);
+            })
+            [
+                SNew(STextBlock).Text(FText::FromString("Filled"))
+            ]
         ]
     ]
-]
 
 
     // --- Advanced Cube Brush Checkbox and Roll-down ---
@@ -276,6 +300,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         ]
     ]
 
+       
         
         
 
@@ -821,6 +846,30 @@ void FDiggerEdModeToolkit::ClearBrushDigPreviewOverride()
     bUseBrushDigPreviewOverride = false;
 }
 
+
+
+void FDiggerEdModeToolkit::PopulateLightTypeOptions()
+{
+    LightTypeOptions.Empty();
+    LightTypeOptions.Add(MakeShared<ELightBrushType>(ELightBrushType::Point));
+    LightTypeOptions.Add(MakeShared<ELightBrushType>(ELightBrushType::Spot));
+    LightTypeOptions.Add(MakeShared<ELightBrushType>(ELightBrushType::Directional));
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeLightTypeComboWidget(TSharedPtr<ELightBrushType> InItem)
+{
+    FString EnumName = StaticEnum<ELightBrushType>()->GetDisplayNameTextByValue((int64)*InItem).ToString();
+    return SNew(STextBlock).Text(FText::FromString(EnumName));
+}
+
+void FDiggerEdModeToolkit::OnLightTypeChanged(TSharedPtr<ELightBrushType> NewSelection, ESelectInfo::Type)
+{
+    if (NewSelection.IsValid())
+    {
+        SelectedLightType = *NewSelection;
+    }
+}
+
 void FDiggerEdModeToolkit::SetTemporaryDigOverride(TOptional<bool> Override)
 {
     TemporaryDigOverride = Override;
@@ -961,6 +1010,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
         { EVoxelBrushType::Custom,       TEXT("Custom"),        TEXT("Custom Mesh Brush") },
         { EVoxelBrushType::Smooth,       TEXT("Smooth"),        TEXT("Smooth Brush") },
         { EVoxelBrushType::Noise,       TEXT("Noise"),        TEXT("Noise Brush") },
+        { EVoxelBrushType::Light,       TEXT("Light"),        TEXT("Light Brush") },
         { EVoxelBrushType::Debug,        TEXT("Debug"),         TEXT("Debug Clicked Chunk Brush") }
     };
 
@@ -1285,7 +1335,6 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOperationSection()
 ];
 
 }
-
 
 
 

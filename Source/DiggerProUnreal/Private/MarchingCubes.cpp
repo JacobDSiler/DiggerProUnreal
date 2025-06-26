@@ -923,10 +923,7 @@ void UMarchingCubes::GenerateMeshFromGrid(
     for (int32 i = 0; i < OutVertices.Num(); ++i) {
         OutVertices[i] += TotalOffset;
     }
-
-	/*TArray<int32> RimVertices;
-	FindRimVertices(OutVertices, OutTriangles, RimVertices);
-	AddSkirtMesh(RimVertices, OutVertices, OutTriangles, OutNormals);*/
+	
 
 
     if (IsDebugging()) {

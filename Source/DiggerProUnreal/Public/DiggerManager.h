@@ -123,6 +123,7 @@ class DIGGERPROUNREAL_API ADiggerManager : public AActor
 
 public:
     ADiggerManager();
+    void SpawnLight(const FBrushStroke& Stroke);
     void InitializeBrushShapes();
     UVoxelBrushShape* GetActiveBrushShape(EVoxelBrushType BrushType) const;
  

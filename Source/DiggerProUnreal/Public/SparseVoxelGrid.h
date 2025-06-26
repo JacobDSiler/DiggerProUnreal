@@ -35,6 +35,9 @@ class DIGGERPROUNREAL_API USparseVoxelGrid : public UObject
 public:
 	USparseVoxelGrid();  // Add this line to declare the constructor
 
+	// The mutex for voxel data operations.
+	FCriticalSection VoxelDataMutex;
+
 	void Initialize(UVoxelChunk* ParentChunkReference);
 	void InitializeDiggerManager();
 	bool EnsureDiggerManager();

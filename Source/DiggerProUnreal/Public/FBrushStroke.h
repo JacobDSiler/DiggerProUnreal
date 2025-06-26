@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "FLightBrushTypes.h"
 #include "VoxelBrushTypes.h"
 #include "FBrushStroke.generated.h"
 
@@ -102,6 +103,9 @@ struct FBrushStroke
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hole")
     EHoleShapeType HoleShape;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    ELightBrushType LightType; // <-- Add this
 
     UPROPERTY(Transient)
     UVoxelBrushShape* BrushShape;
