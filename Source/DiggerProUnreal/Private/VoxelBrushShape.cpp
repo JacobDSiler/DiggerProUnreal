@@ -5,6 +5,7 @@
 #include "EngineUtils.h"
 #include "Landscape.h"
 #include "DrawDebugHelpers.h"
+#include "Editor.h"
 #include "GameFramework/GameModeBase.h"
 #include "Kismet/GameplayStatics.h"
 

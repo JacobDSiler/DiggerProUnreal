@@ -5,6 +5,10 @@
 #include "GameFramework/Actor.h"
 #include "SelectableBase.generated.h"
 
+#if WITH_EDITOR
+class DiggerEdMode;
+#endif
+
 UCLASS(BlueprintType, Blueprintable)
 class DIGGERPROUNREAL_API ASelectableBase : public AActor
 {

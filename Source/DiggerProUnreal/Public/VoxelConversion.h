@@ -1,8 +1,9 @@
 #pragma once
 
-#include "CoreMinimal.h"
 
-class DiggerManager;
+#include "CoreMinimal.h"
+#include "DiggerDebug.h"
+
 
 /**
  * FVoxelConversion - Utility struct for converting between different coordinate spaces in a voxel-based terrain system.
@@ -56,7 +57,8 @@ struct FVoxelConversion
     {
         // Calculate chunk center using the same logic as DebugDrawChunk
         FVector ChunkCenter = Origin + FVector(ChunkCoords) * ChunkSize * TerrainGridSize;
-        
+
+        if (DiggerDebug::VoxelConv)
         UE_LOG(LogTemp, Verbose, TEXT("[ChunkToWorld] ChunkCoords: %s, ChunkCenter: %s"),
             *ChunkCoords.ToString(), *ChunkCenter.ToString());
         
@@ -223,7 +225,8 @@ static FIntVector ChunkAndLocalToGlobalVoxel_CenterAligned(const FIntVector& Chu
             FMath::FloorToInt(LocalInChunk.Y / LocalVoxelSize),
             FMath::FloorToInt(LocalInChunk.Z / LocalVoxelSize)
         );
-        
+
+        if (DiggerDebug::VoxelConv)
         UE_LOG(LogTemp, Verbose, TEXT("[WorldToMinCornerVoxel] WorldPos: %s → Chunk: %s, VoxelIndex: %s"),
             *WorldPos.ToString(), *ChunkCoords.ToString(), *VoxelIndex.ToString());
         
@@ -298,6 +301,7 @@ static FIntVector ChunkAndLocalToGlobalVoxel_CenterAligned(const FIntVector& Chu
         FVector ChunkOrigin = ChunkToWorld(ChunkCoords);
         FVector WorldPos = ChunkOrigin + FVector(LocalCoords) * LocalVoxelSize;
 
+        if (DiggerDebug::VoxelConv)
         UE_LOG(LogTemp, Verbose, TEXT("[LocalVoxelToWorld] GlobalVoxelCoords: %s → WorldPos: %s"),
             *GlobalVoxelCoords.ToString(), *WorldPos.ToString());
 
@@ -316,6 +320,7 @@ static FIntVector ChunkAndLocalToGlobalVoxel_CenterAligned(const FIntVector& Chu
         FVector ChunkOrigin = ChunkToWorld(ChunkCoords);
         FVector WorldPos = ChunkOrigin + FVector(LocalVoxel) * LocalVoxelSize;
 
+        if (DiggerDebug::VoxelConv)
         UE_LOG(LogTemp, Verbose, TEXT("[ChunkVoxelToWorld] Chunk: %s, LocalVoxel: %s → World: %s"),
             *ChunkCoords.ToString(), *LocalVoxel.ToString(), *WorldPos.ToString());
 
@@ -340,6 +345,7 @@ static FIntVector ChunkAndLocalToGlobalVoxel_CenterAligned(const FIntVector& Chu
         Origin = InOrigin;
         ChunkWorldSize = ChunkSize * TerrainGridSize;
 
+        if (DiggerDebug::VoxelConv)
         UE_LOG(LogTemp, Display, TEXT("[InitFromConfig] ChunkSize: %d, Subdivisions: %d, TerrainGridSize: %f, LocalVoxelSize: %f, Origin: %s"),
             ChunkSize, Subdivisions, TerrainGridSize, LocalVoxelSize, *Origin.ToString());
     }

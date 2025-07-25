@@ -7,10 +7,16 @@
 #include "VoxelBrushTypes.h"
 #include "Toolkits/BaseToolkit.h"
 #include "FCustomBrushEntry.h"
+#include "SocketIOLobbyManager.h"   
+#include "Widgets/Layout/SSeparator.h"
 
+
+class USocketIOLobbyManager;
+class IWebSocket;
 struct FIslandData;
 class ADiggerManager;
 class SUniformGridPanel;
+
 
 UENUM(BlueprintType)
 enum class EIslandOriginMode : uint8
@@ -20,10 +26,30 @@ enum class EIslandOriginMode : uint8
 	Top UMETA(DisplayName = "Top")
 };
 
+// Simple struct for holding lobby information
+struct FLobbyInfo
+{
+	FString LobbyName;
+	int32 PlayerCount;
+
+	FLobbyInfo() = default;
+
+	FLobbyInfo(const FString& InName, int32 InPlayers)
+		: LobbyName(InName), PlayerCount(InPlayers)
+	{}
+
+	FString ToDisplayString() const
+	{
+		return FString::Printf(TEXT("%s (%d players)"), *LobbyName, PlayerCount);
+	}
+};
 
 class FDiggerEdModeToolkit : public FModeToolkit
 {
 public:
+	// Declare this so you can define it in the .cpp
+	FDiggerEdModeToolkit();
+	
 	void SetUseAdvancedCubeBrush(bool bInUse)
 	{
 		bUseAdvancedCubeBrush = bInUse;
@@ -49,7 +75,6 @@ public:
 	
 	void AddIsland(const FIslandData& Island);
 	void BindIslandDelegates();
-	static ELightBrushType SelectedLightType;
 	virtual void Init(const TSharedPtr<IToolkitHost>& InitToolkitHost) override;
 	bool CanPaintWithCustomBrush() const;
 	void ScanCustomBrushFolder();
@@ -59,10 +84,10 @@ public:
 	virtual TSharedPtr<SWidget> GetInlineContent() const override;
 
 
-	~FDiggerEdModeToolkit();
+	virtual ~FDiggerEdModeToolkit() override;
 	void OnIslandDetectedHandler(const FIslandData& NewIslandData);
-
 	
+
 
 	[[nodiscard]]bool IsDigMode() const
 	{
@@ -88,7 +113,6 @@ public:
 	{
 		return ConeAngle;
 	}
-
 	
 
     void SetIslands(const TArray<FIslandData>& InIslands)
@@ -111,6 +135,30 @@ public:
 	bool GetBrushIsFilled();
 
 private:
+#if WITH_SOCKETIO
+	// Was: TStrongObjectPtr<USocketIOLobbyManager> SocketIOLobbyManager;
+	USocketIOLobbyManager* SocketIOLobbyManager = nullptr;
+#endif
+	
+	FLinearColor CurrentLightColor = FLinearColor::White;
+
+
+
+
+public:
+	FLinearColor GetCurrentLightColor() const { return CurrentLightColor; }
+	void OnLightColorChanged(FLinearColor NewColor);
+
+	void ShutdownNetworking();
+
+
+private:
+	ELightBrushType CurrentLightType = ELightBrushType::Spot;
+    
+public:
+	ELightBrushType GetCurrentLightType() const { return CurrentLightType; }
+	
+private:
 
 	TSharedPtr<SVerticalBox> ToolkitWidget;
 	EVoxelBrushType CurrentBrushType = EVoxelBrushType::Sphere; // First option;
@@ -122,6 +170,10 @@ private:
 	// ReSharper disable once CppUninitializedNonStaticDataMember
 	int16 SmoothIterations; // or short SmoothIterations;
 	FVector BrushOffset = FVector(0.f,0.f,0.f);
+	
+	// Network account Google Icon
+	TSharedPtr<FSlateStyleSet> DiggerStyleSet;
+
 
 
 private:
@@ -134,10 +186,10 @@ private:
 	bool bIsFilled=true;
 	float MinCubeExtent=20.f;
 	float MaxCubeExtent=600.f;
-	float AdvancedCubeHalfExtentY=2.f;
-	float AdvancedCubeHalfExtentX=.5f;
-	float AdvancedCubeHalfExtentZ=1.f;
-	bool bUseAdvancedCubeBrush = true;
+	float AdvancedCubeHalfExtentY=50.f;
+	float AdvancedCubeHalfExtentX=50.f;
+	float AdvancedCubeHalfExtentZ=60.f;
+	bool bUseAdvancedCubeBrush = false;
 
 public:
 	[[nodiscard]] bool IsUsingAdvancedCubeBrush() const
@@ -166,27 +218,7 @@ public:
 
 private:
 	bool bDetailedDebug = false;
-
-	// Function to handle state change
-	/*void OnDetailedDebugCheckChanged(ECheckBoxState NewState)
-	{
-		bDetailedDebug = (NewState == ECheckBoxState::Checked);
-
-		if (ADiggerManager* Manager = GetDiggerManager())
-		{
-			if (UVoxelChunk* Chunk = Manager->GetOrCreateChunkAtChunk(ChunkPosition);)
-			{
-				if (bDetailedDebug)
-				{
-					Chunk->DebugPrintVoxelData();  // Show detailed debug
-				}
-				else
-				{
-					Chunk->DebugDrawChunk();  // Show basic chunk debug
-				}
-			}
-		}
-	}*/
+	
 
 	// Function to check the current state of the checkbox
 	ECheckBoxState IsDetailedDebugChecked() const
@@ -234,6 +266,69 @@ private:
 		bool bIsAngle = false
 	);
 
+	// Multiplayer Menu (Always Available)
+	TSharedRef<SWidget> MakeLobbySection();
+	TSharedRef<SWidget> MakeNetworkingWidget();
+	TSharedRef<SWidget> MakeNetworkingHelpWidget();
+	void CreateLobbyManager(UWorld* WorldContext);
+	TSharedPtr<IWebSocket> WebSocket;
+	TSharedPtr<SEditableTextBox> TemporaryPasswordBox;
+
+
+	// UI Elements
+	TSharedPtr<SEditableTextBox> CreateLobbyTextBox;
+	TSharedPtr<SButton> CreateLobbyButton;
+	TSharedPtr<SButton> JoinLobbyButton;
+	TSharedPtr<SListView<TSharedPtr<FLobbyInfo>>> LobbyListView;
+	
+#if WITH_SOCKETIO
+	
+	// Socket.IO Networking
+	TWeakObjectPtr<class USocketIOClientComponent> SocketIOClient;
+	
+	/** Popup login window (Google or temp username) */
+	FReply ShowLoginModal();
+	void ConnectToLobbyServer();
+
+	/** Create a new lobby on the server */
+	void CreateLobby(const FString& LobbyName);
+
+	/** Join an existing lobby by name/ID */
+	void JoinLobby(const FString& LobbyName);
+	
+	/** Username entry in the login modal */
+	TSharedPtr<SEditableTextBox> UsernameTextBox;
+
+	/** The Slate modal window itself */
+	TSharedPtr<SWindow> LoginWindow;
+	bool IsConnectButtonEnabled() const;
+	FReply OnConnectClicked();
+
+	// For Gating the create/join lobby buttons
+#if WITH_SOCKETIO
+	bool IsCreateLobbyEnabled() const;
+	bool IsJoinLobbyEnabled() const;
+#endif
+
+	
+	// In your class definition
+	TSharedPtr<SEditableTextBox> LobbyNameTextBox;
+	TSharedPtr<SEditableTextBox> LobbyIdTextBox;
+
+	FReply OnCreateLobbyClicked();
+	FReply OnJoinLobbyClicked();
+
+	
+
+	// Lobby State
+	TArray<TSharedPtr<FLobbyInfo>> LobbyList;
+	TSharedPtr<FLobbyInfo> SelectedLobby;
+	FString PendingLobbyName;
+	FString LoggedInUser;
+
+#endif
+
+
 
 	
 public:
@@ -276,7 +371,10 @@ public:
 
 	void SetTemporaryDigOverride(TOptional<bool> Override);
 	
+	
 
+	// Make sure this declaration matches exactly
+	void OnLightTypeChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
 
 private:
 
@@ -328,6 +426,7 @@ private:
 	TSharedPtr<SUniformGridPanel> IslandGrid;
 	TSharedPtr<FAssetThumbnailPool> AssetThumbnailPool;
 	TSharedRef<SWidget> MakeSaveLoadSection();
+	bool IsSocketIOPluginAvailable() const;
 	ECheckBoxState IsBrushDebugEnabled();
 	void OnBrushDebugCheckChanged(ECheckBoxState NewState);
 	bool bBrushDig = false;

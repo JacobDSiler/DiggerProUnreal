@@ -5,6 +5,26 @@
 #include "DiggerManager.h"
 #include "FCustomSDFBrush.h"
 
+// Digger Sync Includes
+#include "Interfaces/IPluginManager.h"
+#include "SocketIOClientComponent.h"
+#include "Widgets/Input/SHyperlink.h"
+#include "SocketIOLobbyManager.h"
+//#include "SocketIOModule.h"
+#include "SocketIOClient.h"
+#include "Json.h"
+#include "JsonUtilities.h"
+#include "Interfaces/IPluginManager.h"
+
+
+
+
+#if WITH_SOCKETIO
+#include "DiggerEditor/Public/DiggerEdModeToolkit.h"
+#include "SocketIOClientComponent.h"
+//#include "SocketIONetworking.h"
+#endif
+
 // Unreal Engine - Editor & Engine
 #include "EditorModeManager.h"
 #include "EditorStyleSet.h"
@@ -21,29 +41,57 @@
 // Slate UI - Widgets
 #include "BrushAssetEditorUtils.h"
 #include "DetailLayoutBuilder.h"
+#include "HttpModule.h"
+#include "IWebSocket.h"
+#include "SocketSubsystem.h"
+#include "WebSocketsModule.h"
+#include "Behaviors/2DViewportBehaviorTargets.h"
+#include "Behaviors/2DViewportBehaviorTargets.h"
+#include "Behaviors/2DViewportBehaviorTargets.h"
+#include "Behaviors/2DViewportBehaviorTargets.h"
+#include "Behaviors/2DViewportBehaviorTargets.h"
+#include "Behaviors/2DViewportBehaviorTargets.h"
+#include "Brushes/SlateImageBrush.h"
 #include "Framework/Notifications/NotificationManager.h"
+#include "HAL/FileManager.h"
+#include "Interfaces/IHttpResponse.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Styling/SlateStyle.h"
+#include "Styling/SlateStyleRegistry.h"
+#include "Widgets/Colors/SColorPicker.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SNumericEntryBox.h"
 #include "Widgets/Input/SSlider.h" // <- You noted this should be added
 #include "Widgets/Layout/SExpandableArea.h"
+#include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SUniformGridPanel.h"
-#include "Widgets/Text/STextBlock.h"
-#include "Misc/Paths.h"
-#include "HAL/FileManager.h"
 #include "Widgets/Notifications/SNotificationList.h"
+#include "Widgets/Notifications/SProgressBar.h"
+#include "Widgets/Text/STextBlock.h"
 
 #define LOCTEXT_NAMESPACE "FDiggerEdModeToolkit"
 
 
-    ELightBrushType FDiggerEdModeToolkit::SelectedLightType = ELightBrushType::Point;
+FDiggerEdModeToolkit::FDiggerEdModeToolkit()
+    : FModeToolkit()
+    , SocketIOLobbyManager(nullptr)
+{
+#if WITH_SOCKETIO
+    // Create the LobbyManager UObject once, root it so GC won’t kill it
+    SocketIOLobbyManager = NewObject<USocketIOLobbyManager>(GetTransientPackage());
+    SocketIOLobbyManager->AddToRoot();
+#endif
+}
 
 // FDiggerEdModeToolkit::Init
 
 void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
 {
     BindIslandDelegates();
+    
 
     Manager = GetDiggerManager();
 
@@ -53,7 +101,32 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     {
         LightTypeOptions.Add(MakeShared<ELightBrushType>((ELightBrushType)i));
     }
-    
+
+    PopulateLightTypeOptions();
+
+    if (LightTypeOptions.Num() > 0)
+    {
+        CurrentLightType = *LightTypeOptions[0];  // Ensure initial state is synced
+    }
+
+    //  Accounts for Network google login
+
+    if (!FSlateStyleRegistry::FindSlateStyle("DiggerEditorStyle"))
+    {
+        DiggerStyleSet = MakeShareable(new FSlateStyleSet("DiggerEditorStyle"));
+
+        DiggerStyleSet->SetContentRoot(FPaths::ProjectContentDir()); // For `/Content/...`
+
+        DiggerStyleSet->Set("DiggerEditor.GoogleIcon", new FSlateImageBrush(
+            FSlateImageBrush(
+                DiggerStyleSet->RootToContentDir(TEXT("DiggerEditor/Resources/Icons/google_icon"), TEXT(".png")),
+                FVector2D(16, 16)
+            )
+        ));
+
+        FSlateStyleRegistry::RegisterSlateStyle(*DiggerStyleSet);
+    } 
+    // Account stuff over.
 
     AssetThumbnailPool = MakeShareable(new FAssetThumbnailPool(32, true));
     IslandGrid = SNew(SUniformGridPanel).SlotPadding(2.0f);
@@ -72,49 +145,88 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         MakeBrushShapeSection()
     ]
 
-        // --- Light Type UI: Only visible for Light brush ---
-+ SVerticalBox::Slot().AutoHeight().Padding(4)
-[
-    SNew(SBox)
-    .Visibility_Lambda([this]()
-    {
-        return (GetCurrentBrushType() == EVoxelBrushType::Light) ? EVisibility::Visible : EVisibility::Collapsed;
-    })
+     // --- Light Type UI: Only visible for Light brush ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
     [
-        SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+        SNew(SBox)
+        .Visibility_Lambda([this]()
+        {
+            return (GetCurrentBrushType() == EVoxelBrushType::Light) ? EVisibility::Visible : EVisibility::Collapsed;
+        })
         [
-            SNew(STextBlock)
-            .Text(FText::FromString("Light Type"))
-            .Font(IDetailLayoutBuilder::GetDetailFont())
-        ]
-        + SHorizontalBox::Slot().FillWidth(1.0f).Padding(8,0)
-        [
-            SNew(SComboBox<TSharedPtr<ELightBrushType>>)
-            .OptionsSource(&LightTypeOptions)
-            .OnGenerateWidget_Lambda([](TSharedPtr<ELightBrushType> InItem)
-            {
-                return SNew(STextBlock)
-                    .Text(StaticEnum<ELightBrushType>()->GetDisplayNameTextByValue((int64)*InItem));
-            })
-            .OnSelectionChanged_Lambda([this](TSharedPtr<ELightBrushType> NewSelection, ESelectInfo::Type)
-            {
-                if (NewSelection.IsValid())
-                {
-                    SelectedLightType = *NewSelection;
-                }
-            })
-            .InitiallySelectedItem(LightTypeOptions.Num() > 0 ? LightTypeOptions[0] : nullptr)
+            SNew(SVerticalBox) // Changed to vertical box to stack light type and color
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
             [
-                SNew(STextBlock)
-                .Text_Lambda([this]()
-                {
-                    return StaticEnum<ELightBrushType>()->GetDisplayNameTextByValue((int64)SelectedLightType);
-                })
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("Light Type"))
+                    .Font(IDetailLayoutBuilder::GetDetailFont())
+                ]
+                + SHorizontalBox::Slot().FillWidth(1.0f).Padding(8, 0)
+                [
+                    SNew(SComboBox<TSharedPtr<ELightBrushType>>)
+                    .OptionsSource(&LightTypeOptions)
+                    .OnGenerateWidget_Lambda([](TSharedPtr<ELightBrushType> InItem)
+                    {
+                        return SNew(STextBlock)
+                            .Text(StaticEnum<ELightBrushType>()->GetDisplayNameTextByValue(
+                                static_cast<int64>(*InItem)));
+                    })
+                    .OnSelectionChanged_Lambda([this](TSharedPtr<ELightBrushType> NewSelection, ESelectInfo::Type)
+                    {
+                        if (NewSelection.IsValid())
+                        {
+                            CurrentLightType = *NewSelection; // Use CurrentLightType consistently
+                        }
+                    })
+                    .InitiallySelectedItem(LightTypeOptions.Num() > 0 ? LightTypeOptions[0] : nullptr)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]()
+                        {
+                            return StaticEnum<ELightBrushType>()->GetDisplayNameTextByValue(
+                                static_cast<int64>(CurrentLightType));
+                        })
+                    ]
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("Light Color"))
+                    .Font(IDetailLayoutBuilder::GetDetailFont())
+                ]
+                + SHorizontalBox::Slot().FillWidth(1.0f).Padding(8, 0)
+                [
+                    SNew(SColorBlock)
+                    .Color_Lambda([this]()
+                    {
+                        return CurrentLightColor;
+                    })
+                    .OnMouseButtonDown_Lambda([this](const FGeometry&, const FPointerEvent&) -> FReply
+                    {
+                        FColorPickerArgs PickerArgs;
+                        PickerArgs.bUseAlpha = false;
+                        PickerArgs.InitialColor = CurrentLightColor;
+                        PickerArgs.OnColorCommitted = FOnLinearColorValueChanged::CreateLambda(
+                            [this](FLinearColor NewColor)
+                            {
+                                CurrentLightColor = NewColor;
+                                OnLightColorChanged(NewColor);
+                            });
+
+                        OpenColorPicker(PickerArgs);
+                        return FReply::Handled();
+                    })
+                ]
             ]
         ]
     ]
-]
         
 
     // --- Height/Length UI: Only visible for Cylinder or Cone brush ---
@@ -653,13 +765,19 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         ]
     ]
         
-    // --- Save/Load Section ( Todo: roll-down) ---
+    // --- Save/Load Section ---
     + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
     [
     MakeSaveLoadSection()
     ]
 
-    // --- Islands Section (roll-down) ---
+    // --- Lobby/Multiplayer Section ---
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+    [
+        MakeLobbySection()
+    ]
+
+    // --- Islands Section---
     + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
     [
         MakeIslandsSection()
@@ -719,17 +837,65 @@ FDiggerEdModeToolkit::~FDiggerEdModeToolkit()
     {
         Manager->OnIslandDetected.RemoveAll(this);
     }
+
+#if WITH_SOCKETIO
+    if (SocketIOLobbyManager)
+    {
+        SocketIOLobbyManager->RemoveFromRoot();
+        SocketIOLobbyManager = nullptr;
+    }
+#endif
+    
+    if (DiggerStyleSet.IsValid())
+    {
+        FSlateStyleRegistry::UnRegisterSlateStyle(*DiggerStyleSet);
+        DiggerStyleSet.Reset();
+    }
+
+    
+    ShutdownNetworking(); // Ensure connection is cleanly closed
 }
 
+#if WITH_SOCKETIO
+bool FDiggerEdModeToolkit::IsConnectButtonEnabled() const
+{
+    return !LoggedInUser.IsEmpty();
+}
+#endif
+
+#if WITH_SOCKETIO
+FReply FDiggerEdModeToolkit::OnConnectClicked()
+{
+    ConnectToLobbyServer();
+    return FReply::Handled();
+}
+
+bool FDiggerEdModeToolkit::IsCreateLobbyEnabled() const
+{
+    return SocketIOLobbyManager
+        && SocketIOLobbyManager->IsConnected()
+        && LobbyNameTextBox.IsValid()
+        && !LobbyNameTextBox->GetText().IsEmpty();
+}
+
+bool FDiggerEdModeToolkit::IsJoinLobbyEnabled() const
+{
+    return SocketIOLobbyManager
+        && SocketIOLobbyManager->IsConnected()
+        && LobbyIdTextBox.IsValid()
+        && !LobbyIdTextBox->GetText().IsEmpty();
+}
+
+#endif
 
 void FDiggerEdModeToolkit::OnIslandDetectedHandler(const FIslandData& NewIslandData)
 {
     // Only add if not already present (e.g., by IslandID)
-    if (!Islands.ContainsByPredicate([&](const FIslandData& Island) { return Island.IslandID == NewIslandData.IslandID; }))
+   /* if (!Islands.ContainsByPredicate([&](const FIslandData& Island) { return Island.IslandID == NewIslandData.IslandID; }))
     {
         Islands.Add(NewIslandData);
         RebuildIslandGrid();
-    }
+    }*/
 }
 
 bool FDiggerEdModeToolkit::GetBrushIsFilled()
@@ -739,7 +905,8 @@ bool FDiggerEdModeToolkit::GetBrushIsFilled()
 
 void FDiggerEdModeToolkit::AddIsland(const FIslandData& Island)
 {
-    UE_LOG(LogTemp, Error, TEXT("AddIsland called on toolkit: %p, IslandID: %d"), this, Island.IslandID);
+    if (DiggerDebug::Islands)
+        UE_LOG(LogTemp, Error, TEXT("AddIsland called on toolkit!"));
     Islands.Add(Island);
     RebuildIslandGrid();
 }
@@ -764,17 +931,35 @@ ADiggerManager* FDiggerEdModeToolkit::GetDiggerManager()
 
 void FDiggerEdModeToolkit::BindIslandDelegates()
 {
-    if (Manager == GetDiggerManager())
+    Manager = GetDiggerManager();
+
+    if (!Manager)
     {
-        UE_LOG(LogTemp, Warning, TEXT("Binding delegates for toolkit: %p, manager: %p"), this, Manager);
+        UE_LOG(LogTemp, Error, TEXT("[Toolkit::BindIslandDelegates] Manager not found. Will retry in 0.25s."));
 
-        Manager->OnIslandsDetectionStarted.RemoveAll(this);
-        Manager->OnIslandDetected.RemoveAll(this);
+        if (GEditor)
+        {
+            TSharedRef<FTimerManager> TimerManager = GEditor->GetTimerManager();
+            TimerManager->SetTimerForNextTick([this]()
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[Toolkit::BindIslandDelegates] Retrying delegate bind..."));
+                BindIslandDelegates(); // Retry
+            });
+        }
 
-        Manager->OnIslandsDetectionStarted.AddRaw(this, &FDiggerEdModeToolkit::ClearIslands);
-        Manager->OnIslandDetected.AddRaw(this, &FDiggerEdModeToolkit::AddIsland);
+        return;
     }
+
+    UE_LOG(LogTemp, Log, TEXT("[Toolkit::BindIslandDelegates] Binding to Manager %p"), Manager);
+
+    Manager->OnIslandsDetectionStarted.RemoveAll(this);
+    Manager->OnIslandDetected.RemoveAll(this);
+
+    Manager->OnIslandsDetectionStarted.AddRaw(this, &FDiggerEdModeToolkit::ClearIslands);
+    Manager->OnIslandDetected.AddRaw(this, &FDiggerEdModeToolkit::AddIsland);
 }
+
+
 
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeQuickSetButtons(
     const TArray<float>& QuickSetValues,
@@ -862,11 +1047,37 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeLightTypeComboWidget(TSharedPtr<EL
     return SNew(STextBlock).Text(FText::FromString(EnumName));
 }
 
-void FDiggerEdModeToolkit::OnLightTypeChanged(TSharedPtr<ELightBrushType> NewSelection, ESelectInfo::Type)
+void FDiggerEdModeToolkit::OnLightColorChanged(FLinearColor NewColor)
+{
+    CurrentLightColor = NewColor;
+    // Change 'Manager' to a different variable name to avoid conflict
+    if (ADiggerManager* DiggerManager = GetDiggerManager())
+    {
+        DiggerManager->EditorBrushLightColor = NewColor;
+    }
+}
+
+
+
+
+// Make sure your OnLightTypeChanged implementation matches the header exactly:
+void FDiggerEdModeToolkit::OnLightTypeChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
 {
     if (NewSelection.IsValid())
     {
-        SelectedLightType = *NewSelection;
+        FString SelectedString = *NewSelection;
+        if (SelectedString == TEXT("Point Light"))
+        {
+            CurrentLightType = ELightBrushType::Point;  // This should work now
+        }
+        else if (SelectedString == TEXT("Spot Light"))
+        {
+            CurrentLightType = ELightBrushType::Spot;
+        }
+        else if (SelectedString == TEXT("Directional Light"))
+        {
+            CurrentLightType = ELightBrushType::Directional;
+        }
     }
 }
 
@@ -1230,6 +1441,346 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
         ];
 }
 
+bool FDiggerEdModeToolkit::IsSocketIOPluginAvailable() const
+{
+    return IPluginManager::Get().FindPlugin("SocketIOClient").IsValid();
+}
+
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeLobbySection()
+{
+    const bool bHasPlugin = IsSocketIOPluginAvailable();
+
+    return SNew(SVerticalBox)
+
+    // 1) Google/Username login (optional)
+    + SVerticalBox::Slot().AutoHeight().Padding(8)
+    [
+        SNew(SButton)
+        .IsEnabled(bHasPlugin)
+        .OnClicked_Lambda([this, bHasPlugin]() { return bHasPlugin ? ShowLoginModal() : FReply::Handled(); })
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString("Sign in with Google"))
+        ]
+    ]
+
+    // 2) Connect button (plain text)
+#if WITH_SOCKETIO
+    + SVerticalBox::Slot().AutoHeight().Padding(8)
+    [
+        SNew(SButton)
+        .IsEnabled(bHasPlugin)
+        .OnClicked_Lambda([this]() -> FReply
+        {
+            ConnectToLobbyServer();
+            return FReply::Handled();
+        })
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString("Connect to Lobby Server"))
+        ]
+    ]
+#endif
+
+    // 3) Networking panel
+    + SVerticalBox::Slot().AutoHeight().Padding(8)
+    [
+#if WITH_SOCKETIO
+        bHasPlugin
+            ? MakeNetworkingWidget()
+            : MakeNetworkingHelpWidget()
+#else
+        MakeNetworkingHelpWidget()
+#endif
+    ];
+}
+
+
+
+//------------------------------------------------------------------------------
+// Fallback UI when Socket.IO is missing or disabled
+//------------------------------------------------------------------------------
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeNetworkingHelpWidget()
+{
+    TSharedPtr<SProgressBar> DownloadProgress;
+
+    // Auto-installer: leave in for now, rip out later
+    return SNew(SVerticalBox)
+
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(
+                "Multiplayer features require the SocketIO plugin."))
+        ]
+
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SNew(SButton)
+            .OnClicked_Lambda([DownloadProgress]() -> FReply
+            {
+                // …existing HTTP + ZipUtility download logic…
+                return FReply::Handled();
+            })
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString("Auto-Install SocketIO Plugin"))
+            ]
+        ]
+
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SAssignNew(DownloadProgress, SProgressBar)
+            .Percent(0.0f)
+        ]
+
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SNew(SButton)
+            .IsEnabled(true) // Always shown; change logic later
+            .OnClicked_Lambda([]() -> FReply
+            {
+                FMessageDialog::Open(EAppMsgType::Ok,
+                    NSLOCTEXT("DiggerPlugin","EnableZip",
+                    "Enable the ZipUtility plugin and restart to auto-install."));
+                return FReply::Handled();
+            })
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString("Enable ZipUtility Plugin"))
+            ]
+        ];
+}
+
+void FDiggerEdModeToolkit::CreateLobbyManager(UWorld* WorldContext)
+{
+    if (!WorldContext)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("CreateLobbyManager: no world!"));
+        return;
+    }
+
+    // Only create once
+    if ( !SocketIOLobbyManager )
+    {
+        // Instantiate on the WorldSettings so it lives with the world
+        AWorldSettings* WS = WorldContext->GetWorldSettings();
+        USocketIOLobbyManager* NewMgr =
+            NewObject<USocketIOLobbyManager>(WS, USocketIOLobbyManager::StaticClass());
+        
+        NewMgr->Initialize(WorldContext);
+        
+
+        UE_LOG(LogTemp, Log, TEXT("SocketIOLobbyManager created and initialized."));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Log, TEXT("SocketIOLobbyManager already exists."));
+    }
+}
+
+void FDiggerEdModeToolkit::ConnectToLobbyServer()
+{
+#if WITH_SOCKETIO
+
+    // 1) Grab the editor world
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    if (World == nullptr)
+    {
+        UE_LOG(LogTemp, Error, TEXT("ConnectToLobbyServer: No valid EditorWorldContext."));
+        return;
+    }
+
+    // 2) Ensure we have a lobby manager instance in our SharedPtr
+    if (!SocketIOLobbyManager)
+    {
+        // Choose an Outer so UE GC keeps this alive
+        UObject* Outer = World->GetGameInstance()
+            ? static_cast<UObject*>(World->GetGameInstance())
+            : static_cast<UObject*>(World->GetWorldSettings());
+
+        // Create the UObject and root it
+        USocketIOLobbyManager* RawMgr = NewObject<USocketIOLobbyManager>(Outer);
+        if (RawMgr == nullptr)
+        {
+            UE_LOG(LogTemp, Error, TEXT("ConnectToLobbyServer: NewObject<USocketIOLobbyManager>() failed."));
+            return;
+        }
+        RawMgr->AddToRoot();
+
+        // Wrap in a shared pointer (no deleter – GC will handle destruction)
+//        SocketIOLobbyManager = MakeShareable(RawMgr);
+        UE_LOG(LogTemp, Verbose, TEXT("ConnectToLobbyServer: Lobby manager created and rooted."));
+    }
+
+    // 3) If for some reason creation still failed, stop here
+    if (!SocketIOLobbyManager)
+    {
+        UE_LOG(LogTemp, Error, TEXT("ConnectToLobbyServer: Unable to create or retrieve lobby manager."));
+        return;
+    }
+
+    // 4) Only now do we call into the manager
+    if (SocketIOLobbyManager)
+    {
+        if (!SocketIOLobbyManager->IsConnected())
+        {
+            SocketIOLobbyManager->Initialize(World);
+            UE_LOG(LogTemp, Log, TEXT("ConnectToLobbyServer: Attempting Socket.IO connect to NodeJS server..."));
+        }
+        else
+        {
+            UE_LOG(LogTemp, Log, TEXT("ConnectToLobbyServer: Already connected; skipping."));
+        }
+    }
+
+#endif // WITH_SOCKETIO
+}
+
+
+
+
+
+#if WITH_SOCKETIO
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeNetworkingWidget()
+{
+    return SNew(SVerticalBox)
+
+    // 1) Header
+    + SVerticalBox::Slot()
+      .AutoHeight()
+      .Padding(4)
+    [
+        SNew(STextBlock)
+        .Font(FAppStyle::GetFontStyle("BoldFont"))
+        .Text(FText::FromString("Multiplayer Lobby Setup Active"))
+    ]
+
+    // 2) Create New Lobby
+    + SVerticalBox::Slot()
+      .AutoHeight()
+      .Padding(4)
+    [
+        SNew(SHorizontalBox)
+
+        + SHorizontalBox::Slot()
+          .AutoWidth()
+          .VAlign(VAlign_Center)
+          .Padding(0,0,6,0)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString("New Lobby Name:"))
+        ]
+
+        + SHorizontalBox::Slot()
+          .FillWidth(1.0f)
+        [
+            SAssignNew(LobbyNameTextBox, SEditableTextBox)
+            .HintText(FText::FromString("Enter lobby name…"))
+        ]
+
+        + SHorizontalBox::Slot()
+          .AutoWidth()
+          .VAlign(VAlign_Center)
+          .Padding(6,0,0,0)
+        [
+            // Create button
+            SNew(SButton)
+            .Text(FText::FromString("Create"))
+            .OnClicked(this, &FDiggerEdModeToolkit::OnCreateLobbyClicked)
+            .IsEnabled(this, &FDiggerEdModeToolkit::IsCreateLobbyEnabled)
+        ]
+    ]
+
+    // 3) Join Existing Lobby
+    + SVerticalBox::Slot()
+      .AutoHeight()
+      .Padding(4)
+    [
+        SNew(SHorizontalBox)
+
+        + SHorizontalBox::Slot()
+          .AutoWidth()
+          .VAlign(VAlign_Center)
+          .Padding(0,0,6,0)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString("Lobby ID to Join:"))
+        ]
+
+        + SHorizontalBox::Slot()
+          .FillWidth(1.0f)
+        [
+            SAssignNew(LobbyIdTextBox, SEditableTextBox)
+            .HintText(FText::FromString("Enter lobby ID…"))
+        ]
+
+        + SHorizontalBox::Slot()
+          .AutoWidth()
+          .VAlign(VAlign_Center)
+          .Padding(6,0,0,0)
+        [
+            // Join button
+            SNew(SButton)
+            .Text(FText::FromString("Join"))
+            .OnClicked(this, &FDiggerEdModeToolkit::OnJoinLobbyClicked)
+            .IsEnabled(this, &FDiggerEdModeToolkit::IsJoinLobbyEnabled)
+        ]
+    ]
+
+    // 4) Active Lobbies List (placeholder)
+    + SVerticalBox::Slot()
+      .FillHeight(1.0f)
+      .Padding(4)
+    [
+        SNew(SBox)
+        .MinDesiredHeight(200)
+        [
+            SNew(SScrollBox)
+
+            // Example static entries — replace with dynamic list later
+            + SScrollBox::Slot()
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString("Lobby: AlphaRoom (ID: 1234)"))
+            ]
+            + SScrollBox::Slot()
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString("Lobby: BetaTeam (ID: abcd)"))
+            ]
+        ]
+    ];
+
+    // TODO: hook the scroll box to your USocketIOLobbyManager’s lobby list
+}
+
+FReply FDiggerEdModeToolkit::OnCreateLobbyClicked()
+{
+    if (LobbyNameTextBox.IsValid() && SocketIOLobbyManager)
+    {
+        FString Name = LobbyNameTextBox->GetText().ToString();
+        SocketIOLobbyManager->CreateLobby(Name);
+    }
+    return FReply::Handled();
+}
+
+FReply FDiggerEdModeToolkit::OnJoinLobbyClicked()
+{
+    if (LobbyIdTextBox.IsValid() && SocketIOLobbyManager)
+    {
+        FString Id = LobbyIdTextBox->GetText().ToString();
+        SocketIOLobbyManager->JoinLobby(Id);
+    }
+    return FReply::Handled();
+}
+
+
+
+#endif // WITH_SOCKETIO
+
+
 ECheckBoxState FDiggerEdModeToolkit::IsBrushDebugEnabled()
 {
     
@@ -1417,7 +1968,8 @@ void FDiggerEdModeToolkit::OnConvertToPhysicsActorClicked()
             if (Island.ReferenceVoxel != FIntVector::ZeroValue)
             {
                 Manager->ConvertIslandAtPositionToActor(Island.Location, true, Island.ReferenceVoxel);
-                UE_LOG(LogTemp, Log, TEXT("Island Location: %s, Reference Voxel: %s"), 
+                if (DiggerDebug::Islands)
+                    UE_LOG(LogTemp, Log, TEXT("Island Location: %s, Reference Voxel: %s"), 
                     *Island.Location.ToString(), *Island.ReferenceVoxel.ToString());
             }
             else
@@ -1705,6 +2257,212 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetSection(FVector& Offset)
 //Make Island Widget <Here>
 
 // DiggerEdModeToolkit.cpp
+
+#if WITH_SOCKETIO
+//------------------------------------------------------------------------------
+// Popup login window
+//------------------------------------------------------------------------------
+FReply FDiggerEdModeToolkit::ShowLoginModal()
+{
+    if (LoginWindow.IsValid())
+    {
+        // already open
+        return FReply::Handled();
+    }
+
+    // build simple username prompt
+    UsernameTextBox = SNew(SEditableTextBox)
+        .HintText(LOCTEXT("UsernameHint", "Enter username…"));
+
+    LoginWindow = SNew(SWindow)
+        .Title(LOCTEXT("LoginWindowTitle", "Login"))
+        .SupportsMinimize(false)
+        .SupportsMaximize(false)
+        .ClientSize(FVector2D(300, 100))
+        .Content()
+        [
+            SNew(SBorder)
+            .Padding(8)
+            [
+                SNew(SVerticalBox)
+
+                + SVerticalBox::Slot()
+                  .AutoHeight()
+                  .Padding(0,0,0,8)
+                [
+                    SNew(STextBlock)
+                    .Text(LOCTEXT("LoginPrompt", "Please choose a username:"))
+                ]
+
+                + SVerticalBox::Slot()
+                  .AutoHeight()
+                [
+                    UsernameTextBox.ToSharedRef()
+                ]
+
+                + SVerticalBox::Slot()
+                  .AutoHeight()
+                  .HAlign(HAlign_Right)
+                  .Padding(0,8,0,0)
+                [
+                    SNew(SButton)
+                    .Text(LOCTEXT("LoginOk", "OK"))
+                    .OnClicked(this, &FDiggerEdModeToolkit::OnConnectClicked)
+                ]
+            ]
+        ];
+
+    FSlateApplication::Get().AddWindow(LoginWindow.ToSharedRef());
+    return FReply::Handled();
+}
+#endif
+
+
+/*
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeNetworkingHelpWidget()
+{
+    TSharedPtr<SProgressBar> DownloadProgress;
+
+    TSharedPtr<IPlugin> ZipPlugin = IPluginManager::Get().FindPlugin(TEXT("ZipUtility"));
+    const bool bZipPluginValid = ZipPlugin.IsValid();
+    const bool bZipPluginEnabled = bZipPluginValid && ZipPlugin->IsEnabled();
+    const bool bZipModuleLoaded = FModuleManager::Get().IsModuleLoaded("ZipFile");
+
+    return SNew(SVerticalBox)
+
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString("Multiplayer features require the SocketIO Plugin"))
+        ]
+
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SNew(SButton)
+            .OnClicked_Lambda([DownloadProgress, bZipPluginEnabled, bZipModuleLoaded]() -> FReply
+            {
+                const FString PluginURL = TEXT("https://github.com/getnamo/socketio-client-ue4/archive/refs/heads/main.zip");
+                const FString ZipPath = FPaths::ProjectPluginsDir() / TEXT("SocketIOClient.zip");
+                const FString ExtractPath = FPaths::ProjectPluginsDir();
+
+                FHttpModule* Http = &FHttpModule::Get();
+                TSharedRef<IHttpRequest> Request = Http->CreateRequest();
+
+                Request->OnProcessRequestComplete().BindLambda([ZipPath, ExtractPath, DownloadProgress, bZipPluginEnabled, bZipModuleLoaded](FHttpRequestPtr RequestPtr, FHttpResponsePtr Response, bool bWasSuccessful)
+                {
+                    if (bWasSuccessful && Response.IsValid())
+                    {
+                        FFileHelper::SaveArrayToFile(Response->GetContent(), *ZipPath);
+                        UE_LOG(LogTemp, Log, TEXT("SocketIO Plugin downloaded to: %s"), *ZipPath);
+
+                        if (DownloadProgress.IsValid())
+                        {
+                            DownloadProgress->SetPercent(1.0f);
+                        }
+
+#if WITH_ZIPFILE
+                        if (bZipPluginEnabled)
+                        {
+                            if (!bZipModuleLoaded)
+                            {
+                                FModuleManager::Get().LoadModule("ZipFile");
+                            }
+
+                            UZipFileFunctionLibrary::UnzipFile(ZipPath, ExtractPath, true);
+                            IFileManager::Get().Delete(*ZipPath);
+                            UE_LOG(LogTemp, Log, TEXT("SocketIO Plugin extracted to: %s"), *ExtractPath);
+                        }
+                        else
+#endif
+                        {
+                            UE_LOG(LogTemp, Warning, TEXT("ZipUtility plugin is not enabled. Please enable it and restart the editor."));
+                        }
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Error, TEXT("Failed to download SocketIO plugin."));
+                        if (DownloadProgress.IsValid())
+                        {
+                            DownloadProgress->SetPercent(0.0f);
+                        }
+                    }
+                });
+
+                Request->SetURL(PluginURL);
+                Request->SetVerb("GET");
+                Request->OnRequestProgress().BindLambda([DownloadProgress](FHttpRequestPtr Req, int32 BytesSent, int32 BytesReceived)
+                {
+                    if (DownloadProgress.IsValid() && Req->GetContentLength() > 0)
+                    {
+                        const float Progress = static_cast<float>(BytesReceived) / static_cast<float>(Req->GetContentLength());
+                        DownloadProgress->SetPercent(Progress);
+                    }
+                });
+
+                Request->ProcessRequest();
+
+                return FReply::Handled();
+            })
+            [
+                SNew(STextBlock).Text(FText::FromString("Auto-Install SocketIO Plugin"))
+            ]
+        ]
+
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SAssignNew(DownloadProgress, SProgressBar)
+            .Percent(0.0f)
+        ]
+
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SNew(STextBlock).Text(FText::FromString("Note: The ZipUtility plugin must be enabled and compiled for automatic installation to work."))
+        ]
+
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SNew(SButton)
+            .IsEnabled(!bZipPluginEnabled)
+            .OnClicked_Lambda([]() -> FReply
+            {
+                FMessageDialog::Open(EAppMsgType::Ok, NSLOCTEXT("DiggerPlugin", "ManualZipEnable", 
+                    "To use automatic installation, please enable the ZipUtility plugin in the editor and restart."));
+                return FReply::Handled();
+            })
+            [
+                SNew(STextBlock).Text(FText::FromString("Enable ZipUtility Plugin"))
+            ]
+        ];
+}
+*/
+
+
+
+
+
+void FDiggerEdModeToolkit::ShutdownNetworking()
+{
+  /*  if (WebSocket.IsValid())
+    {
+        UE_LOG(LogTemp, Log, TEXT("🔌 Disconnecting from Digger Network Server"));
+        WebSocket->Close();
+        WebSocket.Reset();
+    }
+
+    // Optional: Clear user/session info
+    CurrentLobbyName.Empty();
+    CurrentUserName.Empty();
+    AvailableLobbies.Empty();
+
+    // Optional: Clean up any dynamic widgets if necessary
+    if (LobbyListBox.IsValid())
+    {
+        LobbyListBox->ClearChildren();
+    }*/
+}
+
+
+
 
 void FDiggerEdModeToolkit::ClearIslands()
 {

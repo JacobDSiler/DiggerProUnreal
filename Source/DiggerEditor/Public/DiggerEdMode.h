@@ -16,6 +16,7 @@ class DIGGEREDITOR_API FDiggerEdMode final : public FEdMode
 public:
     FDiggerEdMode();
     virtual ~FDiggerEdMode() override;
+    void DeselectAllSceneActors();
 
     // FEdMode interface overrides
     virtual void Enter() override;

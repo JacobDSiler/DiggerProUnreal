@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DiggerDebug.h"
 #include "FHoleShape.h"
 #include "HoleShapeLibrary.generated.h"
 
@@ -34,7 +35,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Hole Shapes")
 	UStaticMesh* GetMeshForShape(EHoleShapeType Shape) const
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Getting a MeshForShape to spawn a hole!"));
+		if (DiggerDebug::Holes)
+		{
+			// Check for the DiggerDebug flag to determine if we should log
+			UE_LOG(LogTemp, Warning, TEXT("Getting a MeshForShape to spawn a hole!"));
+		}
 		for (const auto& Mapping : ShapeMeshMappings)
 		{
 			if (Mapping.ShapeType == Shape)

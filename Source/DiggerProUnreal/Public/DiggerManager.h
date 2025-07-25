@@ -82,7 +82,6 @@ struct FIslandData
 
     FIslandData()
         : Location(FVector::ZeroVector)
-        , IslandID(-1)
         , VoxelCount(0)
         , Voxels()
         , ReferenceVoxel(FIntVector::ZeroValue)
@@ -90,9 +89,6 @@ struct FIslandData
 
     UPROPERTY(BlueprintReadWrite)
     FVector Location;
-
-    UPROPERTY(BlueprintReadWrite)
-    int32 IslandID;
 
     UPROPERTY(BlueprintReadWrite)
     int32 VoxelCount;
@@ -126,7 +122,9 @@ public:
     void SpawnLight(const FBrushStroke& Stroke);
     void InitializeBrushShapes();
     UVoxelBrushShape* GetActiveBrushShape(EVoxelBrushType BrushType) const;
- 
+    
+    // In ADiggerManager class declaration
+    void ApplyLightBrushInEditor(const FBrushStroke& BrushStroke);
 
     UFUNCTION(BlueprintCallable, Category="Brush")
     void ApplyBrushToAllChunksPIE(FBrushStroke& BrushStroke);
@@ -136,6 +134,9 @@ public:
     bool LoadSDFBrushFromFile(const FString& FilePath, FCustomSDFBrush& OutBrush);
     bool GenerateSDFBrushFromStaticMesh(UStaticMesh* Mesh, FTransform MeshTransform, float VoxelSize,
                                         FCustomSDFBrush& OutBrush);
+
+    TArray<FIslandData> DetectUnifiedIslands();
+    
     void DebugBrushPlacement(const FVector& ClickPosition);
     void DebugDrawVoxelAtWorldPosition(const FVector& WorldPosition, FColor BoxColor, float Duration, float Thickness);
 
@@ -149,7 +150,9 @@ public:
     void ConvertIslandAtPositionToPhysicsObject(const FVector& Vector);
     void ConvertIslandAtPositionToStaticMesh(const FVector& Vector);
     void ConvertIslandAtPositionToActor(const FVector& IslandCenter, bool bEnablePhysics, FIntVector ReferenceVoxel);
+    FIslandMeshData ExtractIslandByCenter(const FVector& IslandCenter, bool bRemoveAfter, bool bEnablePhysics);
     FIslandMeshData ExtractAndGenerateIslandMeshFromVoxel(UVoxelChunk* Chunk, const FIntVector& StartVoxel);
+    void RemoveIslandVoxels(const FIslandData& Island);
     void ClearAllIslandActors();
     void DestroyIslandActor(AIslandActor* IslandActor);
 
@@ -179,6 +182,7 @@ public:
     FIslandsDetectionStartedEvent OnIslandsDetectionStarted;
 
 
+
     DECLARE_MULTICAST_DELEGATE_OneParam(FIslandDetectedEvent, const FIslandData&);
     FIslandDetectedEvent OnIslandDetected;
     
@@ -189,7 +193,6 @@ public:
     {
         if (OnIslandDetected.IsBound())
         {
-            UE_LOG(LogTemp, Warning, TEXT("Broadcasting OnIslandDetected: %d"), Island.IslandID);
             OnIslandDetected.Broadcast(Island);
         }
     }
@@ -201,6 +204,9 @@ public:
 
     UPROPERTY()
     TArray<AIslandActor*> IslandActors;
+
+    UPROPERTY()
+    TArray<AActor*> SpawnedLights;
 
     UPROPERTY(EditAnywhere, Category = "Digger|Islands")
     UMaterialInterface* IslandMaterial;
@@ -235,6 +241,13 @@ public:
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
     FVector EditorBrushPosition;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush Settings")
+    ELightBrushType EditorBrushLightType;
+
+    // Add this with your other editor brush variables
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush Settings")
+    FLinearColor EditorBrushLightColor = FLinearColor::White;
+    
     UPROPERTY(EditAnywhere, Category="Brush")
     EVoxelBrushType EditorBrushType = EVoxelBrushType::Sphere;
     
@@ -243,6 +256,9 @@ public:
 
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
     float EditorBrushRadius = 100.0f;
+
+    UPROPERTY(EditAnywhere, Category="Brush")
+    float EditorBrushStrength = 1.f;
 
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
     bool EditorBrushDig = true;
@@ -315,10 +331,12 @@ public:
     
 protected:
     void RecreateIslandFromSaveData(const FIslandSaveData& SavedIsland);
+    void PopulateAllCachedLandscapeHeights();
     virtual void BeginPlay() override;
+    void StartHeightCaching();
     void DestroyAllHoleBPs();
     void ClearHolesFromChunkMap();
-    void PostInitProperties();
+    virtual void PostInitProperties() override;
     void UpdateVoxelSize();
     void ProcessDirtyChunks();
 
@@ -326,10 +344,13 @@ protected:
 public:
     // Editor support
     virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
-    void OnConstruction(const FTransform& Transform);
+    virtual void OnConstruction(const FTransform& Transform) override;
     void InitHoleShapeLibrary();
     virtual void PostEditMove(bool bFinished) override;
     virtual void PostEditUndo() override;
+
+    // Convenience Methods.
+    void ClearDiggerChanges();
 
     // Expose manual update/rebuild in editor
     UFUNCTION(CallInEditor, Category = "Editor Tools")
@@ -560,6 +581,7 @@ public:
     TSharedPtr<TMap<FIntPoint, float>> GetOrCreateLandscapeHeightCache(ALandscapeProxy* Landscape);
     void PopulateLandscapeHeightCacheAsync(ALandscapeProxy* Landscape);
     ALandscapeProxy* GetLandscapeProxyAt(const FVector& WorldPos);
+    TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos, bool bForcePrecise);
     TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos);
     float GetSmartLandscapeHeightAt(const FVector& WorldPos);
     float GetSmartLandscapeHeightAt(const FVector& WorldPos, bool bForcePrecise);

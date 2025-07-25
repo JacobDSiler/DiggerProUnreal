@@ -2,6 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
+// Error in MarchingCubes.cpp
+#include "UDynamicMesh.h" // Not found
 #include "MarchingCubes.generated.h"
 
 class ADiggerManager;
@@ -17,7 +19,7 @@ class DIGGERPROUNREAL_API UMarchingCubes : public UObject
 	GENERATED_BODY()
 
 public:
-	FIntVector GetCornerOffset(int32 Index);
+	static FIntVector GetCornerOffset(int32 Index);
 	// Constructors
 	UMarchingCubes();
 	UMarchingCubes(const FObjectInitializer& ObjectInitializer, const UVoxelChunk* VoxelChunk);
@@ -26,8 +28,34 @@ public:
 	// Generate the mesh based on the voxel grid
 	void GenerateMesh(const UVoxelChunk* ChunkPtr);
 
+	// Add these members to your MarchingCubes class
+private:
+	// Height caching system
+	UPROPERTY()
+	TMap<FIntVector, float> HeightCache;
+    
+	UPROPERTY()
+	FVector CachedChunkOrigin;
+    
+	UPROPERTY()
+	bool bHeightCacheInitialized;
+    
+	UPROPERTY()
+	float CachedVoxelSize;
+    
+	UPROPERTY()
+	int32 CachedChunkSize;
+
+public:
+	// Height cache methods
+	void InitializeHeightCache(const FVector& ChunkOrigin, float VoxelSize);
+	float GetCachedHeight(const FVector& WorldPosition) const;
+	void ClearHeightCache();
+	bool IsHeightCacheValid(const FVector& ChunkOrigin, float VoxelSize) const;
 
 	bool IsDebugging() {return bIsDebugging;}
+
+	
 	
 	void GenerateMeshFromGrid(
 		USparseVoxelGrid* VoxelGrid,
@@ -38,6 +66,46 @@ public:
 		TArray<FVector>& OutNormals
 		// Add TArray<FVector2D>& OutUVs, TArray<FColor>& OutColors, TArray<FProcMeshTangent>& OutTangents if needed
 	);
+	
+	
+	void PopulateHeightValues(
+	TArray<float>& OutHeights,
+	TSharedPtr<TMap<FIntPoint, float>>* HeightCachePtr,
+	const FVector& Origin,
+	float VoxelSize,
+	int32 N
+	) const;
+
+	void IdentifyAirVoxelsBelowTerrain(
+	USparseVoxelGrid* Grid,
+	TSet<FIntVector>& OutSet,
+	const TArray<float>& HeightValues,
+	const FVector& Origin,
+	int32 N,
+	float VoxelSize
+	) const;
+
+	float EstimateSDFForMissingCorner(
+	const USparseVoxelGrid* Grid,
+	const FIntVector& CornerCoords,
+	const FVector& CornerWorldPos,
+	float TerrainHeight,
+	float VoxelSize,
+	const FVector& Origin
+	) const;
+
+	float GetCornerHeight(
+	const FVector& CornerWorldPos,
+	float CachedTerrainHeight
+	) const;
+	
+	void LogDebug(const FString& Message);
+
+	float GetCachedHeight(
+		TSharedPtr<TMap<FIntPoint, float>>* HeightCachePtr,
+		const FVector& WorldPos,
+		float VoxelSize
+	) const;
 
 	void GenerateMeshForIsland(USparseVoxelGrid* IslandGrid, const FVector& Origin, float VoxelSize, int32 IslandId);
 
@@ -63,9 +131,9 @@ public:
 	const TArray<int32>& Triangles,
 	TArray<int32>& OutRimVertexIndices);
 	
-	FVector InterpolateVertex(const FVector& P1, const FVector& P2, float SDF1, float SDF2);
+	static FVector InterpolateVertex(const FVector& P1, const FVector& P2, float SDF1, float SDF2);
 
-	int32 CalculateMarchingCubesIndex(const TArray<float>& CornerSDFValues);
+	static int32 CalculateMarchingCubesIndex(const TArray<float>& CornerSDFValues);
 
 	void ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutOutVertices, const TArray<int32>& OutTriangles, const TArray<FVector>&
 	                            Normals) const;
@@ -82,6 +150,7 @@ public:
 
 	// On Mesh Ready Callback
 	FOnMeshReady OnMeshReady;
+	FCriticalSection OutVerticesMutex;
 
 	//	void GenerateMeshForIsland(USparseVoxelGrid* IslandGrid, TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs, TArray<FColor>& Colors, TArray<FProcMeshTangent>& Tangents);
 
@@ -97,7 +166,7 @@ private:
 	UPROPERTY()
 	USparseVoxelGrid* VoxelGrid;
 
-	bool bIsDebugging;
+	bool bIsDebugging = false;
 
 public:
 	void SetIsDebugging(bool bWillDebug)

@@ -3,6 +3,7 @@
 #include "DrawDebugHelpers.h"
 #include "C:\Users\serpe\Documents\Unreal Projects\DiggerProUnreal\Source\DiggerProUnreal\Public\Voxel\FVoxelSDFHelper.h"
 #include "DiggerDebug.h"
+#include "Editor.h"
 #include "VoxelChunk.h"
 #include "VoxelConversion.h"
 #include "Engine/World.h"
@@ -68,9 +69,11 @@ bool USparseVoxelGrid::EnsureDiggerManager()
         
         if (!DiggerManager)
         {
+            if (DiggerDebug::Manager)
             UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in VoxelToWorldSpace"));
             return false;
         }
+        if (DiggerDebug::Voxels)
         UE_LOG(LogTemp, Warning, TEXT("DiggerManager ensured correctly in an instance of SVG!"));
     }
     return true;
@@ -94,7 +97,8 @@ bool USparseVoxelGrid::IsPointAboveLandscape(FVector& Point)
     if(!World) World = GetSafeWorld();
     if (!World) 
     {
-        //UE_LOG(LogTemp, Error, TEXT("World is null in IsPointAboveLandscape"));
+        if (DiggerDebug::Context)
+        UE_LOG(LogTemp, Error, TEXT("World is null in IsPointAboveLandscape"));
         return false;
     }
 
@@ -179,26 +183,6 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
 
 
 
-void USparseVoxelGrid::SynchronizeBordersIfDirty()
-{
-    if (bBorderIsDirty)
-    {
-        SynchronizeBordersWithNeighbors();
-        bBorderIsDirty = false;
-    }
-}
-
-
-//inline FArchive& operator<<(FArchive& Ar, FSpawnedHoleData& HoleData)
-
-
-
-// FArchive operator<<(FArchive& Ar, FSpawnedHoleData& HoleData)
-// {
-//     HoleData.Serialize(Ar);
-//     return Ar;
-// }
-
 FArchive operator<<(const FArchive& Ar, int Int);
 
 bool USparseVoxelGrid::SerializeToArchive(FArchive& Ar)
@@ -261,6 +245,17 @@ bool USparseVoxelGrid::SerializeFromArchive(FArchive& Ar)
 }
 
 
+const FVoxelData* USparseVoxelGrid::GetVoxelData(const FIntVector& Voxel) const
+{
+    return VoxelData.Find(Voxel);
+}
+
+FVoxelData* USparseVoxelGrid::GetVoxelData(const FIntVector& Voxel)
+{
+    return VoxelData.Find(Voxel);
+}
+
+
 float USparseVoxelGrid::GetVoxel(FIntVector Vector)
 {
    return GetVoxel(Vector.X, Vector.Y, Vector.Z);
@@ -284,22 +279,44 @@ float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z)
     }
 }
 
+
+float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z) const
+{
+    FIntVector VoxelKey(X, Y, Z);
+    const FVoxelData* ExistingVoxel = VoxelData.Find(VoxelKey);
+
+    if (ExistingVoxel)
+    {
+        return ExistingVoxel->SDFValue;
+    }
+    else
+    {
+        FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(FIntVector(X, Y, Z));
+        float LandscapeHeight = DiggerManager->GetLandscapeHeightAt(FVector(WorldPos.X, WorldPos.Y, 0));
+        return (WorldPos.Z < LandscapeHeight) ? SDF_SOLID : SDF_AIR;
+    }
+}
+
+
 bool USparseVoxelGrid::FindNearestSetVoxel(const FIntVector& StartCoords, FIntVector& OutVoxel)
 {
     // First check if the start position itself is a set voxel
     if (VoxelData.Contains(StartCoords))
     {
         OutVoxel = StartCoords;
+        if (DiggerDebug::Voxels || DiggerDebug::Islands)
         UE_LOG(LogTemp, Log, TEXT("Found voxel at start position: %s"), *StartCoords.ToString());
         return true;
     }
     
     // Debug: Log how many voxels are in the grid and some sample voxels
+    if (DiggerDebug::Voxels || DiggerDebug::Islands)
     UE_LOG(LogTemp, Warning, TEXT("Grid contains %d voxels. Searching for nearest voxel to %s"), 
         VoxelData.Num(), *StartCoords.ToString());
     
     // Log some sample voxels for debugging
     int32 SampleCount = 0;
+    if (DiggerDebug::Voxels || DiggerDebug::Islands)
     for (const auto& Pair : VoxelData)
     {
         if (SampleCount++ < 10)
@@ -312,6 +329,7 @@ bool USparseVoxelGrid::FindNearestSetVoxel(const FIntVector& StartCoords, FIntVe
     // If grid is empty, return early
     if (VoxelData.Num() == 0)
     {
+        if (DiggerDebug::Voxels || DiggerDebug::Islands)
         UE_LOG(LogTemp, Warning, TEXT("Grid is empty, no voxels to find"));
         return false;
     }
@@ -336,6 +354,7 @@ bool USparseVoxelGrid::FindNearestSetVoxel(const FIntVector& StartCoords, FIntVe
                         if (VoxelData.Contains(TestVoxel))
                         {
                             OutVoxel = TestVoxel;
+                            if (DiggerDebug::Voxels || DiggerDebug::Islands)
                             UE_LOG(LogTemp, Warning, TEXT("Found voxel at radius %d: %s"), radius, *TestVoxel.ToString());
                             return true;
                         }
@@ -347,11 +366,13 @@ bool USparseVoxelGrid::FindNearestSetVoxel(const FIntVector& StartCoords, FIntVe
         // Log progress every few iterations
         if (radius % 5 == 0)
         {
+            if (DiggerDebug::Voxels || DiggerDebug::Islands)
             UE_LOG(LogTemp, Log, TEXT("Searched radius %d, no voxels found yet"), radius);
         }
     }
     
     // If we get here, we didn't find any voxels within the search radius
+    if (DiggerDebug::Voxels || DiggerDebug::Islands)
     UE_LOG(LogTemp, Warning, TEXT("No voxels found within search radius %d of %s"), 
         MaxSearchRadius, *StartCoords.ToString());
     
@@ -360,6 +381,7 @@ bool USparseVoxelGrid::FindNearestSetVoxel(const FIntVector& StartCoords, FIntVe
     {
         auto It = VoxelData.CreateConstIterator();
         OutVoxel = It.Key();
+        if (DiggerDebug::Voxels || DiggerDebug::Islands)
         UE_LOG(LogTemp, Warning, TEXT("Falling back to first voxel in grid: %s with SDF value %f"), 
             *OutVoxel.ToString(), It.Value().SDFValue);
         return true;
@@ -380,13 +402,12 @@ bool USparseVoxelGrid::HasVoxelAt(int32 X, int32 Y, int32 Z) const
 }
 
 
-
-TMap<FVector, float> USparseVoxelGrid::GetVoxels() const
+TMap<FIntVector, float> USparseVoxelGrid::GetAllVoxels() const
 {
-    TMap<FVector, float> Voxels;
+    TMap<FIntVector, float> Voxels;
     for (const auto& VoxelPair : VoxelData)
     {
-        Voxels.Add(FVector(VoxelPair.Key), VoxelPair.Value.SDFValue);
+        Voxels.Add(FIntVector(VoxelPair.Key), VoxelPair.Value.SDFValue);
         if (DiggerDebug::Voxels)
         {
             UE_LOG(LogTemp, Warning, TEXT("Voxel at %s has SDF value: %f"), *VoxelPair.Key.ToString(), VoxelPair.Value.SDFValue);
@@ -405,14 +426,17 @@ void USparseVoxelGrid::LogVoxelData() const
 {
     if(!VoxelData.IsEmpty())
     {
+        if (DiggerDebug::Voxels)
         UE_LOG(LogTemp, Warning, TEXT("Voxel Data isn't empty!"));
     }
     else
     {
+        if (DiggerDebug::Voxels)
         UE_LOG(LogTemp, Error, TEXT("Voxel Data is empty!"));
     }
     for (const auto& VoxelPair : VoxelData)
     {
+        if (DiggerDebug::Voxels)
         UE_LOG(LogTemp, Warning, TEXT("Voxel at [%s] has SDF value: %f"), *VoxelPair.Key.ToString(), VoxelPair.Value.SDFValue);
     }
 }
@@ -677,44 +701,44 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
 {
     TArray<FIslandData> Islands;
     TSet<FIntVector> Visited;
-    
-    // Function to check if a voxel is solid
+
+    // Lambda to check if a voxel is solid
     auto IsSolid = [this, SDFThreshold](const FIntVector& Voxel) -> bool
     {
         const FVoxelData* Data = VoxelData.Find(Voxel);
         return Data && Data->SDFValue < SDFThreshold;
     };
-    
-    // Iterate through all voxels in the grid
+
     for (const auto& Pair : VoxelData)
     {
         const FIntVector& VoxelCoords = Pair.Key;
-        
-        // Skip if already visited or not solid
+
         if (Visited.Contains(VoxelCoords) || !IsSolid(VoxelCoords))
             continue;
-        
-        // This is a new island, perform flood fill
+
+        // Begin flood fill
         TArray<FIntVector> IslandVoxels;
         TQueue<FIntVector> Queue;
-        
+
         Queue.Enqueue(VoxelCoords);
         Visited.Add(VoxelCoords);
         IslandVoxels.Add(VoxelCoords);
-        
+
         while (!Queue.IsEmpty())
         {
             FIntVector Current;
             Queue.Dequeue(Current);
-            
+
             static const FIntVector Dirs[] = {
-                {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1}
+                {1,0,0}, {-1,0,0},
+                {0,1,0}, {0,-1,0},
+                {0,0,1}, {0,0,-1}
             };
-            
+
             for (const FIntVector& Dir : Dirs)
             {
                 FIntVector Neighbor = Current + Dir;
-                
+
                 if (!Visited.Contains(Neighbor) && IsSolid(Neighbor))
                 {
                     Queue.Enqueue(Neighbor);
@@ -723,41 +747,39 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
                 }
             }
         }
-        
-        // Calculate island center and size
+
+        // Compute world-space center
         FVector Center = FVector::ZeroVector;
-        for (const FIntVector& Voxel : IslandVoxels)
+        for (const FIntVector& GlobalVoxel : IslandVoxels)
         {
-            // Convert voxel coordinates to world position
-            FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(Voxel);
-            Center += WorldPos;
+            Center += FVoxelConversion::GlobalVoxelToWorld_CenterAligned(GlobalVoxel);
         }
-        
+
         if (IslandVoxels.Num() > 0)
         {
             Center /= IslandVoxels.Num();
-            
-            // Create island data
+
             FIslandData Island;
             Island.Location = Center;
             Island.VoxelCount = IslandVoxels.Num();
-            
-            // Store a reference voxel for this island
             Island.ReferenceVoxel = IslandVoxels[0];
-            
-            Islands.Add(Island);
+            Island.Voxels = IslandVoxels;
 
-            if (DiggerDebug::Islands || DiggerDebug::Voxels)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("Detected island at %s with %d voxels. Reference voxel: %s"),
-                    *Center.ToString(), IslandVoxels.Num(), *Island.ReferenceVoxel.ToString());
-            }
+            Islands.Add(Island);
         }
     }
-    
+
     return Islands;
 }
 
+bool USparseVoxelGrid::RemoveVoxel(const FIntVector& LocalVoxel)
+{
+    if (DiggerDebug::Voxels || DiggerDebug::Islands)
+        DrawDebugBox(GetWorld(), FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkPosition(), LocalVoxel),
+             FVector(FVoxelConversion::LocalVoxelSize / 2.0f), FColor::Red, false, 5.0f);
+    
+    return VoxelData.Remove(LocalVoxel) > 0;
+}
 
 
 // In USparseVoxelGrid.cpp

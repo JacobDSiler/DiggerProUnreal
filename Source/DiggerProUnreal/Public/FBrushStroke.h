@@ -71,6 +71,10 @@ struct FBrushStroke
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Brush")
     FVector BrushOffset;
 
+    // In your FBrushStroke struct definition:
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Light")
+    FLinearColor LightColor = FLinearColor::White;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Brush")
     bool bDig;
 

@@ -1,7 +1,9 @@
 // SelectableBase.cpp
 #include "SelectableBase.h"
-
+#if WITH_EDITOR
 #include "DiggerEdMode.h"
+#endif
+
 #include "Engine/World.h"
 
 ASelectableBase::ASelectableBase()

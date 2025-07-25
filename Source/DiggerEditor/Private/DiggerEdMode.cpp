@@ -25,9 +25,17 @@ bool FDiggerEdMode::bIsDiggerModeCurrentlyActive = false;
 FDiggerEdMode::FDiggerEdMode() {}
 FDiggerEdMode::~FDiggerEdMode() {}
 
+void FDiggerEdMode::DeselectAllSceneActors()
+{
+    // Deselect all actors when entering Digger Mode
+    GEditor->GetSelectedActors()->DeselectAll();
+}
+
 void FDiggerEdMode::Enter()
 {
     FEdMode::Enter();
+
+    DeselectAllSceneActors();
 
     if (!Toolkit.IsValid())
     {
@@ -46,6 +54,7 @@ void FDiggerEdMode::Exit()
         bIsDiggerModeCurrentlyActive = false;
         FToolkitManager::Get().CloseToolkit(Toolkit.ToSharedRef());
         Toolkit.Reset();
+        static_cast<FDiggerEdModeToolkit*>(Toolkit.Get())->ShutdownNetworking();
     }
     FEdMode::Exit();
 }
@@ -121,6 +130,8 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
     FVector HitLocation;
     FHitResult Hit;
 
+    DeselectAllSceneActors();
+
     if (GetMouseWorldHit(InViewportClient, HitLocation, Hit))
     {
         const bool bCtrlPressed = Click.IsControlDown();
@@ -142,6 +153,7 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
             if (ADiggerManager* Digger = FindDiggerManager())
             {
                 EVoxelBrushType BrushType = DiggerToolkit->GetCurrentBrushType();
+                Digger->EditorBrushType = BrushType; // ✅ IMPORTANT: assign brush type
 
                 if (BrushType == EVoxelBrushType::Debug)
                 {
@@ -171,30 +183,26 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
                     DiggerToolkit->SetTemporaryDigOverride(TOptional<bool>());
                 }
 
-                ContinuousSettings.bFinalBrushDig = bFinalBrushDig;
-                ContinuousSettings.FinalRotation = FinalRotation;
-                ContinuousSettings.bCtrlPressed = bCtrlPressed;
-                ContinuousSettings.bRightClick = bRightClick;
-                ContinuousSettings.bIsValid = true;
-
+                // Assign all necessary brush settings
                 Digger->EditorBrushRadius = DiggerToolkit->GetBrushRadius();
                 Digger->EditorBrushDig = bFinalBrushDig;
                 Digger->EditorBrushRotation = FinalRotation;
                 Digger->EditorBrushAngle = DiggerToolkit->GetBrushAngle();
                 Digger->EditorBrushHoleShape = GetHoleShapeForBrush(BrushType);
+                Digger->EditorBrushLightType = DiggerToolkit->GetCurrentLightType(); // ✅ Light Type
+                Digger->EditorBrushLightColor = DiggerToolkit->GetCurrentLightColor(); // ✅ Light Color
+                UE_LOG(LogTemp, Warning, TEXT("Toolkit is passing light type: %d"), (int32)Digger->EditorBrushLightType);
 
-                if(DiggerToolkit->IsUsingAdvancedCubeBrush())
+                if (DiggerToolkit->IsUsingAdvancedCubeBrush())
                 {
-            
                     Digger->EditorbUseAdvancedCubeBrush = true;
                     Digger->EditorCubeHalfExtentX = DiggerToolkit->GetAdvancedCubeHalfExtentX();
                     Digger->EditorCubeHalfExtentY = DiggerToolkit->GetAdvancedCubeHalfExtentY();
                     Digger->EditorCubeHalfExtentZ = DiggerToolkit->GetAdvancedCubeHalfExtentZ();
                     UE_LOG(LogTemp, Warning, TEXT("DiggerEdMode.cpp: Extent X: %.2f  Extent Y: %.2f  Extent Z: %.2f"),
-                   Digger->EditorCubeHalfExtentX,
-                   Digger->EditorCubeHalfExtentY,
-                   Digger->EditorCubeHalfExtentZ);
-
+                        Digger->EditorCubeHalfExtentX,
+                        Digger->EditorCubeHalfExtentY,
+                        Digger->EditorCubeHalfExtentZ);
                 }
                 else
                 {
@@ -221,19 +229,25 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
 
                 FVector ChunkPosition = HitLocation / (Digger->TerrainGridSize * Digger->ChunkSize);
                 ChunkPosition = FVector(FMath::FloorToInt(ChunkPosition.X), FMath::FloorToInt(ChunkPosition.Y), FMath::FloorToInt(ChunkPosition.Z));
+
                 if (bMouseButtonDown)
                 {
                     StartContinuousApplication(Click);
                 }
+
                 return true;
             }
         }
     }
+
     return false;
 }
 
+
 bool FDiggerEdMode::InputKey(FEditorViewportClient* ViewportClient, FViewport* Viewport, FKey Key, EInputEvent Event)
 {
+    DeselectAllSceneActors();
+    
     if (Key == EKeys::P && Event == IE_Pressed)
     {
         SetPaintMode(!bPaintingEnabled);
@@ -389,6 +403,7 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
 {
     if (!ContinuousSettings.bIsValid)
     {
+        UE_LOG(LogTemp, Error, TEXT("ContinuousSettings are invalid in DiggerEdMode ApplyContinuousBrush!"));
         return;
     }
 
@@ -399,12 +414,14 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
         ADiggerManager* Digger = FindDiggerManager();
         if (!Digger)
         {
+            UE_LOG(LogTemp, Warning, TEXT("No DiggerManager in in DiggerEdMode ApplyContinuousBrush!"));
             return;
         }
 
         TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = StaticCastSharedPtr<FDiggerEdModeToolkit>(Toolkit);
         if (!DiggerToolkit.IsValid())
         {
+            UE_LOG(LogTemp, Warning, TEXT("No DiggerToolKit in in DiggerEdMode ApplyContinuousBrush!"));
             return;
         }
 
@@ -477,16 +494,17 @@ void FDiggerEdMode::AddReferencedObjects(FReferenceCollector& Collector)
 void FDiggerEdMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
 {
     FEdMode::Tick(ViewportClient, DeltaTime);
-
-    if (GEditor)
-    {
-        GEditor->RedrawAllViewports();
-    }
-    if (bIsContinuouslyApplying && bMouseButtonDown)
+    
+    if (ShouldApplyContinuously())
     {
         ContinuousApplicationTimer += DeltaTime;
         ApplyContinuousBrush(ViewportClient);
         ContinuousApplicationTimer = 0.0f;
+    }
+
+    if (GEditor)
+    {
+        GEditor->RedrawAllViewports();
     }
 }
 
@@ -502,6 +520,7 @@ ADiggerManager* FDiggerEdMode::FindDiggerManager()
     {
         return *It;
     }
+    UE_LOG(LogTemp, Error, TEXT("DiggerManager not found in: FDiggerEdMode::FindDiggerManager()!!!"));
     return nullptr;
 }
 

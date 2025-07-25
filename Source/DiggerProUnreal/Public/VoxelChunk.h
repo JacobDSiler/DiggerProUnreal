@@ -8,6 +8,7 @@
 #include "VoxelBrushTypes.h"
 #include "VoxelChunk.generated.h"
 
+class ADynamicHole;
 class UVoxelBrushShape;
 struct FBrushStroke;
 class ADiggerManager;
@@ -99,7 +100,7 @@ public:
     UFUNCTION(BluePrintCallable)
     USparseVoxelGrid* GetSparseVoxelGrid() const;
     UMarchingCubes* GetMarchingCubesGenerator() const { return MarchingCubesGenerator; }
-    TMap<FVector, float> GetActiveVoxels() const;
+    TMap<FIntVector, float> GetActiveVoxels() const;
     bool IsDirty() const { return bIsDirty; }
     
 
@@ -110,7 +111,23 @@ public:
     float BlendSDF(float SDFValue, float ExistingSDF, bool bDig, float TransitionBand);
     //void ForceRegenerateMesh();
 
+public:
+    // Add a hole to the chunk's hole list
+    void AddHoleToChunk(ADynamicHole* Hole);
+
+    // Remove a hole from the chunk's hole list
+    void RemoveHoleFromChunk(ADynamicHole* Hole);
+
+    // Generate a new unique hole ID for each hole added
+    int32 GenerateHoleID();
+
 private:
+    int32 HoleIDCounter = 0;  // Counter to generate unique Hole IDs
+    
+    // Array to store all holes in this chunk
+    UPROPERTY()
+    TArray<ADynamicHole*> SpawnedHoles;
+
     // Cached brush shapes for performance
     UPROPERTY()
     TMap<EVoxelBrushType, UVoxelBrushShape*> CachedBrushShapes;
@@ -122,32 +139,12 @@ public:
 
 private:
     FCriticalSection BrushStrokeMutex;
-
-
-    void ApplySphereBrush(FVector3d BrushPosition, float Radius, bool bDig);
-    void ApplyIcosphereBrush(FVector3d BrushPosition, float Radius, FRotator Rotation, bool bDig);
-    void ApplyStairsBrush(FVector3d BrushPosition, float Width, float Height, float Depth, int32 NumSteps,
-                          bool bSpiral, bool bDig, const FRotator& Rotation);
+    
     FVector CalculateBrushBounds(const FBrushStroke& Stroke) const;
-
-    float CalculateDiggingSDF(float Distance, float InnerRadius, float Radius, float OuterRadius, float TransitionZone,
-                              float ExistingSDF, bool bIsAboveTerrain, float HeightDifferenceFromTerrain);
-
-    float CalculateAdditiveSDF(float Distance, float InnerRadius, float Radius, float OuterRadius, float TransitionZone,
-                               float ExistingSDF, bool bIsAboveTerrain);
-    void ModifyVoxel(FIntVector Index,float SDFValue, float TransitionBand, bool bDig);
-    void ApplyCapsuleBrush(FVector3d BrushPosition, float Length, float Radius, const FRotator& Rotation, bool bDig);
-    void ApplyCubeBrush(FVector3d BrushPosition, float HalfSize, bool bDig, const FRotator& Rotation);
-    void ApplyAdvancedCubeBrush(FVector3d BrushPosition, FVector HalfExtents, FRotator Rotation, bool bDig);
-    void ApplyTorusBrush(FVector3d BrushPosition, float MajorRadius, float MinorRadius, FRotator Rotation, bool bDig);
-    void ApplyPyramidBrush(FVector3d BrushPosition, float Height, float BaseHalfExtent, bool bDig,
-                           const FRotator& Rotation);
+    
 
     void CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels);
 
-    void ApplyCylinderBrush(FVector3d BrushPosition, float Radius, float Height, const FRotator& Rotation, bool bDig, bool bFilled);
-    // UVoxelChunk.h
-    void ApplyConeBrush(FVector3d BrushPosition, float Height, float Angle, bool bFilled, bool bDig, const FRotator& Rotation);
     void ApplySmoothBrush(const FVector& Center, float Radius, bool bDig, int NumIterations);
     float ComputeSDFValue(float NormalizedDist, bool bDig, float TransitionStart, float TransitionEnd);
 

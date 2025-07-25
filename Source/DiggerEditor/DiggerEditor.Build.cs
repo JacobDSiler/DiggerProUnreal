@@ -1,55 +1,64 @@
-// DiggerEditor.Build.cs
-
+using System.IO;
 using UnrealBuildTool;
 
 public class DiggerEditor : ModuleRules
 {
-    public DiggerEditor(ReadOnlyTargetRules Target) : base(Target)
-    {
-        PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
-        
-        PublicIncludePaths.AddRange(
-            new string[] {
-                "DiggerEditor/Public"
-            });
+	public DiggerEditor(ReadOnlyTargetRules Target) : base(Target)
+	{
+		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-        PrivateIncludePaths.AddRange(
-            new string[] {
-                "DiggerEditor/Private"
-            });
+		PublicIncludePaths.AddRange(new string[] {
+			Path.Combine(ModuleDirectory, "Public"),
+			Path.Combine(ModuleDirectory, "../DiggerProUnreal/Public") // Access runtime headers
+		});
 
-        PublicDependencyModuleNames.AddRange(
-            new string[]
-            {
-                "Core",
-                "CoreUObject",
-                "Engine",
-                "UnrealEd",
-                "Slate",
-                "SlateCore",
-                "EditorFramework",
-                "LevelEditor",
-                "InputCore",
-                "ToolMenus",
-                "ProceduralMeshComponent",
-                "DiggerProUnreal", // <-- This is correct!
-                "EditorInteractiveToolsFramework"
-            }
-        );
+		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private"));
 
-        PrivateDependencyModuleNames.AddRange(
-            new string[]
-            {
-                "EditorStyle",
-                "EditorSubsystem",
-                "AssetTools",
-                "ContentBrowser",
-                "MeshDescription",
-                "StaticMeshDescription",
-                "PropertyEditor",  // <-- NEW
-                "Projects"         // <-- NEW
-            }
-        );
+		// Core editor dependencies
+		PublicDependencyModuleNames.AddRange(new string[] {
+			"Core",
+			"CoreUObject",
+			"Engine",
+			"UnrealEd",
+			"EditorFramework",
+			"LevelEditor",
+			"Slate",
+			"SlateCore",
+			"ToolMenus",
+			"EditorInteractiveToolsFramework",
+			"ProceduralMeshComponent",
+			"SocketIOClient",
+			"GeometryCore",          // For mesh tools
+			"ContentBrowser"         // For asset thumbnails
+		});
 
-    }
+		PrivateDependencyModuleNames.AddRange(new string[] {
+			"DiggerProUnreal",       // Editor → Runtime link
+			"EditorStyle",
+			"EditorSubsystem",
+			"AssetTools",
+			"ContentBrowserData",
+			"MeshDescription",
+			"StaticMeshDescription",
+			"PropertyEditor",
+			"Projects",
+			"AppFramework",
+			"AssetRegistry",
+			"RenderCore",
+			"RHI",
+			"HTTP",
+			"WebSockets",
+			"ApplicationCore",
+			"InputCore",
+			"ToolWidgets",           // For editor widgets
+			"ContentBrowser",  // Provides FAssetThumbnail
+			"AssetTools",      // Additional asset functionality
+		});
+
+		// For SComboBox, SEditableTextBox etc.
+		PrivateIncludePathModuleNames.AddRange(new string[] {
+			"Slate",
+			"SlateCore"
+		});
+	}
 }

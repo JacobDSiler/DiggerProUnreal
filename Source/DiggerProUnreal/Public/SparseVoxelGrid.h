@@ -52,6 +52,8 @@ public:
 	void RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove);
 	
 	float GetVoxel(FIntVector Vector);
+	const FVoxelData* GetVoxelData(const FIntVector& Voxel) const;
+	FVoxelData* GetVoxelData(const FIntVector& Voxel);
 
 	// Delegate to broadcast when a new island is detected
 	UPROPERTY(BlueprintAssignable, Category = "Island Detection")
@@ -59,22 +61,24 @@ public:
 	
 
 	//A public getter for VoxelData
-	const TMap<FIntVector, FVoxelData>& GetVoxelData() const { return VoxelData; }
+	const TMap<FIntVector, FVoxelData>& GetVoxel() const { return VoxelData; }
 	
 	// Adds a voxel at the given coordinates with the provided SDF value
 	void SetVoxel(FIntVector Position, float SDFValue, bool bDig);
 	void SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig);
-	void SynchronizeBordersIfDirty();
+	void SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig) const;
+
 	bool SerializeToArchive(FArchive& Ar);
 	bool SerializeFromArchive(FArchive& Ar);
 
 	// Retrieves the voxel's SDF value; returns true if the voxel exists
 	float GetVoxel(int32 X, int32 Y, int32 Z);
+	float GetVoxel(int32 X, int32 Y, int32 Z) const;
 	bool HasVoxelAt(const FIntVector& Key) const;
 
 	bool HasVoxelAt(int32 X, int32 Y, int32 Z) const;
 	// Method to get all voxel data
-	TMap<FVector, float> GetVoxels() const;
+	TMap<FIntVector, float> GetAllVoxels() const;
 	
 	// Checks if a voxel exists at the given coordinates
 	bool VoxelExists(int32 X, int32 Y, int32 Z) const;
@@ -99,6 +103,7 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category = "Voxel")
 	TArray<FIslandData> DetectIslands(float SDFThreshold = 0.0f);
+	bool RemoveVoxel(const FIntVector& LocalVoxel);
 
 	UPROPERTY(EditAnywhere, Category="Debug")
 	FVector DebugRenderOffset = FVector(- FVoxelConversion::ChunkWorldSize*0.5f,- FVoxelConversion::ChunkWorldSize*0.5f,- FVoxelConversion::ChunkWorldSize*0.5f);
@@ -145,6 +150,11 @@ public:
 	[[nodiscard]] UVoxelChunk* GetParentChunk() const
 	{
 		return ParentChunk;
+	}
+
+	void SetVoxelData(const TMap<FIntVector, FVoxelData>& InData)
+	{
+		VoxelData = InData;
 	}
 
 private:
