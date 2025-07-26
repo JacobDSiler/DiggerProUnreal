@@ -131,13 +131,14 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
     if (EditorBrushType == EVoxelBrushType::Light)
     {
         // Default fallback
-        BrushStroke.LightType = ELightBrushType::Point;
+        //BrushStroke.LightType = ELightBrushType::Point;
     
         // Get both light type and color from toolkit
         if (GLevelEditorModeTools().IsModeActive(FDiggerEdMode::EM_DiggerEdModeId))
         {
+            UE_LOG(LogTemp, Warning, TEXT("getting both light type and color from toolkit!"));
             FDiggerEdMode* DiggerMode = (FDiggerEdMode*)GLevelEditorModeTools().GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId);
-            if (DiggerMode && DiggerMode->GetToolkit().IsValid())
+           // if (DiggerMode && DiggerMode->GetToolkit().IsValid())
             {
                 TSharedPtr<FDiggerEdModeToolkit> Toolkit = StaticCastSharedPtr<FDiggerEdModeToolkit>(DiggerMode->GetToolkit());
                 if (Toolkit.IsValid())
@@ -150,6 +151,9 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
                 }
             }
         }
+        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushInEditor: this = %p"), this);
+        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushInEditor: EditorBrushType = %d"), (int32)EditorBrushType);
+
     
         // Route to light handler with the full brush stroke
         ApplyLightBrushInEditor(BrushStroke);
@@ -292,6 +296,9 @@ void ADiggerManager::SpawnLight(const FBrushStroke& BrushStroke)
 {
     if (!GetWorld()) return;
 
+    UE_LOG(LogTemp, Warning, TEXT("SpawnLight received LightType: %d"), (int32)BrushStroke.LightType);
+
+    
     FVector FinalPosition = BrushStroke.BrushPosition + BrushStroke.BrushOffset;
     FRotator Rotation = BrushStroke.BrushRotation;
     AActor* LightActor = nullptr;
