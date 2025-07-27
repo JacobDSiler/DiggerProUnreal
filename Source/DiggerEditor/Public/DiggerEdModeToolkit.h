@@ -244,6 +244,7 @@ private:
 	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, double& Value);
 	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, float& Value);
 	void OnConvertToPhysicsActorClicked();
+	void OnRemoveIslandClicked();
 	TSharedRef<SWidget> MakeIslandsSection();
 
 	TSharedRef<SWidget> MakeLabeledSliderRow(
@@ -284,7 +285,7 @@ private:
 #if WITH_SOCKETIO
 	
 	// Socket.IO Networking
-	TWeakObjectPtr<class USocketIOClientComponent> SocketIOClient;
+	TWeakObjectPtr<USocketIOLobbyManager> SocketIOClient;
 	
 	/** Popup login window (Google or temp username) */
 	FReply ShowLoginModal();

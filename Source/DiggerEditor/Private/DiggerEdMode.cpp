@@ -1,19 +1,20 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "DiggerEdMode.h"
+#include "DiggerEditorAccess.h"
 #include "DiggerEdModeToolkit.h"
-#include "EditorModeManager.h"
-#include "Toolkits/ToolkitManager.h"
 #include "DiggerManager.h"
-#include "EngineUtils.h"
+#include "EditorModeManager.h"
 #include "EditorViewportClient.h"
-#include "Engine/Selection.h"
+#include "EngineUtils.h"
 #include "Landscape.h"
 #include "LandscapeDataAccess.h"
 #include "LandscapeEdit.h"
 #include "ScopedTransaction.h"
-#include "Engine/StaticMeshActor.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/Selection.h"
+#include "Engine/StaticMeshActor.h"
+#include "Toolkits/ToolkitManager.h"
 
 #define LOCTEXT_NAMESPACE "DiggerEditorMode"
 
@@ -34,24 +35,19 @@ void FDiggerEdMode::DeselectAllSceneActors()
 void FDiggerEdMode::Enter()
 {
     FEdMode::Enter();
-
     DeselectAllSceneActors();
 
     if (!Toolkit.IsValid())
     {
-        OnDiggerModeChanged.Broadcast(true);
-        bIsDiggerModeCurrentlyActive = true;
+        FDiggerEditorAccess::SetEditorModeActive(true); // ✅ fire broadcast
         Toolkit = MakeShareable(new FDiggerEdModeToolkit);
         Toolkit->Init(Owner->GetToolkitHost());
     }
-}
-
-void FDiggerEdMode::Exit()
+}void FDiggerEdMode::Exit()
 {
     if (Toolkit.IsValid())
     {
-        OnDiggerModeChanged.Broadcast(false);
-        bIsDiggerModeCurrentlyActive = false;
+        FDiggerEditorAccess::SetEditorModeActive(false); // ✅ fire broadcast
         FToolkitManager::Get().CloseToolkit(Toolkit.ToSharedRef());
         Toolkit.Reset();
         static_cast<FDiggerEdModeToolkit*>(Toolkit.Get())->ShutdownNetworking();

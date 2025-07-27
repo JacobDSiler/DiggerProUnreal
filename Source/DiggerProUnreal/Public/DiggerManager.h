@@ -147,6 +147,8 @@ public:
     FIntVector FindNearestSurfaceVoxel(USparseVoxelGrid* VoxelGrid, FIntVector IntVector, int SurfaceSearchRadius);
     FIslandMeshData ExtractAndGenerateIslandMesh(const FVector& IslandCenter);
     void SaveIslandData(AIslandActor* IslandActor, const FIslandMeshData& MeshData);
+    void OnConvertToPhysicsActorClicked();
+    void OnRemoveIslandClicked();
     void ConvertIslandAtPositionToPhysicsObject(const FVector& Vector);
     void ConvertIslandAtPositionToStaticMesh(const FVector& Vector);
     void ConvertIslandAtPositionToActor(const FVector& IslandCenter, bool bEnablePhysics, FIntVector ReferenceVoxel);
@@ -280,6 +282,8 @@ public:
 
     UFUNCTION(CallInEditor, Category="Digger Brush|Actions")
     void ApplyBrushInEditor(bool bDig);
+    void RemoveIslandAtPosition(const FVector& IslandCenter, const FIntVector& ReferenceVoxel);
+
 
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
     bool EditorbUseAdvancedCubeBrush;

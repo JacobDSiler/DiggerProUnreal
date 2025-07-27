@@ -1,3 +1,18 @@
 #include "DiggerEditorAccess.h"
 
-TFunction<bool()> FDiggerEditorAccess::IsDiggerEditorModeActive = nullptr;
+FOnDiggerEditorModeChanged FDiggerEditorAccess::OnEditorModeChanged;
+static bool GDiggerModeActive = false;
+
+bool FDiggerEditorAccess::IsDiggerModeActive()
+{
+	return GDiggerModeActive;
+}
+
+void FDiggerEditorAccess::SetEditorModeActive(bool bActive)
+{
+	if (GDiggerModeActive != bActive)
+	{
+		GDiggerModeActive = bActive;
+		OnEditorModeChanged.Broadcast(bActive);
+	}
+}

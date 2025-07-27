@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "SelectableBase.h"
-#include "LightBrushTypes.h" // Your ELightBrushType enum
+#include "FLightBrushTypes.h"
 #include "DynamicLightActor.generated.h"
 
 UCLASS()
@@ -13,34 +13,39 @@ class DIGGERPROUNREAL_API ADynamicLightActor : public ASelectableBase
 public:
 	ADynamicLightActor();
 
-	// Initializes light from a brush stroke
 	void InitializeFromBrush(const struct FBrushStroke& BrushStroke);
-
-	// Used to rebuild from saved data
 	void InitializeFromSavedData(const struct FSavedLightData& SavedData);
-
-	// Light data
-	UPROPERTY(VisibleAnywhere)
-	ELightBrushType LightType;
-
-	UPROPERTY(VisibleAnywhere)
-	FLinearColor LightColor;
-
-	UPROPERTY(VisibleAnywhere)
-	float Intensity;
-
-	UPROPERTY(VisibleAnywhere)
-	float Radius;
-
-	UPROPERTY(VisibleAnywhere)
-	float Falloff;
-
-	UPROPERTY(VisibleAnywhere)
-	float Angle;
 
 protected:
 	virtual void OnConstruction(const FTransform& Transform) override;
 
 private:
 	void CreateLightComponent();
+	void SetupEditorSprite();
+
+	UPROPERTY()
+	ELightBrushType LightType;
+
+	UPROPERTY()
+	FLinearColor LightColor;
+
+	UPROPERTY()
+	float Intensity;
+
+	UPROPERTY()
+	float Radius;
+
+	UPROPERTY()
+	float Falloff;
+
+	UPROPERTY()
+	float Angle;
+
+	UPROPERTY(Transient)
+	class ULightComponent* LightComponent;
+
+#if WITH_EDITORONLY_DATA
+	UPROPERTY(Transient)
+	class UBillboardComponent* SpriteComponent;
+#endif
 };

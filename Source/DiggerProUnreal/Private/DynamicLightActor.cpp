@@ -2,21 +2,19 @@
 #include "Components/PointLightComponent.h"
 #include "Components/SpotLightComponent.h"
 #include "Components/DirectionalLightComponent.h"
-#include "Engine/World.h"
-#include "BrushStroke.h" // Your brush stroke struct
+#include "Components/SceneComponent.h"
+#include "Components/BillboardComponent.h"
+#include "UObject/ConstructorHelpers.h"
+#include "FBrushStroke.h"
+#include "FLightBrushTypes.h"
+#include "FSavedLightData.h"
 
 ADynamicLightActor::ADynamicLightActor()
 {
-    bIsEditorOnlyActor = true;
     PrimaryActorTick.bCanEverTick = false;
+    bIsEditorOnlyActor = true;
 
-    // default values
-    LightType = ELightBrushType::Point;
-    LightColor = FLinearColor::White;
-    Intensity = 1000.0f;
-    Radius = 300.0f;
-    Falloff = 500.0f;
-    Angle = 45.0f;
+    RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 }
 
 void ADynamicLightActor::InitializeFromBrush(const FBrushStroke& BrushStroke)
@@ -56,52 +54,98 @@ void ADynamicLightActor::OnConstruction(const FTransform& Transform)
 
 void ADynamicLightActor::CreateLightComponent()
 {
-    ULightComponent* LightComp = nullptr;
-
-    // Clear existing components
-    TArray<UActorComponent*> Components = GetComponents().Array();
-    for (UActorComponent* Comp : Components)
+    if (LightComponent)
     {
-        if (Cast<ULightComponent>(Comp))
-        {
-            Comp->DestroyComponent();
-        }
+        LightComponent->DestroyComponent();
+        LightComponent = nullptr;
     }
 
     switch (LightType)
     {
         case ELightBrushType::Point:
         {
-            UPointLightComponent* PointComp = NewObject<UPointLightComponent>(this);
-            PointComp->RegisterComponent();
-            PointComp->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
-            PointComp->SetIntensity(Intensity);
-            PointComp->SetAttenuationRadius(Falloff);
-            PointComp->SetSourceRadius(Radius);
-            PointComp->SetLightColor(LightColor);
+            UPointLightComponent* PointComp = NewObject<UPointLightComponent>(this, TEXT("PointLight"));
+            PointComp->SetIntensity(8000.f);               // Bright enough
+            PointComp->SetAttenuationRadius(1000.f);       // Covers a wide area
+            PointComp->SetSourceRadius(25.f);              // Softens shadows
+            PointComp->SetLightColor(FLinearColor::White);
+            PointComp->Mobility = EComponentMobility::Movable;
+            PointComp->SetVisibility(true);
+            PointComp->bAffectsWorld = true;
+            PointComp->CastShadows = true;
+            PointComp->bUseInverseSquaredFalloff = true;
+            LightComponent = PointComp;
             break;
         }
         case ELightBrushType::Spot:
         {
-            USpotLightComponent* SpotComp = NewObject<USpotLightComponent>(this);
+            USpotLightComponent* SpotComp = NewObject<USpotLightComponent>(this, TEXT("SpotLight"));
             SpotComp->RegisterComponent();
-            SpotComp->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+            SpotComp->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
+            SpotComp->SetVisibility(true);
+            SpotComp->Mobility = EComponentMobility::Movable;SpotComp->bAffectsWorld = true;
             SpotComp->SetIntensity(Intensity);
             SpotComp->SetAttenuationRadius(Falloff);
             SpotComp->SetSourceRadius(Radius);
             SpotComp->SetLightColor(LightColor);
-            SpotComp->SetOuterConeAngle(Angle);
-            SpotComp->SetInnerConeAngle(FMath::Max(Angle - 15.0f, 5.0f));
+            //SpotComp->SetOuterConeAngle(Angle);
+                SpotComp->SetOuterConeAngle(40.f);
+                SpotComp->SetInnerConeAngle(25.f);
+
+            //SpotComp->SetInnerConeAngle(FMath::Max(Angle - 15.0f, 5.0f));
+            LightComponent = SpotComp;
             break;
         }
         case ELightBrushType::Directional:
         {
-            UDirectionalLightComponent* DirComp = NewObject<UDirectionalLightComponent>(this);
+            UDirectionalLightComponent* DirComp = NewObject<UDirectionalLightComponent>(this, TEXT("DirectionalLight"));
             DirComp->RegisterComponent();
-            DirComp->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+            DirComp->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
+            DirComp->SetVisibility(true);
+            DirComp->Mobility = EComponentMobility::Movable;
+            DirComp->bAffectsWorld = true;
             DirComp->SetIntensity(Intensity);
             DirComp->SetLightColor(LightColor);
+                
+            LightComponent = DirComp;
             break;
         }
     }
+
+#if WITH_EDITORONLY_DATA
+    SetupEditorSprite();
+#endif
+}
+
+void ADynamicLightActor::SetupEditorSprite()
+{
+    if (SpriteComponent)
+    {
+        SpriteComponent->DestroyComponent();
+        SpriteComponent = nullptr;
+    }
+
+    FString IconPath;
+    switch (LightType)
+    {
+        case ELightBrushType::Point:
+            IconPath = TEXT("/Engine/EditorResources/PointLightIcon"); break;
+        case ELightBrushType::Spot:
+            IconPath = TEXT("/Engine/EditorResources/SpotLightIcon"); break;
+        case ELightBrushType::Directional:
+            IconPath = TEXT("/Engine/EditorResources/DirectionalLightIcon"); break;
+        default:
+            IconPath = TEXT("/Engine/EditorResources/LightIcon"); break;
+    }
+
+    UTexture2D* Sprite = LoadObject<UTexture2D>(nullptr, *IconPath);
+    if (!Sprite) return;
+
+    SpriteComponent = NewObject<UBillboardComponent>(this, TEXT("EditorLightSprite"));
+    SpriteComponent->SetSprite(Sprite);
+    SpriteComponent->SetupAttachment(RootComponent);
+    SpriteComponent->SetHiddenInGame(true);
+    SpriteComponent->bIsScreenSizeScaled = true;
+    SpriteComponent->bIsEditorOnly = true;
+    SpriteComponent->RegisterComponent();
 }

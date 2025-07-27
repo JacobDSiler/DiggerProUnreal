@@ -1,16 +1,20 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "FLightBrushTypes.h"
+#include "Delegates/Delegate.h"
+
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnDiggerEditorModeChanged, bool /* bActive */);
 
 class DIGGERPROUNREAL_API FDiggerEditorAccess
 {
 public:
-	// This function pointer is set by DiggerEditor at runtime
-	static TFunction<bool()> IsDiggerEditorModeActive;
+	// Exposed delegate SelectableBase will bind to
+	static FOnDiggerEditorModeChanged OnEditorModeChanged;
 
-	// This is what other modules (like SelectableBase) call
-	static bool IsEditorModeActive()
-	{
-		return IsDiggerEditorModeActive ? IsDiggerEditorModeActive() : false;
-	}
+	// For SelectableBase to query current state
+	static bool IsDiggerModeActive();
+
+	// For DiggerEditor module to set current state
+	static void SetEditorModeActive(bool bActive);
 };

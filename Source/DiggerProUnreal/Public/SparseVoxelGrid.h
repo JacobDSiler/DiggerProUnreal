@@ -100,6 +100,9 @@ public:
 		this->ParentChunkCoordinates = NewParentChunkPosition;
 	}
 
+
+	UFUNCTION(BlueprintCallable, Category = "Voxel Islands")
+	bool ExtractIslandByVoxel(const FIntVector& LocalVoxelCoords, USparseVoxelGrid*& OutIslandGrid, TArray<FIntVector>& OutIslandVoxels);
 	
 	UFUNCTION(BlueprintCallable, Category = "Voxel")
 	TArray<FIslandData> DetectIslands(float SDFThreshold = 0.0f);

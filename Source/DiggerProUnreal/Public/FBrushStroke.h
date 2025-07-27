@@ -3,7 +3,11 @@
 #include "CoreMinimal.h"
 #include "FLightBrushTypes.h"
 #include "VoxelBrushTypes.h"
+#include "FHoleShape.h"
 #include "FBrushStroke.generated.h"
+
+class UVoxelBrushShape;
+
 
 // Helper function to map brush type to hole shape
 FORCEINLINE EHoleShapeType GetHoleShapeForBrush(EVoxelBrushType BrushType)
@@ -11,6 +15,7 @@ FORCEINLINE EHoleShapeType GetHoleShapeForBrush(EVoxelBrushType BrushType)
     switch (BrushType)
     {
     case EVoxelBrushType::Sphere:
+        return EHoleShapeType::Sphere;
     case EVoxelBrushType::Icosphere:
         return EHoleShapeType::Sphere;
     case EVoxelBrushType::Cube:
@@ -27,7 +32,25 @@ FORCEINLINE EHoleShapeType GetHoleShapeForBrush(EVoxelBrushType BrushType)
         return EHoleShapeType::Pyramid;
     case EVoxelBrushType::Stairs:
         return EHoleShapeType::Stairs;
-        // Add more mappings as needed
+    case EVoxelBrushType::Smooth:
+        return EHoleShapeType::Sphere;
+        break;
+    case EVoxelBrushType::Noise:
+        return EHoleShapeType::Sphere;
+        break;
+    case EVoxelBrushType::Debug:
+        return EHoleShapeType::Sphere;
+        break;
+    case EVoxelBrushType::Custom:
+        return EHoleShapeType::Sphere;
+        break;
+    case EVoxelBrushType::AdvancedCube:
+        return EHoleShapeType::Cube;
+        break;
+    case EVoxelBrushType::Light:
+        return EHoleShapeType::Sphere;
+        break;
+    // Add more mappings as needed
     default:
         return EHoleShapeType::Sphere; // Fallback/default
     }
@@ -137,6 +160,7 @@ struct FBrushStroke
         , bIsFilled(false)
         , WallThickness(1.5f)
         , HoleShape(EHoleShapeType::Sphere)
+        , LightType(ELightBrushType::Point)
         , BrushShape(nullptr)
     {}
 };

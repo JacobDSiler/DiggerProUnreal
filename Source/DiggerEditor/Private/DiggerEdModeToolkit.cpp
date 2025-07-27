@@ -791,6 +791,41 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     }*/
 
     FModeToolkit::Init(InitToolkitHost);
+
+    // Connecting to the DiggerSync Lobby Server
+   /* #if WITH_SOCKETIO
+    if (!SocketIOClient.IsValid())
+    {
+        UWorld* EditorWorld = nullptr;
+    
+    #if WITH_EDITOR
+        if (GEditor)
+        {
+            EditorWorld = GEditor->GetEditorWorldContext().World();
+        }
+    #endif
+    
+        if (EditorWorld)
+        {
+            USocketIOLobbyManager* ClientInstance = NewObject<USocketIOLobbyManager>(EditorWorld);
+            if (ClientInstance)
+            {
+                SocketIOClient = ClientInstance;
+                SocketIOClient->Initialize(EditorWorld);
+                UE_LOG(LogTemp, Log, TEXT("✅ SocketIOClient successfully initialized in editor world"));
+            }
+            else
+            {
+                UE_LOG(LogTemp, Error, TEXT("❌ Failed to create SocketIOLobbyManager instance"));
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("❌ EditorWorld is null — cannot initialize SocketIOClient"));
+        }
+    }
+    #endif
+    */
 }
 
 bool FDiggerEdModeToolkit::CanPaintWithCustomBrush() const
@@ -1981,7 +2016,24 @@ void FDiggerEdModeToolkit::OnConvertToPhysicsActorClicked()
     }
 }
 
+// For removing the selected island from the voxel grid and the island list in the UI
+void FDiggerEdModeToolkit::OnRemoveIslandClicked()
+{
+    if (SelectedIslandIndex != INDEX_NONE && Islands.IsValidIndex(SelectedIslandIndex))
+    {
+        const FIslandData Island = Islands[SelectedIslandIndex];
 
+        ADiggerManager* LocalManager = GetDiggerManager();
+        if (LocalManager)
+        {
+            LocalManager->RemoveIslandVoxels(Island);
+        }
+
+        Islands.RemoveAt(SelectedIslandIndex);
+        SelectedIslandIndex = INDEX_NONE;
+        RebuildIslandGrid();
+    }
+}
 
 //Make Island Section
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
@@ -2069,7 +2121,12 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                     SNew(SButton)
                     .Text(FText::FromString("Remove"))
                     .IsEnabled_Lambda([this]() { return SelectedIslandIndex != INDEX_NONE; })
-                    .OnClicked_Lambda([this]() { /* Remove logic here */ return FReply::Handled(); })
+                    .OnClicked_Lambda([this]()
+                    {
+                        OnRemoveIslandClicked();
+                        return FReply::Handled();
+                    })
+
                 ]
                 + SHorizontalBox::Slot().AutoWidth().Padding(2)
                 [

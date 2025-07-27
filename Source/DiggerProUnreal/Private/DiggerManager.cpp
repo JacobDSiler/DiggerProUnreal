@@ -69,6 +69,7 @@
 #include "Engine/Engine.h"
 
 // Brush Shapes
+#include "DynamicLightActor.h"
 #include "Voxel/BrushShapes/CapsuleBrushShape.h"
 #include "Voxel/BrushShapes/CylinderBrushShape.h"
 #include "Voxel/BrushShapes/IcosphereBrushShape.h"
@@ -94,6 +95,7 @@
 #include "Components/PointLightComponent.h"
 #include "Components/SpotLightComponent.h"
 
+class ADynamicLightActor;
 class Editor;
 class FDiggerEdModeToolkit;
 class FDiggerEdMode;
@@ -128,6 +130,20 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
     BrushStroke.LightColor = EditorBrushLightColor;
     
     // Set light-specific properties if it's a light brush
+    if (EditorBrushType == EVoxelBrushType::Light)
+    {
+        BrushStroke.LightType = EditorBrushLightType;
+        BrushStroke.LightColor = EditorBrushLightColor;
+
+        UE_LOG(LogTemp, Warning, TEXT("Light brush setup: LightType = %d, Color = %s"),
+            (int32)BrushStroke.LightType,
+            *BrushStroke.LightColor.ToString());
+
+        ApplyLightBrushInEditor(BrushStroke);
+        return;
+    }
+
+    
     if (EditorBrushType == EVoxelBrushType::Light)
     {
         // Default fallback
@@ -184,6 +200,58 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
     // Update islands for the UI/toolkit
     TArray<FIslandData> DetectedIslands = DetectUnifiedIslands();
 }
+
+void ADiggerManager::RemoveIslandAtPosition(const FVector& IslandCenter, const FIntVector& ReferenceVoxel)
+{
+    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] RemoveIslandAtPosition called at %s"), *IslandCenter.ToString());
+
+    // Guard 1: Reference voxel must be valid
+    if (!ensure(!ReferenceVoxel.IsZero()))
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] No reference voxel provided."));
+        return;
+    }
+
+    FIntVector ChunkCoords, LocalVoxel;
+    FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(ReferenceVoxel, ChunkCoords, LocalVoxel);
+
+    // Guard 2: Chunk must exist and be valid
+    UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
+    if (!ChunkPtr || !IsValid(*ChunkPtr))
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Invalid or missing chunk at coords %s"), *ChunkCoords.ToString());
+        return;
+    }
+
+    UVoxelChunk* Chunk = *ChunkPtr;
+
+    // Guard 3: Grid must exist and be valid
+    USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
+    if (!IsValid(Grid))
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Invalid SparseVoxelGrid in chunk."));
+        return;
+    }
+
+    // Guard 4: Attempt island extraction
+    USparseVoxelGrid* ExtractedIsland = nullptr;
+    TArray<FIntVector> ExtractedVoxels;
+
+    if (!Grid->ExtractIslandByVoxel(LocalVoxel, ExtractedIsland, ExtractedVoxels) || !IsValid(ExtractedIsland) || ExtractedVoxels.IsEmpty())
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Failed to extract island at voxel %s"), *LocalVoxel.ToString());
+        return;
+    }
+
+    // Safe voxel removal (encapsulated)
+    Grid->RemoveVoxels(ExtractedVoxels);
+    Chunk->MarkDirty();
+
+    UE_LOG(LogTemp, Display, TEXT("[DiggerPro] Successfully removed %d voxels at %s."), ExtractedVoxels.Num(), *IslandCenter.ToString());
+}
+
+
+
 
 void ADiggerManager::ApplyLightBrushInEditor(const FBrushStroke& BrushStroke)
 {
@@ -294,82 +362,31 @@ ADiggerManager::ADiggerManager()
 
 void ADiggerManager::SpawnLight(const FBrushStroke& BrushStroke)
 {
-    if (!GetWorld()) return;
-
-    UE_LOG(LogTemp, Warning, TEXT("SpawnLight received LightType: %d"), (int32)BrushStroke.LightType);
-
-    
-    FVector FinalPosition = BrushStroke.BrushPosition + BrushStroke.BrushOffset;
-    FRotator Rotation = BrushStroke.BrushRotation;
-    AActor* LightActor = nullptr;
-
-    switch (BrushStroke.LightType)
+    if (!GetWorld())
     {
-        case ELightBrushType::Point:
-        {
-            APointLight* Light = GetWorld()->SpawnActor<APointLight>(APointLight::StaticClass(), FinalPosition, Rotation);
-            if (Light)
-            {
-                auto* Comp = Cast<UPointLightComponent>(Light->GetLightComponent());
-                if (Comp)
-                {
-                    Comp->SetIntensity(BrushStroke.BrushStrength);
-                    Comp->SetAttenuationRadius(BrushStroke.BrushFalloff);
-                    Comp->SetSourceRadius(BrushStroke.BrushRadius);
-                    Comp->SetLightColor(BrushStroke.LightColor);
-                }
-                LightActor = Light;
-            }
-            break;
-        }
-
-        case ELightBrushType::Spot:
-        {
-            ASpotLight* Light = GetWorld()->SpawnActor<ASpotLight>(ASpotLight::StaticClass(), FinalPosition, Rotation);
-            if (Light)
-            {
-                auto* Comp = Cast<USpotLightComponent>(Light->GetLightComponent());
-                if (Comp)
-                {
-                    Comp->SetIntensity(BrushStroke.BrushStrength);
-                    Comp->SetAttenuationRadius(BrushStroke.BrushFalloff);
-                    Comp->SetSourceRadius(BrushStroke.BrushRadius);
-                    Comp->SetLightColor(BrushStroke.LightColor);
-                    Comp->SetOuterConeAngle(BrushStroke.BrushAngle);
-                    Comp->SetInnerConeAngle(FMath::Max(BrushStroke.BrushAngle - 15.0f, 5.0f));
-                }
-                LightActor = Light;
-            }
-            break;
-        }
-
-    case ELightBrushType::Directional:
-        {
-            ADirectionalLight* Light = GetWorld()->SpawnActor<ADirectionalLight>(ADirectionalLight::StaticClass(), FinalPosition, Rotation);
-            if (Light)
-            {
-                auto* Comp = Cast<UDirectionalLightComponent>(Light->GetLightComponent());
-                if (Comp)
-                {
-                    Comp->SetIntensity(BrushStroke.BrushStrength);
-                    Comp->SetLightColor(BrushStroke.LightColor);
-                }
-                LightActor = Light;
-            }
-            break;
-        }
+        UE_LOG(LogTemp, Error, TEXT("SpawnLight: World is null"));
+        return;
     }
 
-    if (LightActor)
+    FVector FinalPosition = BrushStroke.BrushPosition + BrushStroke.BrushOffset;
+    FRotator Rotation = BrushStroke.BrushRotation;
+
+    ADynamicLightActor* Light = GetWorld()->SpawnActor<ADynamicLightActor>(
+        ADynamicLightActor::StaticClass(), FinalPosition, Rotation);
+
+    if (Light)
     {
-        UE_LOG(LogTemp, Warning, TEXT("Successfully spawned light of type %d"), (int32)BrushStroke.LightType);
-        SpawnedLights.Add(LightActor);
+        Light->InitializeFromBrush(BrushStroke);
+        SpawnedLights.Add(Light);
+
+        UE_LOG(LogTemp, Warning, TEXT("✅ Successfully spawned dynamic light actor of type %d"), (int32)BrushStroke.LightType);
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to spawn light actor"));
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to spawn dynamic light actor"));
     }
 }
+
 
 void ADiggerManager::PostInitProperties()
 {
@@ -1287,6 +1304,33 @@ FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMesh(const FVector& Isla
     return Result;
 }
 
+void ADiggerManager::RemoveIslandVoxels(const FIslandData& Island)
+{
+    int32 Removed = 0;
+
+    for (const FIntVector& GlobalVoxel : Island.Voxels)
+    {
+        FIntVector ChunkCoords;
+        FIntVector LocalVoxel;
+
+        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, ChunkCoords, LocalVoxel);
+
+        UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
+        if (!ChunkPtr || !*ChunkPtr) continue;
+
+        USparseVoxelGrid* Grid = (*ChunkPtr)->GetSparseVoxelGrid();
+        if (!Grid) continue;
+
+        if (Grid->RemoveVoxel(LocalVoxel))
+        {
+            Removed++;
+            (*ChunkPtr)->ForceUpdate();
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Removed %d voxels from island"), Removed);
+}
+
 
 void ADiggerManager::SaveIslandData(AIslandActor* IslandActor, const FIslandMeshData& MeshData)
 {
@@ -1327,16 +1371,7 @@ AIslandActor* ADiggerManager::SpawnIslandActorWithMeshData(
     return IslandActor;
 }
 
-void ADiggerManager::ConvertIslandAtPositionToPhysicsObject(const FVector& IslandCenter)
-{
-    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] ConvertIslandAtPositionToPhysicsObject called at %s"), *IslandCenter.ToString());
-    
-    FIslandMeshData MeshData = ExtractAndGenerateIslandMesh(IslandCenter);
-    if (MeshData.bValid)
-    {
-        SpawnIslandActorWithMeshData(IslandCenter, MeshData, /*bEnablePhysics=*/true);
-    }
-}
+
 
 
 void ADiggerManager::ConvertIslandAtPositionToStaticMesh(const FVector& IslandCenter)
@@ -1357,51 +1392,42 @@ void ADiggerManager::ConvertIslandAtPositionToStaticMesh(const FVector& IslandCe
 void ADiggerManager::ConvertIslandAtPositionToActor(const FVector& IslandCenter, bool bEnablePhysics, FIntVector ReferenceVoxel)
 {
     UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] ConvertIslandAtPositionToActor called at %s"), *IslandCenter.ToString());
-    
+
     // Debug: Visualize the search position
     DrawDebugSphere(GetSafeWorld(), IslandCenter, 50.0f, 16, FColor::Red, false, 10.0f, 0, 2.0f);
     DrawDebugString(GetSafeWorld(), IslandCenter + FVector(0, 0, 60.0f), TEXT("Island Search Point"), nullptr, FColor::White, 10.0f);
-    
-    // Find the chunk at this position
-    UVoxelChunk* Chunk = FindOrCreateNearestChunk(IslandCenter);
-    if (!Chunk)
-    {
-        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] No chunk found at position %s"), *IslandCenter.ToString());
-        return;
-    }
-    
-    // Debug: Visualize all voxels in the chunk
-    USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
-    if (!Grid)
-    {
-        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Chunk has no voxel grid"));
-        return;
-    }
-    
-    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Chunk has %d voxels"), Grid->VoxelData.Num());
-    
-    // If we have a reference voxel, use it directly
+
     if (ReferenceVoxel != FIntVector::ZeroValue)
     {
         UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Using reference voxel: %s"), *ReferenceVoxel.ToString());
-        
-        // Extract the island mesh data using the reference voxel
-        FIslandMeshData MeshData = ExtractAndGenerateIslandMeshFromVoxel(Chunk, ReferenceVoxel);
-        
+
+        // Convert global voxel index to chunk + local voxel
+        FIntVector ChunkCoords, LocalVoxel;
+        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(ReferenceVoxel, ChunkCoords, LocalVoxel);
+
+
+        // Find the chunk containing this voxel
+        UVoxelChunk* Chunk = ChunkMap.FindRef(ChunkCoords);
+        if (!Chunk)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[DiggerPro] No chunk found for chunk coords: %s"), *ChunkCoords.ToString());
+            return;
+        }
+
+        // Extract and generate mesh from this voxel
+        FIslandMeshData MeshData = ExtractAndGenerateIslandMeshFromVoxel(Chunk, LocalVoxel);
         if (MeshData.bValid)
         {
-            // Spawn the island actor
             AIslandActor* IslandActor = SpawnIslandActorWithMeshData(MeshData.MeshOrigin, MeshData, bEnablePhysics);
-            
             if (IslandActor)
             {
                 UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Successfully created island actor at %s"), 
-                    *MeshData.MeshOrigin.ToString());
+                       *MeshData.MeshOrigin.ToString());
             }
             else
             {
                 UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Failed to create island actor at %s"), 
-                    *MeshData.MeshOrigin.ToString());
+                       *MeshData.MeshOrigin.ToString());
             }
         }
         else
@@ -1411,32 +1437,11 @@ void ADiggerManager::ConvertIslandAtPositionToActor(const FVector& IslandCenter,
     }
     else
     {
-        // Fall back to the old method
-        FIslandMeshData MeshData = ExtractAndGenerateIslandMesh(IslandCenter);
-        
-        if (MeshData.bValid)
-        {
-            // Spawn the island actor
-            AIslandActor* IslandActor = SpawnIslandActorWithMeshData(MeshData.MeshOrigin, MeshData, bEnablePhysics);
-            
-            if (IslandActor)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Successfully created island actor at %s"), 
-                    *MeshData.MeshOrigin.ToString());
-            }
-            else
-            {
-                UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Failed to create island actor at %s"), 
-                    *MeshData.MeshOrigin.ToString());
-            }
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] ConvertIslandAtPositionToActor called with invalid mesh data at %s"), 
-                *IslandCenter.ToString());
-        }
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] No reference voxel provided; fallback mode not yet implemented."));
+        // Optional: implement ExtractAndGenerateIslandMesh(IslandCenter) fallback logic here
     }
 }
+
 
 // New function to extract island mesh from a specific voxel
 FIslandMeshData ADiggerManager::ExtractIslandByCenter(const FVector& IslandCenter, bool bRemoveAfter, bool bEnablePhysics)
@@ -1540,7 +1545,7 @@ FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMeshFromVoxel(UVoxelChun
     }
     
     FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(Chunk->GetChunkPosition());
-    FVector StartVoxelWorldPos = FVoxelConversion::LocalVoxelToWorld(StartVoxel);
+    FVector StartVoxelWorldPos = FVoxelConversion::ChunkVoxelToWorld(Chunk->GetChunkPosition(), StartVoxel);
     
     // Make a backup of the original grid before extraction
     USparseVoxelGrid* OriginalGridBackup = nullptr;
@@ -1603,31 +1608,6 @@ FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMeshFromVoxel(UVoxelChun
 }
 
 
-void ADiggerManager::RemoveIslandVoxels(const FIslandData& Island)
-{
-    int32 Removed = 0;
-
-    for (const FIntVector& GlobalVoxel : Island.Voxels)
-    {
-        FIntVector ChunkCoords;
-        FIntVector LocalVoxel;
-
-        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, ChunkCoords, LocalVoxel);
-
-        UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
-        if (!ChunkPtr || !*ChunkPtr) continue;
-
-        USparseVoxelGrid* Grid = (*ChunkPtr)->GetSparseVoxelGrid();
-        if (!Grid) continue;
-
-        if (Grid->RemoveVoxel(LocalVoxel))
-        {
-            Removed++;
-        }
-    }
-
-    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Removed %d voxels from island"), Removed);
-}
 
 
 void ADiggerManager::ClearAllIslandActors()
@@ -2840,16 +2820,22 @@ UVoxelChunk* ADiggerManager::FindOrCreateNearestChunk(const FVector& Position)
     // Find nearest chunk if no exact match found
     UVoxelChunk* NearestChunk = nullptr;
     float MinDistance = FLT_MAX;
+
     for (auto& Entry : ChunkMap)
     {
-        FVector WorldPos = FVoxelConversion::ChunkToWorld(NearestChunk->GetChunkPosition());
+        UVoxelChunk* Chunk = Entry.Value;
+        if (!Chunk) continue;
+
+        FVector WorldPos = FVoxelConversion::ChunkToWorld(Chunk->GetChunkPosition());
         float Distance = FVector::Dist(Position, WorldPos);
+
         if (Distance < MinDistance)
         {
             MinDistance = Distance;
-            NearestChunk = Entry.Value;
+            NearestChunk = Chunk;
         }
     }
+
 
     // If no nearby chunk is found, create a new one
     if (!NearestChunk)
@@ -2893,6 +2879,7 @@ UVoxelChunk* ADiggerManager::FindNearestChunk(const FVector& Position)
             NearestChunk = Entry.Value;
         }
     }
+
 
     return NearestChunk;
 }

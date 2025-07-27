@@ -1,5 +1,6 @@
 // SelectableBase.cpp
 #include "SelectableBase.h"
+#include "DiggerEditorAccess.h"
 #if WITH_EDITOR
 #include "DiggerEdMode.h"
 #endif
@@ -28,10 +29,11 @@ void ASelectableBase::BeginPlay()
         BindToDiggerModeEvents();
         
         // Set initial state based on current digger mode
-        UpdateSelectabilityForDiggerMode(FDiggerEdMode::IsDiggerModeActive());
+        UpdateSelectabilityForDiggerMode(FDiggerEditorAccess::IsDiggerModeActive());
     }
 #endif
 }
+
 
 void ASelectableBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
@@ -51,7 +53,7 @@ void ASelectableBase::PostActorCreated()
     BindToDiggerModeEvents();
     
     // Set initial state based on current digger mode
-    UpdateSelectabilityForDiggerMode(FDiggerEdMode::IsDiggerModeActive());
+    UpdateSelectabilityForDiggerMode(FDiggerEditorAccess::IsDiggerModeActive());
 }
 
 void ASelectableBase::PostLoad()
@@ -65,7 +67,7 @@ void ASelectableBase::PostLoad()
     BindToDiggerModeEvents();
     
     // Set initial state based on current digger mode
-    UpdateSelectabilityForDiggerMode(FDiggerEdMode::IsDiggerModeActive());
+    UpdateSelectabilityForDiggerMode(FDiggerEditorAccess::IsDiggerModeActive());
 }
 #endif
 
@@ -96,7 +98,7 @@ void ASelectableBase::BindToDiggerModeEvents()
     UnbindFromDiggerModeEvents();
     
     // Bind to the static delegate
-    FDiggerEdMode::OnDiggerModeChanged.AddUObject(this, &ASelectableBase::OnDiggerModeStateChanged);
+    FDiggerEditorAccess::OnEditorModeChanged.AddUObject(this, &ASelectableBase::OnDiggerModeStateChanged);
 #endif
 }
 
@@ -104,7 +106,7 @@ void ASelectableBase::UnbindFromDiggerModeEvents()
 {
 #if WITH_EDITOR
     // Unbind from the static delegate
-    FDiggerEdMode::OnDiggerModeChanged.RemoveAll(this);
+    FDiggerEditorAccess::OnEditorModeChanged.RemoveAll(this);
 #endif
 }
 
