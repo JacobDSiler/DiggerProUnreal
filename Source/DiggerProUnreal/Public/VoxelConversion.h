@@ -85,10 +85,12 @@ static FIntVector WorldToChunk(const FVector& WorldPos)
 {
     const FVector LocalizedPos = WorldPos - Origin;
 
-    // Use FloorToInt so chunk boundaries line up exactly with chunk min corners
-    const int32 X = FMath::FloorToInt(LocalizedPos.X / ChunkWorldSize);
-    const int32 Y = FMath::FloorToInt(LocalizedPos.Y / ChunkWorldSize);
-    const int32 Z = FMath::FloorToInt(LocalizedPos.Z / ChunkWorldSize);
+    // Use symmetric rounding so negative coordinates map the same way as
+    // positive values. This matches the behaviour prior to the flooring
+    // change and ensures brushes update neighboring chunks correctly.
+    const int32 X = FMath::RoundToInt(LocalizedPos.X / ChunkWorldSize);
+    const int32 Y = FMath::RoundToInt(LocalizedPos.Y / ChunkWorldSize);
+    const int32 Z = FMath::RoundToInt(LocalizedPos.Z / ChunkWorldSize);
 
     return FIntVector(X, Y, Z);
 }
@@ -101,11 +103,12 @@ static FIntVector WorldToGlobalVoxel_CenterAligned(const FVector& WorldPos)
 {
     const FVector LocalizedPos = WorldPos - Origin;
 
-    // Floor to ensure voxel indices are consistent across chunk boundaries
+    // Round so that negative positions align symmetrically with positive ones
+    // when computing which voxel a world position belongs to.
     return FIntVector(
-        FMath::FloorToInt(LocalizedPos.X / LocalVoxelSize),
-        FMath::FloorToInt(LocalizedPos.Y / LocalVoxelSize),
-        FMath::FloorToInt(LocalizedPos.Z / LocalVoxelSize)
+        FMath::RoundToInt(LocalizedPos.X / LocalVoxelSize),
+        FMath::RoundToInt(LocalizedPos.Y / LocalVoxelSize),
+        FMath::RoundToInt(LocalizedPos.Z / LocalVoxelSize)
     );
 }
 
