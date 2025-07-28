@@ -84,12 +84,12 @@ struct FVoxelConversion
 static FIntVector WorldToChunk(const FVector& WorldPos)
 {
     const FVector LocalizedPos = WorldPos - Origin;
-    
-    // KEEP RoundToInt since you've verified this works visually
-    const int32 X = FMath::RoundToInt(LocalizedPos.X / ChunkWorldSize);
-    const int32 Y = FMath::RoundToInt(LocalizedPos.Y / ChunkWorldSize);
-    const int32 Z = FMath::RoundToInt(LocalizedPos.Z / ChunkWorldSize);
-    
+
+    // Use FloorToInt so chunk boundaries line up exactly with chunk min corners
+    const int32 X = FMath::FloorToInt(LocalizedPos.X / ChunkWorldSize);
+    const int32 Y = FMath::FloorToInt(LocalizedPos.Y / ChunkWorldSize);
+    const int32 Z = FMath::FloorToInt(LocalizedPos.Z / ChunkWorldSize);
+
     return FIntVector(X, Y, Z);
 }
 
@@ -100,12 +100,12 @@ static FIntVector WorldToChunk(const FVector& WorldPos)
 static FIntVector WorldToGlobalVoxel_CenterAligned(const FVector& WorldPos)
 {
     const FVector LocalizedPos = WorldPos - Origin;
-    
-    // Use RoundToInt to match your chunk alignment method
+
+    // Floor to ensure voxel indices are consistent across chunk boundaries
     return FIntVector(
-        FMath::RoundToInt(LocalizedPos.X / LocalVoxelSize),
-        FMath::RoundToInt(LocalizedPos.Y / LocalVoxelSize),
-        FMath::RoundToInt(LocalizedPos.Z / LocalVoxelSize)
+        FMath::FloorToInt(LocalizedPos.X / LocalVoxelSize),
+        FMath::FloorToInt(LocalizedPos.Y / LocalVoxelSize),
+        FMath::FloorToInt(LocalizedPos.Z / LocalVoxelSize)
     );
 }
 
