@@ -1623,6 +1623,7 @@ void ADiggerManager::RemoveIslandVoxels(const FIslandData& Island)
         if (Grid->RemoveVoxel(LocalVoxel))
         {
             Removed++;
+            (*ChunkPtr)->MarkDirty();
         }
     }
 

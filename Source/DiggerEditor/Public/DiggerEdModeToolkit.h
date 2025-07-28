@@ -243,7 +243,8 @@ private:
 	TSharedRef<SWidget> MakeRotationRow(const FText& Label, float& Value);
 	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, double& Value);
 	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, float& Value);
-	void OnConvertToPhysicsActorClicked();
+        void OnConvertToPhysicsActorClicked();
+        void OnRemoveIslandClicked();
 	TSharedRef<SWidget> MakeIslandsSection();
 
 	TSharedRef<SWidget> MakeLabeledSliderRow(

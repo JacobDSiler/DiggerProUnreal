@@ -1981,6 +1981,24 @@ void FDiggerEdModeToolkit::OnConvertToPhysicsActorClicked()
     }
 }
 
+void FDiggerEdModeToolkit::OnRemoveIslandClicked()
+{
+    if (SelectedIslandIndex != INDEX_NONE && Islands.IsValidIndex(SelectedIslandIndex))
+    {
+        const FIslandData Island = Islands[SelectedIslandIndex];
+
+        ADiggerManager* LocalManager = GetDiggerManager();
+        if (LocalManager)
+        {
+            LocalManager->RemoveIslandVoxels(Island);
+        }
+
+        Islands.RemoveAt(SelectedIslandIndex);
+        SelectedIslandIndex = INDEX_NONE;
+        RebuildIslandGrid();
+    }
+}
+
 
 
 //Make Island Section
@@ -2069,7 +2087,11 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                     SNew(SButton)
                     .Text(FText::FromString("Remove"))
                     .IsEnabled_Lambda([this]() { return SelectedIslandIndex != INDEX_NONE; })
-                    .OnClicked_Lambda([this]() { /* Remove logic here */ return FReply::Handled(); })
+                    .OnClicked_Lambda([this]()
+                    {
+                        OnRemoveIslandClicked();
+                        return FReply::Handled();
+                    })
                 ]
                 + SHorizontalBox::Slot().AutoWidth().Padding(2)
                 [
