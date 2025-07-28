@@ -136,7 +136,10 @@ public:
                                         FCustomSDFBrush& OutBrush);
 
     TArray<FIslandData> DetectUnifiedIslands();
-    
+    void RemoveUnifiedIslandVoxels(const FIslandData& Island);
+
+    FCriticalSection UpdateChunksCriticalSection;
+
     void DebugBrushPlacement(const FVector& ClickPosition);
     void DebugDrawVoxelAtWorldPosition(const FVector& WorldPosition, FColor BoxColor, float Duration, float Thickness);
 

@@ -2026,7 +2026,7 @@ void FDiggerEdModeToolkit::OnRemoveIslandClicked()
         ADiggerManager* LocalManager = GetDiggerManager();
         if (LocalManager)
         {
-            LocalManager->RemoveIslandVoxels(Island);
+            LocalManager->RemoveUnifiedIslandVoxels(Island);
         }
 
         Islands.RemoveAt(SelectedIslandIndex);
@@ -2063,6 +2063,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                             // Check if there's actually an island at this position
                             if (Manager == GetDiggerManager())
                             {
+                                UE_LOG(LogTemp, Warning, TEXT("Island Reference Voxel: %s"), *Island.ReferenceVoxel.ToString());
                                 // Use the reference voxel if available
                                 if (Island.ReferenceVoxel != FIntVector::ZeroValue)
                                 {
