@@ -1308,7 +1308,23 @@ void ADiggerManager::RemoveIslandVoxels(const FIslandData& Island)
 {
     int32 Removed = 0;
 
-    for (const FIntVector& GlobalVoxel : Island.Voxels)
+    static const FIntVector NeighborDirs[] = {
+        {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}
+    };
+
+    TSet<FIntVector> VoxelsToRemove;
+    VoxelsToRemove.Append(Island.Voxels);
+
+    // Include direct neighbors to catch stray voxels that were occasionally left behind
+    for (const FIntVector& Voxel : Island.Voxels)
+    {
+        for (const FIntVector& Dir : NeighborDirs)
+        {
+            VoxelsToRemove.Add(Voxel + Dir);
+        }
+    }
+
+    for (const FIntVector& GlobalVoxel : VoxelsToRemove)
     {
         FIntVector ChunkCoords;
         FIntVector LocalVoxel;
@@ -1360,6 +1376,12 @@ AIslandActor* ADiggerManager::SpawnIslandActorWithMeshData(
     AIslandActor* IslandActor = World->SpawnActor<AIslandActor>(AIslandActor::StaticClass(), SpawnLocation, FRotator::ZeroRotator);
     if (IslandActor && IslandActor->ProcMesh)
     {
+        // Feed the mesh vertices as-is. We attempted to shift the vertices
+        // relative to the spawn location, but this prevented island detection
+        // from working correctly when converting islands to static or physics
+        // actors. Using the original world-space vertices keeps conversion
+        // functionality intact.
+
         IslandActor->ProcMesh->CreateMeshSection_LinearColor(
             0, MeshData.Vertices, MeshData.Triangles, MeshData.Normals, {}, {}, {}, true
         );
