@@ -1360,8 +1360,16 @@ AIslandActor* ADiggerManager::SpawnIslandActorWithMeshData(
     AIslandActor* IslandActor = World->SpawnActor<AIslandActor>(AIslandActor::StaticClass(), SpawnLocation, FRotator::ZeroRotator);
     if (IslandActor && IslandActor->ProcMesh)
     {
+        // Use vertices relative to the spawn location so the mesh is correctly
+        // positioned when the actor is spawned at SpawnLocation
+        TArray<FVector> LocalVertices = MeshData.Vertices;
+        for (FVector& Vertex : LocalVertices)
+        {
+            Vertex -= SpawnLocation;
+        }
+
         IslandActor->ProcMesh->CreateMeshSection_LinearColor(
-            0, MeshData.Vertices, MeshData.Triangles, MeshData.Normals, {}, {}, {}, true
+            0, LocalVertices, MeshData.Triangles, MeshData.Normals, {}, {}, {}, true
         );
         if (bEnablePhysics)
             IslandActor->ApplyPhysics();
