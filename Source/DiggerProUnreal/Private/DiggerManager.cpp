@@ -1360,17 +1360,22 @@ AIslandActor* ADiggerManager::SpawnIslandActorWithMeshData(
     AIslandActor* IslandActor = World->SpawnActor<AIslandActor>(AIslandActor::StaticClass(), SpawnLocation, FRotator::ZeroRotator);
     if (IslandActor && IslandActor->ProcMesh)
     {
-        // Use vertices relative to the spawn location so the mesh is correctly
-        // positioned when the actor is spawned at SpawnLocation
-        TArray<FVector> LocalVertices = MeshData.Vertices;
+                // Feed the mesh vertices as-is. We attempted to shift the vertices
+                // relative to the spawn location, but this prevented island detection
+                // from working correctly when converting islands to static or physics
+                // actors. Using the original world-space vertices keeps conversion
+                // functionality intact.
+                // Use vertices relative to the spawn location so the mesh is correctly
+                // positioned when the actor is spawned at SpawnLocation
+                TArray<FVector> LocalVertices = MeshData.Vertices;
         for (FVector& Vertex : LocalVertices)
         {
             Vertex -= SpawnLocation;
         }
 
-        IslandActor->ProcMesh->CreateMeshSection_LinearColor(
-            0, LocalVertices, MeshData.Triangles, MeshData.Normals, {}, {}, {}, true
-        );
+                IslandActor->ProcMesh->CreateMeshSection_LinearColor(
+                    0, LocalVertices, MeshData.Triangles, MeshData.Normals, {}, {}, {}, true
+                );
         if (bEnablePhysics)
             IslandActor->ApplyPhysics();
         else
@@ -3013,6 +3018,72 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
 
     return Islands;
 }
+
+void ADiggerManager::RemoveUnifiedIslandVoxels(const FIslandData& Island)
+{
+    TMap<FIntVector, TArray<FIntVector>> ChunkBuckets;
+
+    // Step 1: Convert to chunk-local buckets
+    for (const FIntVector& GlobalVoxel : Island.Voxels)
+    {
+        FIntVector ChunkCoords, LocalVoxel;
+        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, ChunkCoords, LocalVoxel);
+        ChunkBuckets.FindOrAdd(ChunkCoords).Add(LocalVoxel);
+    }
+
+    // Step 2: Prepare affected chunks in parallel
+    TArray<FIntVector> ChunkKeys;
+    ChunkBuckets.GetKeys(ChunkKeys);
+
+    TArray<UVoxelChunk*> ChunksToUpdate;
+
+    ParallelFor(ChunkKeys.Num(), [this, &ChunkBuckets, &ChunkKeys, &ChunksToUpdate](int32 Index)
+    {
+        const FIntVector& ChunkCoords = ChunkKeys[Index];
+
+        UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
+        if (!ChunkPtr || !*ChunkPtr) return;
+
+        // Preload chunk for update
+        FScopeLock Lock(&UpdateChunksCriticalSection); // Protect array
+        ChunksToUpdate.Add(*ChunkPtr);
+    });
+
+    // Step 3: Run deletions AFTER parallel prep
+    TArray<FIntVector> DeletedGlobalVoxels;
+
+    for (const FIntVector& GlobalVoxel : Island.Voxels)
+    {
+        FIntVector ChunkCoords, LocalVoxel;
+        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, ChunkCoords, LocalVoxel);
+
+        UVoxelChunk* Chunk = ChunkMap.FindRef(ChunkCoords);
+        if (!Chunk || !Chunk->IsValidLowLevel()) continue;
+
+        USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
+        if (!Grid || !Grid->IsValidLowLevel()) continue;
+
+        if (Grid->RemoveVoxel(LocalVoxel))
+        {
+            DeletedGlobalVoxels.Add(GlobalVoxel); // Cache for diagnostics or wake logic
+        }
+    }
+
+    // Step 4: Mesh updates
+    for (UVoxelChunk* Chunk : ChunksToUpdate)
+    {
+        if (Chunk && Chunk->IsValidLowLevel())
+        {
+            Chunk->GetSparseVoxelGrid()->SetVoxel(FIntVector(0),Chunk->GetSparseVoxelGrid()->GetVoxel(FIntVector(0)),true);
+            Chunk->ForceUpdate();
+        }
+    }
+
+    // Step 5: Debug info
+    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Unified island removal: %d voxels deleted, %d chunks updated"), 
+           DeletedGlobalVoxels.Num(), ChunksToUpdate.Num());
+}
+
 
 
 // In ADiggerManager.cpp

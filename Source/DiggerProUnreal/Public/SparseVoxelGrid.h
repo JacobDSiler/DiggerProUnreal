@@ -106,6 +106,7 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category = "Voxel")
 	TArray<FIslandData> DetectIslands(float SDFThreshold = 0.0f);
+	void RemoveSpecifiedVoxels(const TArray<FIntVector>& LocalVoxels);
 	bool RemoveVoxel(const FIntVector& LocalVoxel);
 
 	UPROPERTY(EditAnywhere, Category="Debug")

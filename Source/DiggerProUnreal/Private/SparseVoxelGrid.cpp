@@ -448,6 +448,8 @@ void USparseVoxelGrid::RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove)
     {
         VoxelData.Remove(Voxel);
     }
+    // Cause a mesh regeneration after batch removal.
+    ParentChunk->ForceUpdate();
 }
 
 
@@ -807,6 +809,18 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
         return Data && Data->SDFValue < SDFThreshold;
     };
 
+    // 26-directional neighbors (includes diagonals)
+    TArray<FIntVector> Directions;
+    for (int32 dx = -1; dx <= 1; ++dx)
+    for (int32 dy = -1; dy <= 1; ++dy)
+    for (int32 dz = -1; dz <= 1; ++dz)
+    {
+        if (dx != 0 || dy != 0 || dz != 0)
+        {
+            Directions.Add(FIntVector(dx, dy, dz));
+        }
+    }
+
     for (const auto& Pair : VoxelData)
     {
         const FIntVector& VoxelCoords = Pair.Key;
@@ -827,13 +841,7 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
             FIntVector Current;
             Queue.Dequeue(Current);
 
-            static const FIntVector Dirs[] = {
-                {1,0,0}, {-1,0,0},
-                {0,1,0}, {0,-1,0},
-                {0,0,1}, {0,0,-1}
-            };
-
-            for (const FIntVector& Dir : Dirs)
+            for (const FIntVector& Dir : Directions)
             {
                 FIntVector Neighbor = Current + Dir;
 
@@ -867,8 +875,30 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
         }
     }
 
+    // Optional: Log any missed solid voxels
+    #if WITH_EDITOR
+    for (const auto& Pair : VoxelData)
+    {
+        const FIntVector& VoxelCoords = Pair.Key;
+        if (IsSolid(VoxelCoords) && !Visited.Contains(VoxelCoords))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[IslandDetection] Missed solid voxel at %s"), *VoxelCoords.ToString());
+        }
+    }
+    #endif
+
     return Islands;
 }
+
+
+void USparseVoxelGrid::RemoveSpecifiedVoxels(const TArray<FIntVector>& LocalVoxels)
+{
+    for (const FIntVector& Voxel : LocalVoxels)
+    {
+        VoxelData.Remove(Voxel);
+    }
+}
+
 
 bool USparseVoxelGrid::RemoveVoxel(const FIntVector& LocalVoxel)
 {
