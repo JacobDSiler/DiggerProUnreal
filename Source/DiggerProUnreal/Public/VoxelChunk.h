@@ -24,7 +24,9 @@ class DIGGERPROUNREAL_API UVoxelChunk : public UObject
 
 public:
     UVoxelChunk();
-
+    
+    void Tick(float DeltaTime);
+    
     // Initialization
     void InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerManager* InDiggerManager);
     void InitializeMeshComponent(UProceduralMeshComponent* MeshComponent);
@@ -92,6 +94,8 @@ public:
 
     // Mesh generation
     void GenerateMesh() const;
+    void GenerateMeshSyncronous() const;
+    void GenerateMesh(bool bIsSyncronous) const;
 
     // Getters
     FIntVector GetChunkPosition() const { return ChunkCoordinates; }

@@ -15,7 +15,7 @@ namespace DiggerDebug
 	constexpr bool Landscape = false;    // For landscape operation related logs
 	constexpr bool VoxelConv = false;    // For Voxel Space Conversion logs
 	constexpr bool Mesh = false;         // For mesh generation and section creation logs
-	constexpr bool Islands = true;      // For island detection and analysis logs
+	constexpr bool Islands = false;      // For island detection and analysis logs
 	constexpr bool Brush = false;         // For brush operations and tool usage logs
 	constexpr bool Context = false;      // For context and state management logs
 	constexpr bool UserConv = false;     // For user input conversion logs

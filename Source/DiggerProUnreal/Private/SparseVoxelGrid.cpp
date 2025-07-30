@@ -9,6 +9,7 @@
 #include "Engine/World.h"
 #include "Misc/FileHelper.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Async/Async.h"
 #include "Serialization/BufferArchive.h"
 
 constexpr float SDF_SOLID = -1.0f; // or whatever your convention is
@@ -261,6 +262,20 @@ float USparseVoxelGrid::GetVoxel(FIntVector Vector)
    return GetVoxel(Vector.X, Vector.Y, Vector.Z);
 }
 
+bool USparseVoxelGrid::IsVoxelSolid(const FIntVector& VoxelIndex) const
+{
+    const FVoxelData* Data = GetVoxelData(VoxelIndex);
+    if (!Data)
+    {
+        // In a sparse grid, missing voxels are typically air
+        // You could also return (FVoxelConversion::SDF_AIR <= 0.0f) if you want to be explicit
+        return false;
+    }
+    
+    // SDF-based solidity: negative values are solid, positive are air
+    return Data->SDFValue <= 0.0f;
+}
+
 
 float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z)
 {
@@ -444,12 +459,45 @@ void USparseVoxelGrid::LogVoxelData() const
 
 void USparseVoxelGrid::RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove)
 {
-    for (const FIntVector& Voxel : VoxelsToRemove)
+    // Lock the voxel data for thread-safe removal
     {
-        VoxelData.Remove(Voxel);
+        FScopeLock Lock(&VoxelDataMutex);
+        for (const FIntVector& Voxel : VoxelsToRemove)
+        {
+            if (DiggerDebug::Voxels || DiggerDebug::Islands)
+            {
+                // Queue debug drawing on game thread
+                AsyncTask(ENamedThreads::GameThread, [this, Voxel]()
+                {
+                    DrawDebugBox(GetWorld(), 
+                        FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkPosition(), Voxel),
+                        FVector(FVoxelConversion::LocalVoxelSize / 2.0f), 
+                        FColor::Red, false, 5.0f);
+                });
+            }
+            
+            VoxelData.Remove(Voxel);
+        }
     }
-    // Cause a mesh regeneration after batch removal.
-    ParentChunk->ForceUpdate();
+
+    // Queue mesh update on game thread
+    if (!IsInGameThread())
+    {
+        AsyncTask(ENamedThreads::GameThread, [WeakThis = MakeWeakObjectPtr(this)]()
+        {
+            if (WeakThis.IsValid() && WeakThis->ParentChunk)
+            {
+                WeakThis->ParentChunk->ForceUpdate();
+            }
+        });
+    }
+    else
+    {
+        if (ParentChunk)
+        {
+            ParentChunk->ForceUpdate();
+        }
+    }
 }
 
 
@@ -893,18 +941,38 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
 
 void USparseVoxelGrid::RemoveSpecifiedVoxels(const TArray<FIntVector>& LocalVoxels)
 {
+    FScopeLock Lock(&VoxelDataMutex);
     for (const FIntVector& Voxel : LocalVoxels)
     {
+        if (DiggerDebug::Voxels || DiggerDebug::Islands)
+        {
+            AsyncTask(ENamedThreads::GameThread, [this, Voxel]()
+            {
+                DrawDebugBox(GetWorld(), 
+                    FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkPosition(), Voxel),
+                    FVector(FVoxelConversion::LocalVoxelSize / 2.0f), 
+                    FColor::Red, false, 5.0f);
+            });
+        }
+        
         VoxelData.Remove(Voxel);
     }
 }
 
-
 bool USparseVoxelGrid::RemoveVoxel(const FIntVector& LocalVoxel)
 {
+    FScopeLock Lock(&VoxelDataMutex);
+    
     if (DiggerDebug::Voxels || DiggerDebug::Islands)
-        DrawDebugBox(GetWorld(), FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkPosition(), LocalVoxel),
-             FVector(FVoxelConversion::LocalVoxelSize / 2.0f), FColor::Red, false, 5.0f);
+    {
+        AsyncTask(ENamedThreads::GameThread, [this, LocalVoxel]()
+        {
+            DrawDebugBox(GetWorld(), 
+                FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkPosition(), LocalVoxel),
+                FVector(FVoxelConversion::LocalVoxelSize / 2.0f), 
+                FColor::Red, false, 5.0f);
+        });
+    }
     
     return VoxelData.Remove(LocalVoxel) > 0;
 }

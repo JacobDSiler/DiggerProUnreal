@@ -2026,7 +2026,7 @@ void FDiggerEdModeToolkit::OnRemoveIslandClicked()
         ADiggerManager* LocalManager = GetDiggerManager();
         if (LocalManager)
         {
-            LocalManager->RemoveUnifiedIslandVoxels(Island);
+            LocalManager->RemoveIslandVoxels(Island);
         }
 
         Islands.RemoveAt(SelectedIslandIndex);

@@ -44,6 +44,11 @@ UVoxelChunk::UVoxelChunk()
 	MarchingCubesGenerator = CreateDefaultSubobject<UMarchingCubes>(TEXT("MarchingCubesGenerator"));
 }
 
+void UVoxelChunk::Tick(float DeltaTime)
+{
+	// Trigger Needed mesh updates.
+	UpdateIfDirty();
+}
 
 
 void UVoxelChunk::SetUniqueSectionIndex() {
@@ -301,13 +306,90 @@ void UVoxelChunk::UpdateIfDirty()
 
 void UVoxelChunk::ForceUpdate()
 {
+	// Ensure we're on the game thread for mesh updates
+	if (!IsInGameThread())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ForceUpdate called from non-game thread, dispatching to game thread"));
+		AsyncTask(ENamedThreads::GameThread, [this]()
+		{
+			if (IsValid(this))
+			{
+				this->ForceUpdate();
+			}
+		});
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("UVoxelChunk::ForceUpdate - Starting mesh regeneration"));
+    
 	// Perform the update (e.g., regenerate the mesh)
-	// Regenerate the mesh only if dirty
-	GenerateMesh();
-		
+	GenerateMeshSyncronous();
+        
 	// Reset the dirty flag
 	bIsDirty = false;
+    
+	UE_LOG(LogTemp, Warning, TEXT("UVoxelChunk::ForceUpdate - Completed"));
 }
+
+
+
+void UVoxelChunk::GenerateMeshSyncronous() const
+{
+    // Verify we're on the game thread
+    if (!IsInGameThread())
+    {
+        UE_LOG(LogTemp, Error, TEXT("GenerateMeshSyncronous called from non-game thread! This will cause issues."));
+        return;
+    }
+
+    if (!SparseVoxelGrid)
+    {
+        UE_LOG(LogTemp, Error, TEXT("SparseVoxelGrid is null!"));
+        return;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("GenerateMeshSyncronous - Starting mesh generation"));
+
+    // --- Island Detection ---
+    TArray<FIslandData> Islands = SparseVoxelGrid->DetectIslands(0.0f);
+    if (Islands.Num() > 0)
+    {
+        if (DiggerDebug::Islands)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Island detection: %d islands found!"), Islands.Num());
+        }
+        for (int32 i = 0; i < Islands.Num(); ++i)
+        {
+            if (DiggerDebug::Islands)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("  Island %d: %d voxels"), i, Islands[i].VoxelCount);
+            }
+        }
+    }
+
+    if (MarchingCubesGenerator == nullptr)
+    {
+        if (DiggerDebug::Mesh)
+        {
+            UE_LOG(LogTemp, Error, TEXT("MarchingCubesGenerator is nullptr in UVoxelChunk::GenerateMeshSyncronous"));
+        }
+        return;
+    }
+
+    // Clear any previous binding to avoid multiple bindings
+    MarchingCubesGenerator->OnMeshReady.Unbind();
+    
+    // Bind the completion callback
+    MarchingCubesGenerator->OnMeshReady.BindLambda([this]()
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Marching cubes mesh generation completed"));
+        this->OnMarchingMeshComplete();
+    });
+
+    UE_LOG(LogTemp, Warning, TEXT("Starting marching cubes generation"));
+    MarchingCubesGenerator->GenerateMeshSyncronous(this);
+}
+
 
 bool UVoxelChunk::SaveChunkData(const FString& FilePath)
 {

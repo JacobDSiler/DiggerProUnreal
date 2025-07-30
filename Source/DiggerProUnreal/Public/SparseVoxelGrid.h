@@ -37,6 +37,8 @@ public:
 
 	// The mutex for voxel data operations.
 	FCriticalSection VoxelDataMutex;
+	
+public:
 
 	void Initialize(UVoxelChunk* ParentChunkReference);
 	void InitializeDiggerManager();
@@ -52,6 +54,7 @@ public:
 	void RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove);
 	
 	float GetVoxel(FIntVector Vector);
+	bool IsVoxelSolid(const FIntVector& VoxelIndex) const;
 	const FVoxelData* GetVoxelData(const FIntVector& Voxel) const;
 	FVoxelData* GetVoxelData(const FIntVector& Voxel);
 

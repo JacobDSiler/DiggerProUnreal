@@ -27,6 +27,7 @@ public:
 
 	// Generate the mesh based on the voxel grid
 	void GenerateMesh(const UVoxelChunk* ChunkPtr);
+	void GenerateMeshSyncronous(const UVoxelChunk* VoxelChunk);
 
 	// Add these members to your MarchingCubes class
 private:
@@ -65,6 +66,15 @@ public:
 		TArray<int32>& OutTriangles,
 		TArray<FVector>& OutNormals
 		// Add TArray<FVector2D>& OutUVs, TArray<FColor>& OutColors, TArray<FProcMeshTangent>& OutTangents if needed
+	);
+
+	void GenerateMeshFromGridSyncronous(
+	USparseVoxelGrid* InVoxelGrid,
+	const FVector& Origin,
+	float VoxelSize,
+	TArray<FVector>& OutVertices,
+	TArray<int32>& OutTriangles,
+	TArray<FVector>& OutNormals
 	);
 	
 	

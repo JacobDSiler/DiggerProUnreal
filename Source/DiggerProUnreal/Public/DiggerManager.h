@@ -156,7 +156,7 @@ public:
     void ConvertIslandAtPositionToStaticMesh(const FVector& Vector);
     void ConvertIslandAtPositionToActor(const FVector& IslandCenter, bool bEnablePhysics, FIntVector ReferenceVoxel);
     FIslandMeshData ExtractIslandByCenter(const FVector& IslandCenter, bool bRemoveAfter, bool bEnablePhysics);
-    FIslandMeshData ExtractAndGenerateIslandMeshFromVoxel(UVoxelChunk* Chunk, const FIntVector& StartVoxel);
+    FIslandMeshData ExtractAndGenerateIslandMeshFromData(UVoxelChunk* Chunk, const FIslandData& IslandData);
     void RemoveIslandVoxels(const FIslandData& Island);
     void ClearAllIslandActors();
     void DestroyIslandActor(AIslandActor* IslandActor);
@@ -469,6 +469,9 @@ public:
 
 private:
     std::mutex ChunkProcessingMutex;
+    // The mutex for Island Removal.
+    FCriticalSection IslandRemovalMutex;
+    
     // Reference to the sparse voxel grid and marching cubes
     UPROPERTY()
     USparseVoxelGrid* SparseVoxelGrid;
