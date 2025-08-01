@@ -5,6 +5,7 @@
 #include "Async/Async.h"
 #include "SIOJsonValue.h"
 #include "SIOJsonObject.h"
+#include "SocketIOFunctionLibrary.h"
 
 USocketIOLobbyManager::USocketIOLobbyManager()
 {
@@ -54,8 +55,8 @@ void USocketIOLobbyManager::Initialize(UWorld* WorldContext)
         SocketIOClient = nullptr;
     }
 
-    // Create new client component
-    SocketIOClient = NewObject<USocketIOClientComponent>(WorldContext);
+    // Create new client component using helper to ensure proper initialization
+    SocketIOClient = USocketIOFunctionLibrary::ConstructSocketIOComponent(WorldContext);
     if (!SocketIOClient)
     {
         UE_LOG(LogTemp, Error, TEXT("%s: Failed to create SocketIOClientComponent"), *FString(__FUNCTION__));
