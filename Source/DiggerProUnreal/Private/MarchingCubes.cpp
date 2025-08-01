@@ -355,6 +355,8 @@ UMarchingCubes::UMarchingCubes(const FObjectInitializer& ObjectInitializer, cons
 	// ... your existing constructor code
 }
 
+
+
 void UMarchingCubes::Initialize(ADiggerManager* InDiggerManager)
 {
 	DiggerManager = InDiggerManager;
@@ -1531,6 +1533,20 @@ void UMarchingCubes::GenerateMeshForIsland(
 		UE_LOG(LogTemp, Warning, TEXT("Island mesh generation returned empty data"));
 	}
 }
+
+void UMarchingCubes::ClearSectionAndRebuildMesh(int32 SectionIndex, FIntVector ChunkCoord)
+{
+	if (!DiggerManager) return;
+
+	// 🔄 Clear mesh section from DiggerManager if it exists
+	if (DiggerManager->ProceduralMesh->GetNumSections() > SectionIndex) {
+		DiggerManager->ProceduralMesh->ClearMeshSection(SectionIndex);
+	}
+
+	// 🎲 Rebuild new mesh for chunk
+	// ---
+}
+
 
 void UMarchingCubes::CreateIslandProceduralMesh(
 	const TArray<FVector>& Vertices,

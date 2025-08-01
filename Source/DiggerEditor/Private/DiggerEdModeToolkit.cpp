@@ -421,7 +421,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     [
         SNew(SBox)
         .Visibility_Lambda([this]() {
-            return (GetCurrentBrushType() == EVoxelBrushType::Cone || GetCurrentBrushType() == EVoxelBrushType::Cylinder) ? EVisibility::Visible : EVisibility::Collapsed;
+            return (GetCurrentBrushType() == EVoxelBrushType::Cone || GetCurrentBrushType() == EVoxelBrushType::Cylinder || GetCurrentBrushType() == EVoxelBrushType::Light) ? EVisibility::Visible : EVisibility::Collapsed;
         })
         [
             MakeLabeledSliderRow(
@@ -707,6 +707,11 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     })
 ]
 
+        // Azgaar's Generators Imports Section
+        + SVerticalBox::Slot().AutoHeight().Padding(8)
+        [
+            MakeAzgaarImporterWidget()
+        ]
 
 
     // --- Build/Export Settings Section (roll-down) ---
@@ -1618,62 +1623,36 @@ void FDiggerEdModeToolkit::CreateLobbyManager(UWorld* WorldContext)
 void FDiggerEdModeToolkit::ConnectToLobbyServer()
 {
 #if WITH_SOCKETIO
-
-    // 1) Grab the editor world
+    // Get the editor world
     UWorld* World = GEditor->GetEditorWorldContext().World();
-    if (World == nullptr)
+    if (!World)
     {
         UE_LOG(LogTemp, Error, TEXT("ConnectToLobbyServer: No valid EditorWorldContext."));
         return;
     }
 
-    // 2) Ensure we have a lobby manager instance in our SharedPtr
+    // Create or reuse the lobby manager with proper outer
     if (!SocketIOLobbyManager)
     {
-        // Choose an Outer so UE GC keeps this alive
-        UObject* Outer = World->GetGameInstance()
-            ? static_cast<UObject*>(World->GetGameInstance())
-            : static_cast<UObject*>(World->GetWorldSettings());
-
-        // Create the UObject and root it
-        USocketIOLobbyManager* RawMgr = NewObject<USocketIOLobbyManager>(Outer);
-        if (RawMgr == nullptr)
+        // Use the world as outer to ensure proper world context
+        SocketIOLobbyManager = NewObject<USocketIOLobbyManager>(World);
+        if (!SocketIOLobbyManager)
         {
-            UE_LOG(LogTemp, Error, TEXT("ConnectToLobbyServer: NewObject<USocketIOLobbyManager>() failed."));
+            UE_LOG(LogTemp, Error, TEXT("ConnectToLobbyServer: Failed to create lobby manager."));
             return;
         }
-        RawMgr->AddToRoot();
 
-        // Wrap in a shared pointer (no deleter – GC will handle destruction)
-//        SocketIOLobbyManager = MakeShareable(RawMgr);
-        UE_LOG(LogTemp, Verbose, TEXT("ConnectToLobbyServer: Lobby manager created and rooted."));
+        UE_LOG(LogTemp, Log, TEXT("ConnectToLobbyServer: Lobby manager created."));
     }
 
-    // 3) If for some reason creation still failed, stop here
-    if (!SocketIOLobbyManager)
-    {
-        UE_LOG(LogTemp, Error, TEXT("ConnectToLobbyServer: Unable to create or retrieve lobby manager."));
-        return;
-    }
-
-    // 4) Only now do we call into the manager
+    // Initialize and connect
     if (SocketIOLobbyManager)
     {
-        if (!SocketIOLobbyManager->IsConnected())
-        {
-            SocketIOLobbyManager->Initialize(World);
-            UE_LOG(LogTemp, Log, TEXT("ConnectToLobbyServer: Attempting Socket.IO connect to NodeJS server..."));
-        }
-        else
-        {
-            UE_LOG(LogTemp, Log, TEXT("ConnectToLobbyServer: Already connected; skipping."));
-        }
+        UE_LOG(LogTemp, Log, TEXT("ConnectToLobbyServer: Initializing connection..."));
+        SocketIOLobbyManager->Initialize(World);
     }
-
 #endif // WITH_SOCKETIO
 }
-
-
 
 
 
@@ -1856,6 +1835,95 @@ void FDiggerEdModeToolkit::OnBrushDebugCheckChanged(ECheckBoxState NewState)
                 0.0f, 1.0f, {0.0f, 0.5f, 1.0f}, 0.0f, 0.01f
             )
         ]*/;
+
+//------------------------------------------------------------------------------
+// Azgaar Cave Importer Section
+//------------------------------------------------------------------------------
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeAzgaarImporterWidget()
+{
+    return SNew(SVerticalBox)
+
+        // Header Button (Fold/Unfold)
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SNew(SButton)
+            .OnClicked_Lambda([this]() -> FReply
+            {
+                bShowAzgaarImporter = !bShowAzgaarImporter;
+                return FReply::Handled();
+            })
+            [
+                SNew(STextBlock)
+                .Text_Lambda([this]()
+                {
+                    return FText::FromString(
+                        bShowAzgaarImporter
+                        ? TEXT("▼ Azgaar Cave Importer")
+                        : TEXT("► Azgaar Cave Importer")
+                    );
+                })
+            ]
+        ]
+
+        // Collapsible Section
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SNew(SVerticalBox)
+            .Visibility_Lambda([this]()
+            {
+                return bShowAzgaarImporter ? EVisibility::Visible : EVisibility::Collapsed;
+            })
+
+            // Import Button
+            + SVerticalBox::Slot().AutoHeight().Padding(2)
+            [
+                SNew(SButton)
+                .OnClicked_Lambda([]() -> FReply
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("[Azgaar Importer] Import button clicked!"));
+                    return FReply::Handled();
+                })
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("Import Azgaar Cave File"))
+                ]
+            ]
+
+            // Simplification Slider
+            + SVerticalBox::Slot().AutoHeight().Padding(2)
+            [
+                SNew(SSlider)
+                .Value(0.5f)
+                .OnValueChanged_Lambda([](float NewValue)
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("[Azgaar Importer] Simplification set to: %f"), NewValue);
+                })
+            ]
+
+            // Height Mode ComboBox (stub)
+            + SVerticalBox::Slot().AutoHeight().Padding(2)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString("Height Mode (Debug Placeholder)"))
+            ]
+
+            // Debug Button
+            + SVerticalBox::Slot().AutoHeight().Padding(2)
+            [
+                SNew(SButton)
+                .OnClicked_Lambda([]() -> FReply
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("[Azgaar Importer] Debug button clicked!"));
+                    return FReply::Handled();
+                })
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("Run Debug Test"))
+                ]
+            ]
+        ];
+}
+
 
 
 

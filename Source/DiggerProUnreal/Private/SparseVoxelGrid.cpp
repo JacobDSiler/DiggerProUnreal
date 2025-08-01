@@ -842,6 +842,79 @@ bool USparseVoxelGrid::ExtractIslandAtPosition(const FVector& WorldPosition, USp
 
 
 
+FIslandData USparseVoxelGrid::DetectIsland(float SDFThreshold, const FIntVector& StartPosition)
+{
+    FIslandData Island;
+    TSet<FIntVector> Visited;
+
+    auto IsSolid = [this, SDFThreshold](const FIntVector& Voxel) -> bool
+    {
+        const FVoxelData* Data = VoxelData.Find(Voxel);
+        return Data && Data->SDFValue < SDFThreshold;
+    };
+
+    if (!IsSolid(StartPosition))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[IslandDetection] Start voxel at %s is not solid — aborting island scan."), *StartPosition.ToString());
+        return Island;
+    }
+
+    // 26-directional neighbors
+    TArray<FIntVector> Directions;
+    for (int32 dx = -1; dx <= 1; ++dx)
+    for (int32 dy = -1; dy <= 1; ++dy)
+    for (int32 dz = -1; dz <= 1; ++dz)
+    {
+        if (dx != 0 || dy != 0 || dz != 0)
+        {
+            Directions.Add(FIntVector(dx, dy, dz));
+        }
+    }
+
+    TArray<FIntVector> IslandVoxels;
+    TQueue<FIntVector> Queue;
+
+    Queue.Enqueue(StartPosition);
+    Visited.Add(StartPosition);
+    IslandVoxels.Add(StartPosition);
+
+    while (!Queue.IsEmpty())
+    {
+        FIntVector Current;
+        Queue.Dequeue(Current);
+
+        for (const FIntVector& Dir : Directions)
+        {
+            FIntVector Neighbor = Current + Dir;
+
+            if (!Visited.Contains(Neighbor) && IsSolid(Neighbor))
+            {
+                Queue.Enqueue(Neighbor);
+                Visited.Add(Neighbor);
+                IslandVoxels.Add(Neighbor);
+            }
+        }
+    }
+
+    // Compute world-space center
+    FVector Center = FVector::ZeroVector;
+    for (const FIntVector& Voxel : IslandVoxels)
+    {
+        Center += FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkPosition(), Voxel);
+    }
+
+    if (IslandVoxels.Num() > 0)
+    {
+        Center /= IslandVoxels.Num();
+
+        Island.Location = Center + DebugRenderOffset;
+        Island.VoxelCount = IslandVoxels.Num();
+        Island.ReferenceVoxel = IslandVoxels[0];
+        Island.Voxels = IslandVoxels;
+    }
+
+    return Island;
+}
 
 
 

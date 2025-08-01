@@ -136,6 +136,7 @@ public:
                                         FCustomSDFBrush& OutBrush);
 
     TArray<FIslandData> DetectUnifiedIslands();
+    FIntVector GetWorldMinChunkCoords() const;
     void RemoveUnifiedIslandVoxels(const FIslandData& Island);
 
     FCriticalSection UpdateChunksCriticalSection;
@@ -145,6 +146,7 @@ public:
 
     void DrawDiagonalDebugVoxels(FIntVector ChunkCoords);
     UStaticMesh* ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName);
+    void UpdateAllDirtyChunks();
     AIslandActor* SpawnIslandActorFromIslandAtPosition(const FVector& IslandCenter, bool bEnablePhysics);
 
     FIntVector FindNearestSurfaceVoxel(USparseVoxelGrid* VoxelGrid, FIntVector IntVector, int SurfaceSearchRadius);
@@ -471,7 +473,8 @@ private:
     std::mutex ChunkProcessingMutex;
     // The mutex for Island Removal.
     FCriticalSection IslandRemovalMutex;
-    
+
+    TArray<FIntVector> GetPossibleOwningChunks(const FIntVector& GlobalIndex);
     // Reference to the sparse voxel grid and marching cubes
     UPROPERTY()
     USparseVoxelGrid* SparseVoxelGrid;

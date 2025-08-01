@@ -136,7 +136,6 @@ public:
 
 private:
 #if WITH_SOCKETIO
-	// Was: TStrongObjectPtr<USocketIOLobbyManager> SocketIOLobbyManager;
 	USocketIOLobbyManager* SocketIOLobbyManager = nullptr;
 #endif
 	
@@ -243,6 +242,9 @@ private:
 	TSharedRef<SWidget> MakeRotationRow(const FText& Label, float& Value);
 	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, double& Value);
 	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, float& Value);
+
+	TSharedRef<SWidget> MakeAzgaarImporterWidget();
+	
 	void OnConvertToPhysicsActorClicked();
 	void OnRemoveIslandClicked();
 	TSharedRef<SWidget> MakeIslandsSection();
@@ -397,6 +399,7 @@ private:
 	bool bEnableNanite = false;
 	float BakeDetail = 1.0f;
 	bool bShowRotation = false;
+	bool bShowAzgaarImporter = false;
 	float BrushLength = 200.0f; // Default value, adjust as needed
 	bool bDebugVoxels = false;
 

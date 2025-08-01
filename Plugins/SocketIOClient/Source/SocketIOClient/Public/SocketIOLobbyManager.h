@@ -1,63 +1,77 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "UObject/NoExportTypes.h"
 #include "SocketIOClientComponent.h"
 #include "SocketIOLobbyManager.generated.h"
 
-UCLASS()
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnLobbyConnected, const FString&, SocketId, const FString&, SessionId);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLobbyDisconnected, TEnumAsByte<ESIOConnectionCloseReason>, Reason);
+
+UCLASS(BlueprintType, Blueprintable)
 class SOCKETIOCLIENT_API USocketIOLobbyManager : public UObject
 {
     GENERATED_BODY()
 
 public:
-    UFUNCTION()
+    USocketIOLobbyManager();
+
+    UFUNCTION(BlueprintCallable, Category = "SocketIO|Lobby")
     void Initialize(UWorld* WorldContext);
 
-    UFUNCTION(BlueprintCallable, Category="Lobby")
+    UFUNCTION(BlueprintCallable, Category = "SocketIO|Lobby")
     bool IsConnected() const;
 
-    UFUNCTION(BlueprintCallable, Category="Lobby")
+    UFUNCTION(BlueprintCallable, Category = "SocketIO|Lobby")
     void CreateLobby(const FString& LobbyName);
 
-    UFUNCTION(BlueprintCallable, Category="Lobby")
+    UFUNCTION(BlueprintCallable, Category = "SocketIO|Lobby")
     void JoinLobby(const FString& LobbyId);
 
-    UFUNCTION(BlueprintCallable, Category="Lobby")
-    void OnConnected(FString SocketId, FString SessionId, bool bIsReconnection); // No const&
+    UFUNCTION(BlueprintCallable, Category = "SocketIO|Lobby")
+    FString GetSocketId() const { return CurrentSocketId; }
 
-    // Similarly for disconnect:
-    UFUNCTION(BlueprintCallable, Category="Lobby")
-    void OnDisconnected(TEnumAsByte<ESIOConnectionCloseReason> Reason); // Not int32
+    UFUNCTION(BlueprintCallable, Category = "SocketIO|Lobby")
+    FString GetSessionId() const { return CurrentSessionId; }
 
+    UPROPERTY(BlueprintAssignable, Category = "SocketIO|Lobby")
+    FOnLobbyConnected OnLobbyConnected;
 
-    UPROPERTY()
+    UPROPERTY(BlueprintAssignable, Category = "SocketIO|Lobby")
+    FOnLobbyDisconnected OnLobbyDisconnected;
+
+protected:
+    UFUNCTION()
+    void HandleConnected(FString SocketId, FString SessionId, bool bReconnected);
+    
+    UFUNCTION()
+    void HandleDisconnected(TEnumAsByte<ESIOConnectionCloseReason> Reason);
+
+    UFUNCTION()
+    void AttemptReconnection();
+    void HandleConnectionError(const FString& ErrorMessage);
+
+private:
+    UPROPERTY(Transient)
     USocketIOClientComponent* SocketIOClient;
 
-    UFUNCTION()
-    void HandleConnected(const FString& SocketId, const FString& SessionId, bool bReconnected);
+    UPROPERTY(Transient)
+    bool bIsConnected;
 
-    // Use int32, not EIOCloseReason
-    UFUNCTION()
-    void HandleDisconnected(int32 Code);
+    UPROPERTY(Transient)
+    bool bIsInitialized;
 
-    bool bIsConnected = false;
-    
-private:
-    // Connection state
-    UPROPERTY()
+    UPROPERTY(Transient)
     FString CurrentSocketId;
-    
-    UPROPERTY()
+
+    UPROPERTY(Transient)
     FString CurrentSessionId;
 
-public:
-    // Delegate declarations
-    DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnLobbyConnectedSignature, FString, SocketId, FString, SessionId);
-    DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLobbyDisconnectedSignature, TEnumAsByte<ESIOConnectionCloseReason>, Reason);
+    UPROPERTY(Transient)
+    int32 ReconnectionAttempts;
 
-    UPROPERTY(BlueprintAssignable)
-    FOnLobbyConnectedSignature OnLobbyConnected;
+    FTimerHandle ReconnectionTimer;
 
-    UPROPERTY(BlueprintAssignable)
-    FOnLobbyDisconnectedSignature OnLobbyDisconnected;
+    void OnConnected(FString SocketId, FString SessionId, bool bIsReconnection);
+    void OnDisconnected(TEnumAsByte<ESIOConnectionCloseReason> Reason);
 };

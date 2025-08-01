@@ -62,6 +62,13 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "SocketIO Events")
 	FSIOCEventSignature OnFail;
 
+	// Add this to ensure proper initialization
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	// Add this method
+	void EnsureNativeClientInitialized();
+	
 
 	/**
 	* Default connection params used on e.g. on begin play. Can be updated and re-used on custom connection.
@@ -476,7 +483,7 @@ public:
 
 	virtual void InitializeComponent() override;
 	virtual void UninitializeComponent() override;
-	virtual void BeginPlay() override;
+//	virtual void BeginPlay() override;
 
 	~USocketIOClientComponent();
 	

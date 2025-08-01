@@ -72,6 +72,9 @@ public:
     void UpdateIfDirty();
     UFUNCTION(BlueprintCallable, Category  =Custom)
     void ForceUpdate();
+    void RefreshSectionMesh();
+    void OnMeshReady(FIntVector Coord, int32 SectionIdx);
+    void ClearAndRebuildSection();
     bool SaveChunkData(const FString& FilePath);
     bool LoadChunkData(const FString& FilePath);
     bool LoadChunkData(const FString& FilePath, bool bOverwrite);

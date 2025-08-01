@@ -331,6 +331,23 @@ void UVoxelChunk::ForceUpdate()
 	UE_LOG(LogTemp, Warning, TEXT("UVoxelChunk::ForceUpdate - Completed"));
 }
 
+void UVoxelChunk::RefreshSectionMesh()
+{
+	UMarchingCubes* Cubes = GetMarchingCubesGenerator();
+	if (Cubes)
+	{
+		FIntVector ChunkCoords = ChunkCoordinates;
+		Cubes->ClearSectionAndRebuildMesh(GetSectionIndex(), ChunkCoords);
+	}
+
+	// Mark self dirty and force rebuild when mesh is ready
+	bIsDirty = true;
+}
+
+void UVoxelChunk::OnMeshReady(FIntVector Coord, int32 SectionIdx)
+{
+		UpdateIfDirty(); // Mesh was just rebuilt, time to lock it in
+}
 
 
 void UVoxelChunk::GenerateMeshSyncronous() const

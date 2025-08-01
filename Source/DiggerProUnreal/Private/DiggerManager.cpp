@@ -618,7 +618,7 @@ void ADiggerManager::SetVoxelAtWorldPosition(const FVector& WorldPos, float Valu
     // Try to get or create the chunk
     if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
     {
-        Chunk->GetSparseVoxelGrid()->SetVoxel(LocalVoxelIndex, Value, true);
+        //Chunk->GetSparseVoxelGrid()->SetVoxel(LocalVoxelIndex, Value, true);
 
         if (DiggerDebug::Space || DiggerDebug::Chunks)
         {
@@ -691,8 +691,8 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
     if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
     {
         //Chunk->GetSparseVoxelGrid()->SetVoxel(FVoxelConversion::WorldToLocalVoxel(ClickPosition), -1.0f, true);
-        SetVoxelAtWorldPosition(ClickPosition, -1.0f);
-        //Chunk->GetSparseVoxelGrid()->RenderVoxels();
+        //SetVoxelAtWorldPosition(ClickPosition, -1.0f);
+        Chunk->GetSparseVoxelGrid()->RenderVoxels();
         //Chunk->GetSparseVoxelGrid()->LogVoxelData();
         //Chunk->DebugDrawChunk();
     }
@@ -1112,6 +1112,27 @@ UStaticMesh* ADiggerManager::ConvertIslandToStaticMesh(const FIslandData& Island
     return NewStaticMesh;
 }
 
+void ADiggerManager::UpdateAllDirtyChunks()
+{
+    if (DiggerDebug::Islands)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Running ADM::UpdateAllDirtyChunks..."));
+    }
+
+    for (const auto& ChunkPair : ChunkMap)
+    {
+        UVoxelChunk* Chunk = ChunkPair.Value;
+        if (Chunk)
+        {
+            Chunk->UpdateIfDirty(); // Only updates if marked dirty
+        }
+    }
+
+    if (DiggerDebug::Islands)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Finished updating dirty chunks."));
+    }
+}
 
 
 FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMesh(const FVector& IslandCenter)
@@ -1305,27 +1326,28 @@ FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMesh(const FVector& Isla
 }
 
 // In ADiggerManager.cpp
-// In ADiggerManager.cpp
 void ADiggerManager::RemoveIslandVoxels(const FIslandData& Island)
 {
-    UE_LOG(LogTemp, Warning, TEXT("Running ADM::RemoveIslandVoxels!"));
-    // Create a structure to track affected chunks and their modifications
+    if (DiggerDebug::Islands)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Running ADM::RemoveIslandVoxels!"));
+    }
+
     struct FChunkModification
     {
         TWeakObjectPtr<UVoxelChunk> Chunk;
-        int32 ModificationCount;
+        TArray<FIntVector> LocalVoxels;
     };
+
     TMap<FIntVector, FChunkModification> AffectedChunks;
-    
+    TSet<FIntVector> DeletedGlobalVoxels;
+
     {
         FScopeLock Lock(&IslandRemovalMutex);
-        
-        // Process all voxels in the island
+
         for (const FIntVector& GlobalVoxel : Island.Voxels)
         {
-            FIntVector ChunkCoords;
-            FIntVector LocalVoxel;
-
+            FIntVector ChunkCoords, LocalVoxel;
             FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, ChunkCoords, LocalVoxel);
 
             UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
@@ -1336,52 +1358,57 @@ void ADiggerManager::RemoveIslandVoxels(const FIslandData& Island)
 
             if (Grid->RemoveVoxel(LocalVoxel))
             {
-                // Track modifications per chunk
-                FChunkModification& ModData = AffectedChunks.FindOrAdd(ChunkCoords);
-                ModData.Chunk = *ChunkPtr;
-                ModData.ModificationCount++;
-                ModData.Chunk->ForceUpdate();
+                AffectedChunks.FindOrAdd(ChunkCoords).Chunk = *ChunkPtr;
+                AffectedChunks[ChunkCoords].LocalVoxels.Add(LocalVoxel);
+                DeletedGlobalVoxels.Add(GlobalVoxel);
             }
         }
     }
 
-    // If we're not on the game thread, queue the updates
+    auto RefreshChunks = [DeletedGlobalVoxels, AffectedChunks, this]()
+    {
+        int32 TotalRemoved = DeletedGlobalVoxels.Num();
+
+        for (const auto& Pair : AffectedChunks)
+        {
+            const TWeakObjectPtr<UVoxelChunk>& ChunkPtr = Pair.Value.Chunk;
+            if (!ChunkPtr.IsValid()) continue;
+
+            USparseVoxelGrid* Grid = ChunkPtr->GetSparseVoxelGrid();
+            if (!Grid) continue;
+
+            // Access one of the deleted voxels to trigger mesh rebuild
+            for (const FIntVector& LocalVoxel : Pair.Value.LocalVoxels)
+            {
+                FVoxelData Dummy;
+                Grid->GetVoxel(LocalVoxel); // Ghost ping for mesh invalidation
+                break; // Only need one
+            }
+            ChunkPtr->RefreshSectionMesh();
+            ChunkPtr->MarkDirty();
+            ChunkPtr->ForceUpdate(); // Single rebuild per chunk
+        }
+
+        if (DiggerDebug::Islands)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Island cleanup: Removed %d voxels across %d chunks"),
+                   TotalRemoved, AffectedChunks.Num());
+        }
+        UpdateAllDirtyChunks();
+    };
+
     if (!IsInGameThread())
     {
-        AsyncTask(ENamedThreads::GameThread, [AffectedChunksPtr = MoveTemp(AffectedChunks)]()
-        {
-            int32 TotalRemoved = 0;
-            
-            // Update all affected chunks
-            for (const auto& ChunkPair : AffectedChunksPtr)
-            {
-                if (ChunkPair.Value.Chunk.IsValid())
-                {
-                    ChunkPair.Value.Chunk->MarkDirty();
-                    TotalRemoved += ChunkPair.Value.ModificationCount;
-                }
-            }
-            
-            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Removed %d voxels from island"), TotalRemoved);
-        });
+        AsyncTask(ENamedThreads::GameThread, MoveTemp(RefreshChunks));
+        UpdateAllDirtyChunks();
     }
     else
     {
-        // If we're already on the game thread, update immediately
-        int32 TotalRemoved = 0;
-        
-        for (const auto& ChunkPair : AffectedChunks)
-        {
-            if (ChunkPair.Value.Chunk.IsValid())
-            {
-                ChunkPair.Value.Chunk->ForceUpdate();
-                TotalRemoved += ChunkPair.Value.ModificationCount;
-            }
-        }
-        
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Removed %d voxels from island"), TotalRemoved);
+        RefreshChunks();
+        UpdateAllDirtyChunks();
     }
 }
+
 
 
 void ADiggerManager::SaveIslandData(AIslandActor* IslandActor, const FIslandMeshData& MeshData)
@@ -2791,14 +2818,16 @@ void ADiggerManager::DebugVoxels()
 
 void ADiggerManager::ProcessDirtyChunks()
 {
-    for (auto& Elem : ChunkMap)
-    {
-        UVoxelChunk* Chunk = Elem.Value;
-        if (Chunk)
-        {
-            Chunk->ForceUpdate();
-        }
-    }
+    // for (auto& Elem : ChunkMap)
+    // {
+    //     UVoxelChunk* Chunk = Elem.Value;
+    //     if (Chunk)
+    //     {
+    //         Chunk->ForceUpdate();
+    //     }
+    // }
+
+    UpdateAllDirtyChunks();
 
     /*if (World)
     {
@@ -3020,6 +3049,53 @@ void ADiggerManager::MarkNearbyChunksDirty(const FVector& CenterPosition, float 
     }
 }
 
+TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
+{
+    // Step 1: Build global voxel map from all chunks
+    TMap<FIntVector, FVoxelData> UnifiedVoxelData;
+
+    for (const auto& Pair : ChunkMap)
+    {
+        UVoxelChunk* Chunk = Pair.Value;
+        if (!Chunk || !Chunk->IsValidLowLevel()) continue;
+
+        USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
+        if (!Grid || !Grid->IsValidLowLevel()) continue;
+
+        FIntVector ChunkCoords = Chunk->GetChunkPosition();
+
+        for (const auto& VoxelPair : Grid->GetAllVoxels())
+        {
+            const FIntVector& LocalIndex = VoxelPair.Key;
+            const FVoxelData& Data = VoxelPair.Value;
+
+            FIntVector GlobalIndex = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(ChunkCoords, LocalIndex);
+            UnifiedVoxelData.Add(GlobalIndex, Data);
+        }
+    }
+
+    // Step 2: Create temporary sparse voxel grid
+    USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
+    TempGrid->SetVoxelData(UnifiedVoxelData);
+
+    // Step 3: Detect islands globally
+    TArray<FIslandData> Islands = TempGrid->DetectIslands(0.0f);
+
+    // Step 4: Broadcast to toolkit
+    OnIslandsDetectionStarted.Broadcast();
+
+    for (const FIslandData& Island : Islands)
+    {
+        OnIslandDetected.Broadcast(Island);
+        UE_LOG(LogTemp, Warning, TEXT("Unified Island Broadcast at %s with %d voxels"),
+            *Island.Location.ToString(), Island.VoxelCount);
+    }
+
+    return Islands;
+}
+
+
+
 
 // Main function: always works in chunk coordinates
 UVoxelChunk* ADiggerManager::GetOrCreateChunkAtChunk(const FIntVector& ChunkCoords)
@@ -3068,104 +3144,44 @@ UVoxelChunk* ADiggerManager::GetOrCreateChunkAtWorld(const FVector& WorldPositio
     return GetOrCreateChunkAtChunk(ChunkCoords);
 }
 
-TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
-{
-    // Step 1: Build global voxel map from all chunks
-    TMap<FIntVector, FVoxelData> UnifiedVoxelData;
-
-    for (const auto& Pair : ChunkMap)
-    {
-        UVoxelChunk* Chunk = Pair.Value;
-        if (!Chunk || !Chunk->IsValidLowLevel()) continue;
-
-        USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
-        if (!Grid || !Grid->IsValidLowLevel()) continue;
-
-        FIntVector ChunkCoords = Chunk->GetChunkPosition();
-
-        for (const auto& VoxelPair : Grid->GetAllVoxels())
-        {
-            const FIntVector& LocalIndex = VoxelPair.Key;
-            const FVoxelData& Data = VoxelPair.Value;
-
-            FIntVector GlobalIndex = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(ChunkCoords, LocalIndex);
-            UnifiedVoxelData.Add(GlobalIndex, Data);
-        }
-    }
-
-    // Step 2: Create temporary sparse voxel grid
-    USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
-    TempGrid->SetVoxelData(UnifiedVoxelData);
-
-    // Step 3: Detect islands globally
-    TArray<FIslandData> Islands = TempGrid->DetectIslands(0.0f);
-
-    // Step 4: Broadcast to toolkit
-    OnIslandsDetectionStarted.Broadcast();
-
-    for (const FIslandData& Island : Islands)
-    {
-        OnIslandDetected.Broadcast(Island);
-        UE_LOG(LogTemp, Warning, TEXT("Unified Island Broadcast at %s with %d voxels"),
-            *Island.Location.ToString(), Island.VoxelCount);
-    }
-
-    return Islands;
-}
-
 void ADiggerManager::RemoveUnifiedIslandVoxels(const FIslandData& Island)
 {
-    TMap<FIntVector, TArray<FIntVector>> ChunkBuckets;
+    int32 TotalRemoved = 0;
+    TSet<UVoxelChunk*> ChunksToUpdate;
 
-    UE_LOG(LogTemp, Warning, TEXT("Running ADM::RemoveUnifiedIslandVoxels!"));
-    
-    // Step 1: Convert to chunk-local buckets
+    // Attempt removal based on each voxel’s owning chunk
     for (const FIntVector& GlobalVoxel : Island.Voxels)
     {
-        FIntVector ChunkCoords, LocalVoxel;
-        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, ChunkCoords, LocalVoxel);
-        ChunkBuckets.FindOrAdd(ChunkCoords).Add(LocalVoxel);
-    }
+        // Identify all candidate chunk coordinates
+        TArray<FIntVector> CandidateChunkCoords = GetPossibleOwningChunks(GlobalVoxel);
 
-    // Step 2: Prepare affected chunks in parallel
-    TArray<FIntVector> ChunkKeys;
-    ChunkBuckets.GetKeys(ChunkKeys);
-
-    TArray<UVoxelChunk*> ChunksToUpdate;
-
-    ParallelFor(ChunkKeys.Num(), [this, &ChunkBuckets, &ChunkKeys, &ChunksToUpdate](int32 Index)
-    {
-        const FIntVector& ChunkCoords = ChunkKeys[Index];
-
-        UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
-        if (!ChunkPtr || !*ChunkPtr) return;
-
-        // Preload chunk for update
-        FScopeLock Lock(&UpdateChunksCriticalSection); // Protect array
-        ChunksToUpdate.Add(*ChunkPtr);
-    });
-
-    // Step 3: Run deletions AFTER parallel prep
-    TArray<FIntVector> DeletedGlobalVoxels;
-
-    for (const FIntVector& GlobalVoxel : Island.Voxels)
-    {
-        FIntVector ChunkCoords, LocalVoxel;
-        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, ChunkCoords, LocalVoxel);
-
-        UVoxelChunk* Chunk = ChunkMap.FindRef(ChunkCoords);
-        if (!Chunk || !Chunk->IsValidLowLevel()) continue;
-
-        USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
-        if (!Grid || !Grid->IsValidLowLevel()) continue;
-
-        if (Grid->RemoveVoxel(LocalVoxel))
+        for (const FIntVector& ChunkCoord : CandidateChunkCoords)
         {
-            DeletedGlobalVoxels.Add(GlobalVoxel); // Cache for diagnostics or wake logic
+            UVoxelChunk* Chunk = ChunkMap.FindRef(ChunkCoord);
+            if (!Chunk || !Chunk->IsValidLowLevel()) continue;
+
+            USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
+            if (!Grid || !Grid->IsValidLowLevel()) continue;
+
+            // Convert global to local voxel inside this chunk
+            FIntVector MutableCoord = ChunkCoord;
+            FIntVector LocalVoxel;
+            FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(
+                GlobalVoxel,
+                MutableCoord,
+                LocalVoxel
+            );
+
+            // Remove contiguous island starting at local voxel
+            FIslandData LocalIsland = Grid->DetectIsland(0.0f, LocalVoxel);
+            Grid->RemoveSpecifiedVoxels(LocalIsland.Voxels);
+            ChunksToUpdate.Add(Chunk);
+
+            TotalRemoved += LocalIsland.Voxels.Num();
         }
     }
 
-    // Step 4: Mesh updates
+    // Update all affected chunks
     for (UVoxelChunk* Chunk : ChunksToUpdate)
     {
         if (Chunk && Chunk->IsValidLowLevel())
@@ -3174,9 +3190,36 @@ void ADiggerManager::RemoveUnifiedIslandVoxels(const FIslandData& Island)
         }
     }
 
-    // Step 5: Debug info
-    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Unified island removal: %d voxels deleted, %d chunks updated"), 
-           DeletedGlobalVoxels.Num(), ChunksToUpdate.Num());
+    UE_LOG(LogTemp, Warning,
+        TEXT("[DiggerPro] Updated unified island removal: %d voxel removals across %d chunks"),
+        TotalRemoved, ChunksToUpdate.Num());
+}
+
+
+
+
+TArray<FIntVector> ADiggerManager::GetPossibleOwningChunks(const FIntVector& GlobalIndex)
+{
+    TArray<FIntVector> PossibleChunks;
+
+    // Scan all 8 neighboring chunks where this voxel might overflow into
+    for (int32 dx = 0; dx <= 1; dx++)
+        for (int32 dy = 0; dy <= 1; dy++)
+            for (int32 dz = 0; dz <= 1; dz++)
+            {
+                FIntVector Offset(dx, dy, dz);
+                FIntVector AdjustedGlobal = GlobalIndex - Offset;
+
+                FIntVector CandidateChunkCoords, LocalVoxel;
+                FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(AdjustedGlobal, CandidateChunkCoords, LocalVoxel);
+
+                if (ChunkMap.Contains(CandidateChunkCoords))
+                {
+                    PossibleChunks.Add(CandidateChunkCoords);
+                }
+            }
+
+    return PossibleChunks;
 }
 
 

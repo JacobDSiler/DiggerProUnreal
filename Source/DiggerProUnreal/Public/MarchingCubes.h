@@ -23,6 +23,7 @@ public:
 	// Constructors
 	UMarchingCubes();
 	UMarchingCubes(const FObjectInitializer& ObjectInitializer, const UVoxelChunk* VoxelChunk);
+	void ClearSectionAndRebuild(int32 SectionIndex, FIntVector ChunkCoord);
 	void Initialize(ADiggerManager* InDiggerManager);
 
 	// Generate the mesh based on the voxel grid
@@ -118,6 +119,7 @@ public:
 	) const;
 
 	void GenerateMeshForIsland(USparseVoxelGrid* IslandGrid, const FVector& Origin, float VoxelSize, int32 IslandId);
+	void ClearSectionAndRebuildMesh(int32 SectionIndex, FIntVector ChunkCoord);
 
 	void CreateIslandProceduralMesh(
 		const TArray<FVector>& Vertices,

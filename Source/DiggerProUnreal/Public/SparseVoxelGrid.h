@@ -96,7 +96,8 @@ public:
 	const FVector& Center,
 	USparseVoxelGrid*& OutTempGrid,
 	TArray<FIntVector>& OutVoxels);
-	
+	FIslandData DetectIsland(float SDFThreshold, const FIntVector& StartPosition);
+
 
 	void SetParentChunkCoordinates(FIntVector& NewParentChunkPosition)
 	{
