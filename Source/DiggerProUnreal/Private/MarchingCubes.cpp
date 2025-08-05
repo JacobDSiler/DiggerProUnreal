@@ -393,7 +393,7 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 	}
 	
     // Use FVoxelConversion to get the chunk's world position
-    FIntVector ChunkCoords = ChunkPtr->GetChunkPosition();
+    FIntVector ChunkCoords = ChunkPtr->GetChunkCoordinates();
     FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
     
 	float VoxelSize = FVoxelConversion::LocalVoxelSize; // Use the consistent voxel size
@@ -445,7 +445,7 @@ void UMarchingCubes::GenerateMeshSyncronous(const UVoxelChunk* ChunkPtr)
 	}
 	
 	// Use FVoxelConversion to get the chunk's world position
-	FIntVector ChunkCoords = ChunkPtr->GetChunkPosition();
+	FIntVector ChunkCoords = ChunkPtr->GetChunkCoordinates();
 	FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
     
 	float VoxelSize = FVoxelConversion::LocalVoxelSize; // Use the consistent voxel size

@@ -101,7 +101,7 @@ public:
     void GenerateMesh(bool bIsSyncronous) const;
 
     // Getters
-    FIntVector GetChunkPosition() const { return ChunkCoordinates; }
+    FIntVector GetChunkCoordinates() const { return ChunkCoordinates; }
     ADiggerManager* GetDiggerManager() const { return DiggerManager; }
     int32 GetSectionIndex() const { return SectionIndex; }
     UFUNCTION(BluePrintCallable)

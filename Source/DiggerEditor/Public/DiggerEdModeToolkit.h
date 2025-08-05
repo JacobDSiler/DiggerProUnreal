@@ -1,6 +1,9 @@
 // DiggerEdModeToolkit.h
 #pragma once
 
+#include "CoreMinimal.h"
+#include "Engine/Engine.h"
+#include "ProcgenArcanaCaveImporter.h"
 #include "SparseVoxelGrid.h" // <-- Make sure this is included!
 #include "EditorModeManager.h"
 #include "Toolkits/BaseToolkit.h"        
@@ -9,6 +12,7 @@
 #include "FCustomBrushEntry.h"
 #include "SocketIOLobbyManager.h"   
 #include "Widgets/Layout/SSeparator.h"
+#include "DiggerEdModeToolkit.generated.h" // This MUST be the last include
 
 
 class USocketIOLobbyManager;
@@ -18,6 +22,7 @@ class ADiggerManager;
 class SUniformGridPanel;
 
 
+
 UENUM(BlueprintType)
 enum class EIslandOriginMode : uint8
 {
@@ -25,6 +30,8 @@ enum class EIslandOriginMode : uint8
 	Base UMETA(DisplayName = "Base"),
 	Top UMETA(DisplayName = "Top")
 };
+
+
 
 // Simple struct for holding lobby information
 struct FLobbyInfo
@@ -43,6 +50,46 @@ struct FLobbyInfo
 		return FString::Printf(TEXT("%s (%d players)"), *LobbyName, PlayerCount);
 	}
 };
+USTRUCT(BlueprintType)
+struct DIGGEREDITOR_API FDiggerUIFeatureFlags
+{
+	GENERATED_USTRUCT_BODY()
+
+	// Cave Importer Features
+	UPROPERTY(EditAnywhere, Category = "Cave Importer")
+	bool bEnableCaveImporter = true;
+    
+	UPROPERTY(EditAnywhere, Category = "Cave Importer")
+	bool bEnableHeightModes = true;
+    
+	UPROPERTY(EditAnywhere, Category = "Cave Importer") 
+	bool bEnableAdvancedSettings = false;
+    
+	UPROPERTY(EditAnywhere, Category = "Cave Importer")
+	bool bEnableMultipleEntrances = false;
+    
+	UPROPERTY(EditAnywhere, Category = "Cave Importer")
+	bool bEnableMeshGeneration = false;
+
+	// Other Plugin Features
+	UPROPERTY(EditAnywhere, Category = "Spline Brush")
+	bool bEnableSplineBrush = false;
+    
+	UPROPERTY(EditAnywhere, Category = "Advanced")
+	bool bEnableProcgenIntegration = false;
+    
+	FDiggerUIFeatureFlags()
+	{
+		bEnableCaveImporter = true;
+		bEnableHeightModes = true;
+		bEnableAdvancedSettings = false;
+		bEnableMultipleEntrances = false;
+		bEnableMeshGeneration = false;
+		bEnableSplineBrush = false;
+		bEnableProcgenIntegration = false;
+	}
+};
+
 
 class FDiggerEdModeToolkit : public FModeToolkit
 {
@@ -83,6 +130,8 @@ public:
 	virtual class FEdMode* GetEditorMode() const override;
 	virtual TSharedPtr<SWidget> GetInlineContent() const override;
 
+	// In your class declaration
+	FDiggerUIFeatureFlags UIFeatureFlags;
 
 	virtual ~FDiggerEdModeToolkit() override;
 	void OnIslandDetectedHandler(const FIslandData& NewIslandData);
@@ -135,6 +184,8 @@ public:
 	bool GetBrushIsFilled();
 
 private:
+	FDiggerUIFeatureFlags FeatureFlags;
+	
 #if WITH_SOCKETIO
 	USocketIOLobbyManager* SocketIOLobbyManager = nullptr;
 #endif
@@ -156,6 +207,52 @@ private:
     
 public:
 	ELightBrushType GetCurrentLightType() const { return CurrentLightType; }
+	
+	// Azgar Importer Methods
+	void ImportProcgenArcanaCave();
+	void PreviewProcgenArcanaCave();
+	void ClearCavePreview();
+	bool ValidateImportSettings();
+	AActor* CreateCaveSplineActor(USplineComponent* SplineComponent, const TArray<FVector>& OriginalPoints, const TArray<FVector>& EntrancePoints, const
+	                              TArray<FVector>& ExitPoints);
+
+private:
+	// Manual multi-spline creation (fallback)
+	AActor* CreateManualMultiSplineActor(const FMultiSplineCaveData& CaveData, UWorld* World, const FVector& PivotOffset);
+	FLinearColor GetSplineColorForType(ECavePassageType Type);
+	void ImportMultiSplineCave();
+
+public:
+	/**
+	 * Multi-spline import function - creates multiple connected splines from SVG
+	 */
+	UFUNCTION(BlueprintCallable, Category = "ProcgenArcana Import")
+	FMultiSplineCaveData ImportMultiSplineCaveFromSVG(const FProcgenArcanaImportSettings& Settings);
+    
+	/**
+	 * Create actor with multiple spline components from cave data
+	 */
+	UFUNCTION(BlueprintCallable, Category = "ProcgenArcana Import") 
+	AActor* CreateMultiSplineCaveActor(const FMultiSplineCaveData& CaveData, UWorld* World, const FVector& PivotOffset = FVector::ZeroVector);
+
+private:
+	// Multi-spline processing methods
+	FMultiSplineCaveData ParseSVGToMultiSplineData(const FString& SVGContent, const FProcgenArcanaImportSettings& Settings);
+	TArray<FSVGPath> ExtractAllCavePaths(const FString& SVGContent);
+	TArray<FSVGPathNode> BuildPathGraph(const TArray<FSVGPath>& Paths, float JunctionTolerance = 50.0f);
+	void ClassifyPassageTypes(TArray<FSVGPath>& Paths, const TArray<FSVGPathNode>& Nodes);
+	void EstimatePassageWidths(TArray<FSVGPath>& Paths, const FProcgenArcanaImportSettings& Settings);
+	FCaveSplineData ConvertPathToSplineData(const FSVGPath& Path, const FProcgenArcanaImportSettings& Settings);
+	USplineComponent* CreateSplineComponentFromData(const FCaveSplineData& SplineData, UObject* Owner);
+    
+	// Safe multi-spline processing methods with limits (the ones we just added)
+	FMultiSplineCaveData ParseSVGToMultiSplineDataSafe(const FString& SVGContent, const FProcgenArcanaImportSettings& Settings);
+	TArray<FSVGPath> ExtractAllCavePathsSafe(const FString& SVGContent, int32 MaxPaths = 50);
+	TArray<FSVGPathNode> BuildPathGraphSafe(const TArray<FSVGPath>& Paths, float JunctionTolerance, int32 MaxNodes = 100);
+	TArray<FVector2D> ParseSVGPathDataSafe(const FString& PathData, int32 MaxPoints = 500);
+    
+	// Helper method for SVG path parsing (you may already have this)
+	TArray<FVector2D> ParseSVGPathData(const FString& PathData);
 	
 private:
 
@@ -216,6 +313,8 @@ public:
 	}
 
 private:
+	// Output format selection
+	int32 OutputFormat = 1; // 0=Single Spline, 1=Multi-Spline, 2=Proc Mesh, 3=SDF Brush
 	bool bDetailedDebug = false;
 	
 
@@ -243,7 +342,11 @@ private:
 	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, double& Value);
 	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, float& Value);
 
-	TSharedRef<SWidget> MakeAzgaarImporterWidget();
+	TSharedRef<SWidget> MakeProcgenArcanaImporterWidget();
+
+	FVector CalculatePivotOffset(const TArray<FVector>& Points, 
+												   const TArray<FVector>& Entrances, 
+												   const TArray<FVector>& Exits);
 	
 	void OnConvertToPhysicsActorClicked();
 	void OnRemoveIslandClicked();
@@ -352,20 +455,7 @@ public:
 	float GetBrushLength() const { return BrushLength; }
 	void SetBrushLength(float NewLength) { BrushLength = NewLength; }
 	EVoxelBrushType GetCurrentBrushType() const {return CurrentBrushType;}
-
-
-	/*void RemoveIsland(int32 IslandIndex)
-	{
-	    if (Islands.IsValidIndex(IslandIndex))
-	    {
-	        Islands.RemoveAt(IslandIndex);
-	        if (SelectedIslandIndex == IslandIndex)
-	            SelectedIslandIndex = INDEX_NONE;
-	        else if (SelectedIslandIndex > IslandIndex)
-	            --SelectedIslandIndex;
-	        RebuildIslandGrid();
-	    }
-	}*/
+	
 
 	const TArray<FIslandData>& GetIslands() const
 	{
@@ -380,6 +470,11 @@ public:
 	void OnLightTypeChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
 
 private:
+	// Interactive preview positioning
+	FVector PreviewPositionOffset = FVector::ZeroVector;
+    
+	// Method to update preview position in real-time
+	void UpdatePreviewPosition();
 
 	TSharedPtr<SUniformGridPanel> CustomBrushGrid;
 	TArray<FCustomBrushEntry> CustomBrushEntries;
@@ -399,7 +494,6 @@ private:
 	bool bEnableNanite = false;
 	float BakeDetail = 1.0f;
 	bool bShowRotation = false;
-	bool bShowAzgaarImporter = false;
 	float BrushLength = 200.0f; // Default value, adjust as needed
 	bool bDebugVoxels = false;
 
@@ -423,7 +517,54 @@ private:
 	
 	TOptional<bool> TemporaryDigOverride;
 
+private:
+	// ProcgenArcana Importer variables
+	
+	// World-scale positioning system
+	bool bUseWorldScalePositioning = false;
+	FVector WorldScalePosition = FVector::ZeroVector;
+	bool bSnapToGrid = true;
+	float SnapIncrement = 100.0f;
+    
+	// World scale indicator
+	TWeakObjectPtr<AActor> WorldScaleIndicatorActor;
+    
+	// World scale methods
+	void PlaceWorldScaleIndicator();
+	void ClearWorldScaleIndicator();
+	void HandleWorldScaleClick(const FVector& ClickLocation);
 
+	
+
+	bool bShowProcgenArcanaImporter = false;
+	FString SelectedSVGFilePath;
+	float SimplificationLevel = 0.5f;
+	int32 HeightMode = 0;
+	float CaveScale = 100.0f;
+	float HeightVariation = 50.0f;
+	float DescentRate = 0.3f;
+	bool bAutoDetectEntrance = true;
+	FVector2D ManualEntrancePoint = FVector2D::ZeroVector;
+	int32 MaxSplinePoints = 200;
+	bool bPreviewMode = false;
+	
+	TArray<TSharedPtr<FString>> HeightModeOptions;
+
+	UPROPERTY()
+	UProcgenArcanaCaveImporter* CaveImporter = nullptr;
+	
+	// Pivot mode settings
+	int32 PivotMode = 0; // 0=Center, 1=First Entrance, 2=First Exit, 3=Start, 4=End
+	TArray<TSharedPtr<FString>> PivotModeOptions;
+    
+	// Preview data storage
+	TArray<FVector> StoredPreviewPoints;
+	TArray<FVector> StoredEntrancePoints;
+	TArray<FVector> StoredExitPoints;
+	bool bHasActivePreview = false;
+    
+	// Helper methods
+	FString GetPivotModeDisplayName(int32 Mode);
 	
 	TArray<TSoftObjectPtr<UStaticMesh>> CustomBrushMeshes;
 	TSharedPtr<SBox> IslandGridContainer; // Add this!

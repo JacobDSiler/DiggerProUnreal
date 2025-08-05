@@ -28,7 +28,7 @@ USparseVoxelGrid::USparseVoxelGrid(): DiggerManager(nullptr), ParentChunk(nullpt
 void USparseVoxelGrid::Initialize(UVoxelChunk* ParentChunkReference)
 {
     ParentChunk=ParentChunkReference;
-    ParentChunkCoordinates = ParentChunk->GetChunkPosition();
+    ParentChunkCoordinates = ParentChunk->GetChunkCoordinates();
         
     // Only set DiggerManager if ParentChunk is valid
     if (ParentChunk && IsValid(ParentChunk))
@@ -470,7 +470,7 @@ void USparseVoxelGrid::RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove)
                 AsyncTask(ENamedThreads::GameThread, [this, Voxel]()
                 {
                     DrawDebugBox(GetWorld(), 
-                        FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkPosition(), Voxel),
+                        FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkCoordinates(), Voxel),
                         FVector(FVoxelConversion::LocalVoxelSize / 2.0f), 
                         FColor::Red, false, 5.0f);
                 });
@@ -900,7 +900,7 @@ FIslandData USparseVoxelGrid::DetectIsland(float SDFThreshold, const FIntVector&
     FVector Center = FVector::ZeroVector;
     for (const FIntVector& Voxel : IslandVoxels)
     {
-        Center += FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkPosition(), Voxel);
+        Center += FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkCoordinates(), Voxel);
     }
 
     if (IslandVoxels.Num() > 0)
@@ -1022,7 +1022,7 @@ void USparseVoxelGrid::RemoveSpecifiedVoxels(const TArray<FIntVector>& LocalVoxe
             AsyncTask(ENamedThreads::GameThread, [this, Voxel]()
             {
                 DrawDebugBox(GetWorld(), 
-                    FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkPosition(), Voxel),
+                    FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkCoordinates(), Voxel),
                     FVector(FVoxelConversion::LocalVoxelSize / 2.0f), 
                     FColor::Red, false, 5.0f);
             });
@@ -1041,7 +1041,7 @@ bool USparseVoxelGrid::RemoveVoxel(const FIntVector& LocalVoxel)
         AsyncTask(ENamedThreads::GameThread, [this, LocalVoxel]()
         {
             DrawDebugBox(GetWorld(), 
-                FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkPosition(), LocalVoxel),
+                FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkCoordinates(), LocalVoxel),
                 FVector(FVoxelConversion::LocalVoxelSize / 2.0f), 
                 FColor::Red, false, 5.0f);
         });

@@ -281,7 +281,7 @@ void UVoxelChunk::DebugPrintVoxelData() const
 		return;
 	}
  
-	UE_LOG(LogTemp, Log, TEXT("Voxel Data for Chunk at %s:"), *GetChunkPosition().ToString());
+	UE_LOG(LogTemp, Log, TEXT("Voxel Data for Chunk at %s:"), *GetChunkCoordinates().ToString());
 	for (const auto& Pair : SparseVoxelGrid->VoxelData)
 	{
 		UE_LOG(LogTemp, Log, TEXT("Voxel at (%d,%d,%d): Value = %f"),

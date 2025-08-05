@@ -75,6 +75,34 @@ class FDiggerEdModeToolkit;
 #endif
 
 
+// New struct to track voxel storage location
+USTRUCT(BlueprintType)
+struct FVoxelInstance
+{
+    GENERATED_BODY()
+
+    FVoxelInstance()
+        : GlobalVoxel(FIntVector::ZeroValue)
+        , ChunkCoords(FIntVector::ZeroValue)
+        , LocalVoxel(FIntVector::ZeroValue)
+    {}
+
+    FVoxelInstance(const FIntVector& InGlobal, const FIntVector& InChunk, const FIntVector& InLocal)
+        : GlobalVoxel(InGlobal)
+        , ChunkCoords(InChunk)
+        , LocalVoxel(InLocal)
+    {}
+
+    UPROPERTY(BlueprintReadWrite)
+    FIntVector GlobalVoxel;
+    
+    UPROPERTY(BlueprintReadWrite)
+    FIntVector ChunkCoords;
+    
+    UPROPERTY(BlueprintReadWrite)
+    FIntVector LocalVoxel;
+};
+
 USTRUCT(BlueprintType)
 struct FIslandData
 {
@@ -84,6 +112,7 @@ struct FIslandData
         : Location(FVector::ZeroVector)
         , VoxelCount(0)
         , Voxels()
+        , VoxelInstances()
         , ReferenceVoxel(FIntVector::ZeroValue)
     {}
 
@@ -93,8 +122,13 @@ struct FIslandData
     UPROPERTY(BlueprintReadWrite)
     int32 VoxelCount;
 
+    // Keep this for backward compatibility with UI/broadcasting (deduplicated global voxels)
     UPROPERTY(BlueprintReadWrite)
     TArray<FIntVector> Voxels;
+    
+    // NEW: Store all physical voxel instances including overflow slabs
+    UPROPERTY(BlueprintReadWrite)
+    TArray<FVoxelInstance> VoxelInstances;
     
     // Store a reference voxel for this island
     UPROPERTY()
@@ -546,6 +580,12 @@ public:
     
     UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
     void InvalidateSavedChunkCache();
+
+    // In ADiggerManager.h
+    TArray<FIntVector> GetAllPhysicalStorageChunks(const FIntVector& GlobalVoxel);
+
+    // In ADiggerManager.h
+    TSet<FIntVector> PerformCrossChunkFloodFill(const FIntVector& StartGlobalVoxel);
 
 private:
     // Constants for file management

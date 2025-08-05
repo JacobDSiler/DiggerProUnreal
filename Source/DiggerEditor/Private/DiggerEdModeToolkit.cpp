@@ -10,11 +10,20 @@
 #include "SocketIOClientComponent.h"
 #include "Widgets/Input/SHyperlink.h"
 #include "SocketIOLobbyManager.h"
-//#include "SocketIOModule.h"
 #include "SocketIOClient.h"
 #include "Json.h"
 #include "JsonUtilities.h"
 #include "Interfaces/IPluginManager.h"
+
+// ProcgenArcana Cave Importer Includes
+#include "ProcgenArcanaCaveImporter.h"
+#include "Engine/World.h"
+#include "Editor.h"
+#include "Framework/Notifications/NotificationManager.h"
+#include "Widgets/Notifications/SNotificationList.h"
+#include "DrawDebugHelpers.h"
+#include "Misc/Paths.h"
+#include "Styling/AppStyle.h"  // For FAppStyle instead of FEditorStyle
 
 
 
@@ -40,6 +49,7 @@
 
 // Slate UI - Widgets
 #include "BrushAssetEditorUtils.h"
+#include "DesktopPlatformModule.h"
 #include "DetailLayoutBuilder.h"
 #include "HttpModule.h"
 #include "IWebSocket.h"
@@ -84,6 +94,23 @@ FDiggerEdModeToolkit::FDiggerEdModeToolkit()
     SocketIOLobbyManager = NewObject<USocketIOLobbyManager>(GetTransientPackage());
     SocketIOLobbyManager->AddToRoot();
 #endif
+
+    // Initialize the cave importer
+    CaveImporter = NewObject<UProcgenArcanaCaveImporter>();
+    
+    // Initialize height mode options
+    HeightModeOptions.Add(MakeShareable(new FString("Flat Cave")));
+    HeightModeOptions.Add(MakeShareable(new FString("Descending Cave")));
+    HeightModeOptions.Add(MakeShareable(new FString("Rolling Hills")));
+    HeightModeOptions.Add(MakeShareable(new FString("Mountainous")));
+    HeightModeOptions.Add(MakeShareable(new FString("Custom")));
+
+    // Initialize pivot mode options
+    PivotModeOptions.Add(MakeShareable(new FString(TEXT("Spline Center"))));
+    PivotModeOptions.Add(MakeShareable(new FString(TEXT("First Entrance"))));
+    PivotModeOptions.Add(MakeShareable(new FString(TEXT("First Exit"))));
+    PivotModeOptions.Add(MakeShareable(new FString(TEXT("Spline Start"))));
+    PivotModeOptions.Add(MakeShareable(new FString(TEXT("Spline End"))));
 }
 
 // FDiggerEdModeToolkit::Init
@@ -707,10 +734,10 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     })
 ]
 
-        // Azgaar's Generators Imports Section
+        // ProcgenArcana's Generators Imports Section
         + SVerticalBox::Slot().AutoHeight().Padding(8)
         [
-            MakeAzgaarImporterWidget()
+            MakeProcgenArcanaImporterWidget()
         ]
 
 
@@ -786,8 +813,48 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
     [
         MakeIslandsSection()
-    ];
+    ]
 
+    // =============================================================================
+    // Quick Feature Toggle (for development)
+    // =============================================================================
+
+    // Add this debug section at the bottom (only visible in development builds):
+#if WITH_EDITOR && !UE_BUILD_SHIPPING
+    // CORRECT syntax:
+    + SVerticalBox::Slot()
+    .AutoHeight()
+    .Padding(4)
+    [
+        SNew(SExpandableArea)
+        .AreaTitle(FText::FromString("🔧 Developer Settings"))
+        .InitiallyCollapsed(true)
+        .BodyContent()
+        [
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().Padding(2)
+            [
+                SNew(SCheckBox)
+                .IsChecked_Lambda([this]() { return FeatureFlags.bEnableSplineBrush ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+                .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState) { FeatureFlags.bEnableSplineBrush = (NewState == ECheckBoxState::Checked); })
+                [
+                    SNew(STextBlock).Text(FText::FromString("Enable Spline Brush (Dev)"))
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(2)
+            [
+                SNew(SCheckBox)
+                .IsChecked_Lambda([this]() { return FeatureFlags.bEnableMultipleEntrances ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+                .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState) { FeatureFlags.bEnableMultipleEntrances = (NewState == ECheckBoxState::Checked); })
+                [
+                    SNew(STextBlock).Text(FText::FromString("Enable Multiple Entrances (Dev)"))
+                ]
+            ]
+        ]
+    ]
+    #endif
+// We need to put the semi colon outside the conditional Editor Cheked section.
+; //Right there <<<---
     ScanCustomBrushFolder();
     
    /* if (CustomBrushGrid.IsValid())
@@ -1837,19 +1904,21 @@ void FDiggerEdModeToolkit::OnBrushDebugCheckChanged(ECheckBoxState NewState)
         ]*/;
 
 //------------------------------------------------------------------------------
-// Azgaar Cave Importer Section
+// ProcgenArcana Cave Importer Section
 //------------------------------------------------------------------------------
-TSharedRef<SWidget> FDiggerEdModeToolkit::MakeAzgaarImporterWidget()
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeProcgenArcanaImporterWidget()
 {
     return SNew(SVerticalBox)
 
         // Header Button (Fold/Unfold)
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(4)
         [
             SNew(SButton)
             .OnClicked_Lambda([this]() -> FReply
             {
-                bShowAzgaarImporter = !bShowAzgaarImporter;
+                bShowProcgenArcanaImporter = !bShowProcgenArcanaImporter;
                 return FReply::Handled();
             })
             [
@@ -1857,71 +1926,1197 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeAzgaarImporterWidget()
                 .Text_Lambda([this]()
                 {
                     return FText::FromString(
-                        bShowAzgaarImporter
-                        ? TEXT("▼ Azgaar Cave Importer")
-                        : TEXT("► Azgaar Cave Importer")
+                        bShowProcgenArcanaImporter
+                        ? TEXT("▼ ProcgenArcana Cave Importer")
+                        : TEXT("► ProcgenArcana Cave Importer")
                     );
                 })
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
             ]
         ]
 
         // Collapsible Section
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(4)
         [
             SNew(SVerticalBox)
             .Visibility_Lambda([this]()
             {
-                return bShowAzgaarImporter ? EVisibility::Visible : EVisibility::Collapsed;
+                return bShowProcgenArcanaImporter ? EVisibility::Visible : EVisibility::Collapsed;
+            })
+            .IsEnabled_Lambda([this]()
+            {
+                return UIFeatureFlags.bEnableCaveImporter; // Use the feature flags struct
             })
 
-            // Import Button
-            + SVerticalBox::Slot().AutoHeight().Padding(2)
+            // File Selection Section
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2)
             [
-                SNew(SButton)
-                .OnClicked_Lambda([]() -> FReply
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("[Azgaar Importer] Import button clicked!"));
-                    return FReply::Handled();
-                })
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot()
+                .FillWidth(1.0f)
                 [
-                    SNew(STextBlock)
-                    .Text(FText::FromString("Import Azgaar Cave File"))
+                    SNew(SEditableTextBox)
+                    .Text_Lambda([this]() 
+                    { 
+                        return FText::FromString(SelectedSVGFilePath.IsEmpty() ? TEXT("No file selected...") : SelectedSVGFilePath); 
+                    })
+                    .IsReadOnly(true)
+                    .HintText(FText::FromString(TEXT("Select an SVG file from ProcgenArcana's map generator")))
+                ]
+                + SHorizontalBox::Slot()
+                .AutoWidth()
+                .Padding(4, 0, 0, 0)
+                [
+                    SNew(SButton)
+                    .Text(FText::FromString(TEXT("Browse...")))
+                    .OnClicked_Lambda([this]() -> FReply
+                    {
+                        TArray<FString> OutFileNames;
+                        bool bFileSelected = FDesktopPlatformModule::Get()->OpenFileDialog(
+                            FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr),
+                            TEXT("Select ProcgenArcana Cave SVG File"),
+                            TEXT(""),
+                            TEXT(""),
+                            TEXT("SVG Files (*.svg)|*.svg"),
+                            EFileDialogFlags::None,
+                            OutFileNames
+                        );
+
+                        if (bFileSelected && OutFileNames.Num() > 0)
+                        {
+                            SelectedSVGFilePath = OutFileNames[0];
+                            UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Selected file: %s"), *SelectedSVGFilePath);
+                        }
+                        return FReply::Handled();
+                    })
                 ]
             ]
 
-            // Simplification Slider
-            + SVerticalBox::Slot().AutoHeight().Padding(2)
+            // Enable/Disable Toggle
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2, 8, 2, 2)
             [
-                SNew(SSlider)
-                .Value(0.5f)
-                .OnValueChanged_Lambda([](float NewValue)
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("[Azgaar Importer] Simplification set to: %f"), NewValue);
+                SNew(SCheckBox)
+                .IsChecked_Lambda([this]() 
+                { 
+                    return UIFeatureFlags.bEnableCaveImporter ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; 
                 })
+                .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+                {
+                    UIFeatureFlags.bEnableCaveImporter = (NewState == ECheckBoxState::Checked);
+                    UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Enabled: %s"), UIFeatureFlags.bEnableCaveImporter ? TEXT("true") : TEXT("false"));
+                })
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Enable ProcgenArcana Cave Importer")))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
+                ]
             ]
 
-            // Height Mode ComboBox (stub)
-            + SVerticalBox::Slot().AutoHeight().Padding(2)
+            // Import Settings Header
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2, 8, 2, 2)
             [
                 SNew(STextBlock)
-                .Text(FText::FromString("Height Mode (Debug Placeholder)"))
+                .Text(FText::FromString(TEXT("Import Settings")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
             ]
 
-            // Debug Button
-            + SVerticalBox::Slot().AutoHeight().Padding(2)
+            // Output Format Selection
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2)
             [
-                SNew(SButton)
-                .OnClicked_Lambda([]() -> FReply
+                SNew(SVerticalBox)
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(0, 0, 0, 2)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Output Format:")))
+                ]
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                [
+                    SNew(SHorizontalBox)
+                    
+                    // Single Spline (Current)
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .Padding(1)
+                    [
+                        SNew(SButton)
+                        .ButtonColorAndOpacity_Lambda([this]() 
+                        { 
+                            return OutputFormat == 0 ? FLinearColor(0.1f, 0.5f, 1.0f, 1.0f) : FLinearColor::White;
+                        })
+                        .Text(FText::FromString(TEXT("Single\nSpline")))
+                        .OnClicked_Lambda([this]() -> FReply
+                        {
+                            OutputFormat = 0;
+                            UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Output Format: Single Spline"));
+                            return FReply::Handled();
+                        })
+                    ]
+                    
+                    // Multi-Spline (Now Available!)
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .Padding(1)
+                    [
+                        SNew(SButton)
+                        .ButtonColorAndOpacity_Lambda([this]() 
+                        { 
+                            return OutputFormat == 1 ? FLinearColor(0.1f, 0.5f, 1.0f, 1.0f) : FLinearColor::White;
+                        })
+                        .Text(FText::FromString(TEXT("Multi\nSpline")))
+                        .OnClicked_Lambda([this]() -> FReply
+                        {
+                            OutputFormat = 1;
+                            UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Output Format: Multi-Spline"));
+                            return FReply::Handled();
+                        })
+                    ]
+                    
+                    // Procedural Mesh (Future)
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .Padding(1)
+                    [
+                        SNew(SButton)
+                        .IsEnabled(false) // Greyed out
+                        .ButtonColorAndOpacity(FLinearColor(0.3f, 0.3f, 0.3f, 1.0f))
+                        .Text(FText::FromString(TEXT("Proc\nMesh")))
+                        .OnClicked_Lambda([this]() -> FReply
+                        {
+                            // Show "coming soon" notification
+                            FNotificationInfo Info(FText::FromString(TEXT("Procedural Mesh generation is coming soon!")));
+                            Info.ExpireDuration = 3.0f;
+                            Info.bFireAndForget = true;
+                            FSlateNotificationManager::Get().AddNotification(Info);
+                            return FReply::Handled();
+                        })
+                    ]
+                    
+                    // SDF Brush (Future)
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .Padding(1)
+                    [
+                        SNew(SButton)
+                        .IsEnabled(false) // Greyed out
+                        .ButtonColorAndOpacity(FLinearColor(0.3f, 0.3f, 0.3f, 1.0f))
+                        .Text(FText::FromString(TEXT("SDF\nBrush")))
+                        .OnClicked_Lambda([this]() -> FReply
+                        {
+                            // Show "coming soon" notification
+                            FNotificationInfo Info(FText::FromString(TEXT("SDF Brush generation is coming soon!")));
+                            Info.ExpireDuration = 3.0f;
+                            Info.bFireAndForget = true;
+                            FSlateNotificationManager::Get().AddNotification(Info);
+                            return FReply::Handled();
+                        })
+                    ]
+                ]
+            ]
+
+            // Pivot Mode Selection with Interactive Preview Controls
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2)
+            [
+                SNew(SVerticalBox)
+                
+                // Origin Point Dropdown
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(0, 0, 0, 4)
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot()
+                    .FillWidth(0.4f)
+                    [
+                        SNew(STextBlock)
+                        .Text(FText::FromString(TEXT("Origin Point:")))
+                    ]
+                    + SHorizontalBox::Slot()
+                    .FillWidth(0.6f)
+                    [
+                        SNew(SComboBox<TSharedPtr<FString>>)
+                        .OptionsSource(&PivotModeOptions)
+                        .OnGenerateWidget_Lambda([](TSharedPtr<FString> InOption)
+                        {
+                            return SNew(STextBlock).Text(FText::FromString(*InOption));
+                        })
+                        .OnSelectionChanged_Lambda([this](TSharedPtr<FString> NewSelection, ESelectInfo::Type)
+                        {
+                            if (NewSelection.IsValid())
+                            {
+                                PivotMode = PivotModeOptions.IndexOfByPredicate([&](const TSharedPtr<FString>& Item)
+                                {
+                                    return Item.Get() == NewSelection.Get();
+                                });
+                                UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Pivot Mode: %s"), **NewSelection);
+                                
+                                // Update preview in real-time if active
+                                if (bHasActivePreview)
+                                {
+                                    PreviewProcgenArcanaCave();
+                                }
+                            }
+                        })
+                        [
+                            SNew(STextBlock)
+                            .Text_Lambda([this]()
+                            {
+                                if (PivotModeOptions.IsValidIndex(PivotMode))
+                                {
+                                    return FText::FromString(*PivotModeOptions[PivotMode]);
+                                }
+                                return FText::FromString(TEXT("Spline Center"));
+                            })
+                        ]
+                    ]
+                ]
+                
+                                    // Manual Position Offset Controls (when preview is active)
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(0, 4, 0, 0)
+                [
+                    SNew(SVerticalBox)
+                    .Visibility_Lambda([this]() { return bHasActivePreview ? EVisibility::Visible : EVisibility::Collapsed; })
+                    
+                    // Header with World-Scale Positioning Option
+                    + SVerticalBox::Slot()
+                    .AutoHeight()
+                    .Padding(0, 0, 0, 2)
+                    [
+                        SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot()
+                        .FillWidth(0.6f)
+                        [
+                            SNew(STextBlock)
+                            .Text(FText::FromString(TEXT("Preview Position:")))
+                            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 8))
+                        ]
+                        + SHorizontalBox::Slot()
+                        .FillWidth(0.4f)
+                        [
+                            SNew(SCheckBox)
+                            .IsChecked_Lambda([this]() { return bUseWorldScalePositioning ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+                            .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+                            {
+                                bUseWorldScalePositioning = (NewState == ECheckBoxState::Checked);
+                                if (bUseWorldScalePositioning)
+                                {
+                                    // Place placement indicator at camera location
+                                    PlaceWorldScaleIndicator();
+                                }
+                                else
+                                {
+                                    // Clear placement indicator
+                                    ClearWorldScaleIndicator();
+                                }
+                            })
+                            [
+                                SNew(STextBlock)
+                                .Text(FText::FromString(TEXT("World Scale")))
+                                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 7))
+                            ]
+                        ]
+                    ]
+                    
+                    // World Scale Controls (when enabled)
+                    + SVerticalBox::Slot()
+                    .AutoHeight()
+                    .Padding(0, 2)
+                    [
+                        SNew(SVerticalBox)
+                        .Visibility_Lambda([this]() { return bUseWorldScalePositioning ? EVisibility::Visible : EVisibility::Collapsed; })
+                        
+                        + SVerticalBox::Slot()
+                        .AutoHeight()
+                        .Padding(0, 1)
+                        [
+                            SNew(STextBlock)
+                            .Text(FText::FromString(TEXT("Ctrl+Click in viewport to place. Indicator shows placement location.")))
+                            .Font(FCoreStyle::GetDefaultFontStyle("Italic", 7))
+                            .ColorAndOpacity(FSlateColor(FLinearColor::Gray))
+                        ]
+                        
+                        // Snap Settings
+                        + SVerticalBox::Slot()
+                        .AutoHeight()
+                        .Padding(0, 2)
+                        [
+                            SNew(SHorizontalBox)
+                            + SHorizontalBox::Slot()
+                            .FillWidth(0.3f)
+                            [
+                                SNew(SCheckBox)
+                                .IsChecked_Lambda([this]() { return bSnapToGrid ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+                                .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+                                {
+                                    bSnapToGrid = (NewState == ECheckBoxState::Checked);
+                                })
+                                [
+                                    SNew(STextBlock)
+                                    .Text(FText::FromString(TEXT("Snap")))
+                                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 7))
+                                ]
+                            ]
+                            + SHorizontalBox::Slot()
+                            .FillWidth(0.7f)
+                            [
+                                SNew(SHorizontalBox)
+                                .IsEnabled_Lambda([this]() { return bSnapToGrid; })
+                                + SHorizontalBox::Slot()
+                                .FillWidth(0.7f)
+                                [
+                                    SNew(SSlider)
+                                    .Value_Lambda([this]() { return FMath::Clamp((SnapIncrement - 10.0f) / 990.0f, 0.0f, 1.0f); })
+                                    .OnValueChanged_Lambda([this](float NewValue)
+                                    {
+                                        SnapIncrement = 10.0f + (NewValue * 990.0f); // 10 to 1000
+                                    })
+                                ]
+                                + SHorizontalBox::Slot()
+                                .FillWidth(0.3f)
+                                [
+                                    SNew(STextBlock)
+                                    .Text_Lambda([this]() { return FText::FromString(FString::Printf(TEXT("%.0fu"), SnapIncrement)); })
+                                    .Justification(ETextJustify::Center)
+                                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 7))
+                                ]
+                            ]
+                        ]
+                    ]
+                    
+                    // Local Offset Controls (when NOT using world scale)
+                    + SVerticalBox::Slot()
+                    .AutoHeight()
+                    .Padding(0, 2)
+                    [
+                        SNew(SVerticalBox)
+                        .Visibility_Lambda([this]() { return !bUseWorldScalePositioning ? EVisibility::Visible : EVisibility::Collapsed; })
+                        
+                        // X Offset
+                        + SVerticalBox::Slot()
+                        .AutoHeight()
+                        .Padding(0, 1)
+                        [
+                            SNew(SHorizontalBox)
+                            + SHorizontalBox::Slot()
+                            .FillWidth(0.2f)
+                            [
+                                SNew(STextBlock)
+                                .Text(FText::FromString(TEXT("X:")))
+                            ]
+                            + SHorizontalBox::Slot()
+                            .FillWidth(0.6f)
+                            [
+                                SNew(SSlider)
+                                .Value_Lambda([this]() { return (PreviewPositionOffset.X + 1000.0f) / 2000.0f; })
+                                .OnValueChanged_Lambda([this](float NewValue)
+                                {
+                                    PreviewPositionOffset.X = (NewValue * 2000.0f) - 1000.0f;
+                                    if (bHasActivePreview)
+                                    {
+                                        UpdatePreviewPosition();
+                                    }
+                                })
+                            ]
+                            + SHorizontalBox::Slot()
+                            .FillWidth(0.2f)
+                            [
+                                SNew(STextBlock)
+                                .Text_Lambda([this]() { return FText::FromString(FString::Printf(TEXT("%.0f"), PreviewPositionOffset.X)); })
+                                .Justification(ETextJustify::Center)
+                            ]
+                        ]
+                        
+                        // Y Offset
+                        + SVerticalBox::Slot()
+                        .AutoHeight()
+                        .Padding(0, 1)
+                        [
+                            SNew(SHorizontalBox)
+                            + SHorizontalBox::Slot()
+                            .FillWidth(0.2f)
+                            [
+                                SNew(STextBlock)
+                                .Text(FText::FromString(TEXT("Y:")))
+                            ]
+                            + SHorizontalBox::Slot()
+                            .FillWidth(0.6f)
+                            [
+                                SNew(SSlider)
+                                .Value_Lambda([this]() { return (PreviewPositionOffset.Y + 1000.0f) / 2000.0f; })
+                                .OnValueChanged_Lambda([this](float NewValue)
+                                {
+                                    PreviewPositionOffset.Y = (NewValue * 2000.0f) - 1000.0f;
+                                    if (bHasActivePreview)
+                                    {
+                                        UpdatePreviewPosition();
+                                    }
+                                })
+                            ]
+                            + SHorizontalBox::Slot()
+                            .FillWidth(0.2f)
+                            [
+                                SNew(STextBlock)
+                                .Text_Lambda([this]() { return FText::FromString(FString::Printf(TEXT("%.0f"), PreviewPositionOffset.Y)); })
+                                .Justification(ETextJustify::Center)
+                            ]
+                        ]
+                        
+                        // Z Offset
+                        + SVerticalBox::Slot()
+                        .AutoHeight()
+                        .Padding(0, 1)
+                        [
+                            SNew(SHorizontalBox)
+                            + SHorizontalBox::Slot()
+                            .FillWidth(0.2f)
+                            [
+                                SNew(STextBlock)
+                                .Text(FText::FromString(TEXT("Z:")))
+                            ]
+                            + SHorizontalBox::Slot()
+                            .FillWidth(0.6f)
+                            [
+                                SNew(SSlider)
+                                .Value_Lambda([this]() { return (PreviewPositionOffset.Z + 500.0f) / 1000.0f; })
+                                .OnValueChanged_Lambda([this](float NewValue)
+                                {
+                                    PreviewPositionOffset.Z = (NewValue * 1000.0f) - 500.0f;
+                                    if (bHasActivePreview)
+                                    {
+                                        UpdatePreviewPosition();
+                                    }
+                                })
+                            ]
+                            + SHorizontalBox::Slot()
+                            .FillWidth(0.2f)
+                            [
+                                SNew(STextBlock)
+                                .Text_Lambda([this]() { return FText::FromString(FString::Printf(TEXT("%.0f"), PreviewPositionOffset.Z)); })
+                                .Justification(ETextJustify::Center)
+                            ]
+                        ]
+                    ]
+                    
+                    // Reset Button
+                    + SVerticalBox::Slot()
+                    .AutoHeight()
+                    .Padding(0, 4, 0, 0)
+                    [
+                        SNew(SButton)
+                        .Text(FText::FromString(TEXT("Reset Position")))
+                        .OnClicked_Lambda([this]() -> FReply
+                        {
+                            PreviewPositionOffset = FVector::ZeroVector;
+                            WorldScalePosition = FVector::ZeroVector;
+                            if (bHasActivePreview)
+                            {
+                                if (bUseWorldScalePositioning)
+                                {
+                                    PlaceWorldScaleIndicator(); // Reset to camera position
+                                }
+                                PreviewProcgenArcanaCave(); // Full refresh
+                            }
+                            return FReply::Handled();
+                        })
+                    ]
+                ]
+            ]
+
+            // Cave Scale Setting
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot()
+                .FillWidth(0.4f)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Cave Scale:")))
+                ]
+                + SHorizontalBox::Slot()
+                .FillWidth(0.6f)
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    [
+                        SNew(SSlider)
+                        .Value_Lambda([this]() { return CaveScale / 500.0f; })
+                        .OnValueChanged_Lambda([this](float NewValue)
+                        {
+                            CaveScale = NewValue * 500.0f;
+                            UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Cave Scale: %f"), CaveScale);
+                        })
+                    ]
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .Padding(4, 0, 0, 0)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]() { return FText::FromString(FString::Printf(TEXT("%.0f"), CaveScale)); })
+                        .MinDesiredWidth(30)
+                    ]
+                ]
+            ]
+
+            // Simplification Level
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot()
+                .FillWidth(0.4f)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Simplification:")))
+                ]
+                + SHorizontalBox::Slot()
+                .FillWidth(0.6f)
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    [
+                        SNew(SSlider)
+                        .Value_Lambda([this]() { return SimplificationLevel; })
+                        .OnValueChanged_Lambda([this](float NewValue)
+                        {
+                            SimplificationLevel = NewValue;
+                            UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Simplification: %f"), SimplificationLevel);
+                        })
+                    ]
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .Padding(4, 0, 0, 0)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]() 
+                        { 
+                            FString Level = SimplificationLevel < 0.25f ? TEXT("High Detail") :
+                                          SimplificationLevel < 0.5f ? TEXT("Medium") :
+                                          SimplificationLevel < 0.75f ? TEXT("Low Detail") : TEXT("Simplified");
+                            return FText::FromString(Level);
+                        })
+                        .MinDesiredWidth(60)
+                    ]
+                ]
+            ]
+
+            // Max Spline Points
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot()
+                .FillWidth(0.4f)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Max Points:")))
+                ]
+                + SHorizontalBox::Slot()
+                .FillWidth(0.6f)
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    [
+                        SNew(SSlider)
+                        .Value_Lambda([this]() { return (MaxSplinePoints - 50) / 450.0f; })
+                        .OnValueChanged_Lambda([this](float NewValue)
+                        {
+                            MaxSplinePoints = 50 + (NewValue * 450.0f);
+                            UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Max Points: %d"), MaxSplinePoints);
+                        })
+                    ]
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .Padding(4, 0, 0, 0)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]() { return FText::FromString(FString::Printf(TEXT("%d"), MaxSplinePoints)); })
+                        .MinDesiredWidth(30)
+                    ]
+                ]
+            ]
+
+            // Height Settings Header
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2, 8, 2, 2)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Height Settings")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
+            ]
+
+            // Height Mode Selection (Using Buttons)
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2)
+            [
+                SNew(SVerticalBox)
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(0, 0, 0, 2)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Height Mode:")))
+                ]
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                [
+                    SNew(SHorizontalBox)
+                    
+                    // Flat button
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .Padding(1)
+                    [
+                        SNew(SButton)
+                        .ButtonColorAndOpacity_Lambda([this]() 
+                        { 
+                            return HeightMode == 0 ? FLinearColor(0.1f, 0.5f, 1.0f, 1.0f) : FLinearColor::White;
+                        })
+                        .Text(FText::FromString(TEXT("Flat")))
+                        .OnClicked_Lambda([this]() -> FReply
+                        {
+                            HeightMode = 0;
+                            UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Height Mode: Flat"));
+                            return FReply::Handled();
+                        })
+                    ]
+                    
+                    // Descending button
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .Padding(1)
+                    [
+                        SNew(SButton)
+                        .ButtonColorAndOpacity_Lambda([this]() 
+                        { 
+                            return HeightMode == 1 ? FLinearColor(0.1f, 0.5f, 1.0f, 1.0f) : FLinearColor::White;
+                        })
+                        .Text(FText::FromString(TEXT("Desc")))
+                        .OnClicked_Lambda([this]() -> FReply
+                        {
+                            HeightMode = 1;
+                            UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Height Mode: Descending"));
+                            return FReply::Handled();
+                        })
+                    ]
+                    
+                    // Rolling button
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .Padding(1)
+                    [
+                        SNew(SButton)
+                        .ButtonColorAndOpacity_Lambda([this]() 
+                        { 
+                            return HeightMode == 2 ? FLinearColor(0.1f, 0.5f, 1.0f, 1.0f) : FLinearColor::White;
+                        })
+                        .Text(FText::FromString(TEXT("Roll")))
+                        .OnClicked_Lambda([this]() -> FReply
+                        {
+                            HeightMode = 2;
+                            UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Height Mode: Rolling"));
+                            return FReply::Handled();
+                        })
+                    ]
+                    
+                    // Mountainous button
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .Padding(1)
+                    [
+                        SNew(SButton)
+                        .ButtonColorAndOpacity_Lambda([this]() 
+                        { 
+                            return HeightMode == 3 ? FLinearColor(0.1f, 0.5f, 1.0f, 1.0f) : FLinearColor::White;
+                        })
+                        .Text(FText::FromString(TEXT("Mount")))
+                        .OnClicked_Lambda([this]() -> FReply
+                        {
+                            HeightMode = 3;
+                            UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Height Mode: Mountainous"));
+                            return FReply::Handled();
+                        })
+                    ]
+                ]
+            ]
+
+            // Height Variation (conditional visibility)
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2)
+            [
+                SNew(SHorizontalBox)
+                .Visibility_Lambda([this]() { return HeightMode != 0 ? EVisibility::Visible : EVisibility::Collapsed; })
+                + SHorizontalBox::Slot()
+                .FillWidth(0.4f)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Height Variation:")))
+                ]
+                + SHorizontalBox::Slot()
+                .FillWidth(0.6f)
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    [
+                        SNew(SSlider)
+                        .Value_Lambda([this]() { return HeightVariation / 200.0f; })
+                        .OnValueChanged_Lambda([this](float NewValue)
+                        {
+                            HeightVariation = NewValue * 200.0f;
+                            UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Height Variation: %f"), HeightVariation);
+                        })
+                    ]
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .Padding(4, 0, 0, 0)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]() { return FText::FromString(FString::Printf(TEXT("%.0f"), HeightVariation)); })
+                        .MinDesiredWidth(30)
+                    ]
+                ]
+            ]
+
+            // Descent Rate (only for Descending Cave mode)
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2)
+            [
+                SNew(SHorizontalBox)
+                .Visibility_Lambda([this]() { return HeightMode == 1 ? EVisibility::Visible : EVisibility::Collapsed; })
+                + SHorizontalBox::Slot()
+                .FillWidth(0.4f)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Descent Rate:")))
+                ]
+                + SHorizontalBox::Slot()
+                .FillWidth(0.6f)
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    [
+                        SNew(SSlider)
+                        .Value_Lambda([this]() { return DescentRate; })
+                        .OnValueChanged_Lambda([this](float NewValue)
+                        {
+                            DescentRate = NewValue;
+                            UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Descent Rate: %f"), DescentRate);
+                        })
+                    ]
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .Padding(4, 0, 0, 0)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]() 
+                        { 
+                            FString Rate = DescentRate < 0.2f ? TEXT("Gentle") :
+                                         DescentRate < 0.6f ? TEXT("Moderate") : TEXT("Steep");
+                            return FText::FromString(Rate);
+                        })
+                        .MinDesiredWidth(50)
+                    ]
+                ]
+            ]
+
+            // Entrance Detection Settings
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2, 8, 2, 2)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Entrance Detection")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
+            ]
+
+            // Auto-detect entrance checkbox
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2)
+            [
+                SNew(SCheckBox)
+                .IsChecked_Lambda([this]() { return bAutoDetectEntrance ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+                .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
                 {
-                    UE_LOG(LogTemp, Warning, TEXT("[Azgaar Importer] Debug button clicked!"));
-                    return FReply::Handled();
+                    bAutoDetectEntrance = (NewState == ECheckBoxState::Checked);
+                    UE_LOG(LogTemp, Log, TEXT("[ProcgenArcana Importer] Auto-detect entrance: %s"), bAutoDetectEntrance ? TEXT("true") : TEXT("false"));
                 })
                 [
                     SNew(STextBlock)
-                    .Text(FText::FromString("Run Debug Test"))
+                    .Text(FText::FromString(TEXT("Auto-detect entrance from SVG")))
                 ]
             ]
+
+            // Action Buttons
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2, 8, 2, 2)
+            [
+                SNew(SVerticalBox)
+                
+                // Preview Controls Row
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(0, 0, 0, 4)
+                [
+                    SNew(SHorizontalBox)
+                    
+                    // Preview Button
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .Padding(0, 0, 2, 0)
+                    [
+                        SNew(SButton)
+                        .IsEnabled_Lambda([this]() { return !SelectedSVGFilePath.IsEmpty() && UIFeatureFlags.bEnableCaveImporter; })
+                        .OnClicked_Lambda([this]() -> FReply
+                        {
+                            PreviewProcgenArcanaCave();
+                            return FReply::Handled();
+                        })
+                        [
+                            SNew(STextBlock)
+                            .Text(FText::FromString(TEXT("Preview")))
+                            .Justification(ETextJustify::Center)
+                        ]
+                    ]
+                    
+                    // Clear Preview Button
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .Padding(2, 0, 0, 0)
+                    [
+                        SNew(SButton)
+                        .IsEnabled_Lambda([this]() { return bHasActivePreview; })
+                        .OnClicked_Lambda([this]() -> FReply
+                        {
+                            ClearCavePreview();
+                            return FReply::Handled();
+                        })
+                        [
+                            SNew(STextBlock)
+                            .Text(FText::FromString(TEXT("Clear")))
+                            .Justification(ETextJustify::Center)
+                        ]
+                    ]
+                ]
+                
+                // Import Button Row
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                [
+                    SNew(SButton)
+                    .IsEnabled_Lambda([this]() { return !SelectedSVGFilePath.IsEmpty() && UIFeatureFlags.bEnableCaveImporter; })
+                    .ButtonStyle(FAppStyle::Get(), "FlatButton.Success")
+                    .OnClicked_Lambda([this]() -> FReply
+                    {
+                        ImportProcgenArcanaCave();
+                        return FReply::Handled();
+                    })
+                    [
+                        SNew(STextBlock)
+                        .Text(FText::FromString(TEXT("Import Cave")))
+                        .Justification(ETextJustify::Center)
+                    ]
+                ]
+            ]
+
+            // Status/Info Text
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(2)
+            [
+                SNew(STextBlock)
+                .Text_Lambda([this]()
+                {
+                    if (!UIFeatureFlags.bEnableCaveImporter)
+                    {
+                        return FText::FromString(TEXT("ProcgenArcana Importer is disabled"));
+                    }
+                    else if (SelectedSVGFilePath.IsEmpty())
+                    {
+                        return FText::FromString(TEXT("Select an SVG file to begin..."));
+                    }
+                    else
+                    {
+                        FString FileName = FPaths::GetCleanFilename(SelectedSVGFilePath);
+                        return FText::FromString(FString::Printf(TEXT("Ready to import: %s"), *FileName));
+                    }
+                })
+                .ColorAndOpacity_Lambda([this]()
+                {
+                    if (!UIFeatureFlags.bEnableCaveImporter)
+                    {
+                        return FSlateColor(FLinearColor::Red);
+                    }
+                    return SelectedSVGFilePath.IsEmpty() ? 
+                        FSlateColor(FLinearColor::Gray) : 
+                        FSlateColor(FLinearColor::Green);
+                })
+                .Font(FCoreStyle::GetDefaultFontStyle("Italic", 8))
+            ]
         ];
+}
+
+// Add these methods to your .cpp file:
+
+void FDiggerEdModeToolkit::PlaceWorldScaleIndicator()
+{
+    UWorld* World = nullptr;
+    if (GEditor && GEditor->GetEditorWorldContext(false).World())
+    {
+        World = GEditor->GetEditorWorldContext(false).World();
+    }
+    
+    if (!World)
+    {
+        return;
+    }
+    
+    // Clear existing indicator
+    ClearWorldScaleIndicator();
+    
+    // Get camera location as starting point
+    FVector CameraLocation = FVector::ZeroVector;
+    if (GEditor && GEditor->GetActiveViewport())
+    {
+        FEditorViewportClient* ViewportClient = static_cast<FEditorViewportClient*>(GEditor->GetActiveViewport()->GetClient());
+        if (ViewportClient)
+        {
+            CameraLocation = ViewportClient->GetViewLocation();
+        }
+    }
+    
+    // If no world scale position set, use camera location
+    if (WorldScalePosition == FVector::ZeroVector)
+    {
+        WorldScalePosition = CameraLocation;
+    }
+    
+    // Apply snapping if enabled
+    if (bSnapToGrid)
+    {
+        WorldScalePosition.X = FMath::RoundToFloat(WorldScalePosition.X / SnapIncrement) * SnapIncrement;
+        WorldScalePosition.Y = FMath::RoundToFloat(WorldScalePosition.Y / SnapIncrement) * SnapIncrement;
+        WorldScalePosition.Z = FMath::RoundToFloat(WorldScalePosition.Z / SnapIncrement) * SnapIncrement;
+    }
+    
+    // Create visual indicator actor
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.Name = MakeUniqueObjectName(World, AActor::StaticClass(), TEXT("ProcgenArcana_PlacementIndicator"));
+    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    
+    AActor* IndicatorActor = World->SpawnActor<AActor>(AActor::StaticClass(), SpawnParams);
+    if (IndicatorActor)
+    {
+        IndicatorActor->SetActorLocation(WorldScalePosition);
+        IndicatorActor->Tags.Add(TEXT("ProcgenArcanaIndicator"));
+        IndicatorActor->SetFolderPath(TEXT("_Temporary"));
+        
+        // Create visual component (simple scene component with debug visualization)
+        USceneComponent* RootComp = NewObject<USceneComponent>(IndicatorActor);
+        IndicatorActor->SetRootComponent(RootComp);
+        RootComp->RegisterComponentWithWorld(World);
+        
+        WorldScaleIndicatorActor = IndicatorActor;
+        
+        // Draw debug indicator
+        DrawDebugSphere(World, WorldScalePosition, 200.0f, 16, FColor::Magenta, true, 3600.0f, 0, 10.0f);
+        DrawDebugString(World, WorldScalePosition + FVector(0, 0, 250), 
+                       TEXT("PLACEMENT INDICATOR\nCtrl+Click to Move"), nullptr, FColor::Magenta, 3600.0f);
+        
+        UE_LOG(LogTemp, Log, TEXT("[WorldScale] Placed indicator at: %s"), *WorldScalePosition.ToString());
+        
+        // Update preview if active
+        if (bHasActivePreview)
+        {
+            UpdatePreviewPosition();
+        }
+    }
+}
+
+void FDiggerEdModeToolkit::ClearWorldScaleIndicator()
+{
+    if (WorldScaleIndicatorActor.IsValid())
+    {
+        WorldScaleIndicatorActor->Destroy();
+        WorldScaleIndicatorActor = nullptr;
+    }
+    
+    // Clear debug lines
+    UWorld* World = nullptr;
+    if (GEditor && GEditor->GetEditorWorldContext(false).World())
+    {
+        World = GEditor->GetEditorWorldContext(false).World();
+        if (World)
+        {
+            FlushPersistentDebugLines(World);
+        }
+    }
+}
+
+void FDiggerEdModeToolkit::HandleWorldScaleClick(const FVector& ClickLocation)
+{
+    if (!bUseWorldScalePositioning)
+    {
+        return;
+    }
+    
+    WorldScalePosition = ClickLocation;
+    
+    // Apply snapping if enabled
+    if (bSnapToGrid)
+    {
+        WorldScalePosition.X = FMath::RoundToFloat(WorldScalePosition.X / SnapIncrement) * SnapIncrement;
+        WorldScalePosition.Y = FMath::RoundToFloat(WorldScalePosition.Y / SnapIncrement) * SnapIncrement;
+        WorldScalePosition.Z = FMath::RoundToFloat(WorldScalePosition.Z / SnapIncrement) * SnapIncrement;
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("[WorldScale] Updated position to: %s"), *WorldScalePosition.ToString());
+    
+    // Update the indicator
+    PlaceWorldScaleIndicator();
+    
+    // Show notification
+    FNotificationInfo Info(FText::FromString(FString::Printf(
+        TEXT("Placement updated: X=%.0f, Y=%.0f, Z=%.0f"), 
+        WorldScalePosition.X, WorldScalePosition.Y, WorldScalePosition.Z)));
+    Info.ExpireDuration = 2.0f;
+    Info.bFireAndForget = true;
+    FSlateNotificationManager::Get().AddNotification(Info);
+}
+
+// Update your UpdatePreviewPosition method to handle world-scale positioning:
+void FDiggerEdModeToolkit::UpdatePreviewPosition()
+{
+    if (!bHasActivePreview || StoredPreviewPoints.Num() == 0)
+    {
+        return;
+    }
+    
+    UWorld* World = nullptr;
+    if (GEditor && GEditor->GetEditorWorldContext(false).World())
+    {
+        World = GEditor->GetEditorWorldContext(false).World();
+    }
+    
+    if (!World)
+    {
+        return;
+    }
+    
+    // Clear existing debug lines
+    FlushPersistentDebugLines(World);
+    FlushDebugStrings(World);
+    
+    // Calculate the base pivot offset (without manual adjustment)
+    FVector BasePivotOffset = CalculatePivotOffset(StoredPreviewPoints, StoredEntrancePoints, StoredExitPoints);
+    
+    // Apply either world-scale positioning or local offset
+    FVector TotalOffset;
+    if (bUseWorldScalePositioning)
+    {
+        // Use world-scale position as the final location
+        TotalOffset = BasePivotOffset - WorldScalePosition;
+    }
+    else
+    {
+        // Use local offset system
+        TotalOffset = BasePivotOffset - PreviewPositionOffset;
+    }
+    
+    // Adjust points for display
+    TArray<FVector> DisplayPoints = StoredPreviewPoints;
+    TArray<FVector> DisplayEntrances = StoredEntrancePoints;
+    TArray<FVector> DisplayExits = StoredExitPoints;
+    
+    for (FVector& Point : DisplayPoints)
+    {
+        Point -= TotalOffset;
+    }
+    for (FVector& Point : DisplayEntrances)
+    {
+        Point -= TotalOffset;
+    }
+    for (FVector& Point : DisplayExits)
+    {
+        Point -= TotalOffset;
+    }
+    
+    // Draw the updated preview
+    // Draw the main cave path with thick green lines
+    for (int32 i = 0; i < DisplayPoints.Num() - 1; i++)
+    {
+        DrawDebugLine(World, DisplayPoints[i], DisplayPoints[i + 1], 
+                     FColor::Green, true, 60.0f, 0, 8.0f);
+    }
+    
+    // Draw spline points as small spheres
+    for (int32 i = 0; i < DisplayPoints.Num(); i++)
+    {
+        FColor PointColor = (i == 0) ? FColor::Yellow : 
+                           (i == DisplayPoints.Num() - 1) ? FColor::Orange : FColor::Cyan;
+        DrawDebugSphere(World, DisplayPoints[i], 25.0f, 8, 
+                       PointColor, true, 60.0f, 0, 2.0f);
+    }
+    
+    // Draw entrance points
+    for (const FVector& Entrance : DisplayEntrances)
+    {
+        DrawDebugSphere(World, Entrance, 75.0f, 12, 
+                       FColor::Red, true, 60.0f, 0, 5.0f);
+        DrawDebugString(World, Entrance + FVector(0, 0, 100), 
+                       TEXT("ENTRANCE"), nullptr, FColor::Red, 60.0f);
+    }
+    
+    // Draw exit points
+    for (const FVector& Exit : DisplayExits)
+    {
+        DrawDebugSphere(World, Exit, 75.0f, 12, 
+                       FColor::Blue, true, 60.0f, 0, 5.0f);
+        DrawDebugString(World, Exit + FVector(0, 0, 100), 
+                       TEXT("EXIT"), nullptr, FColor::Blue, 60.0f);
+    }
+    
+    // Draw origin point
+    FVector OriginPoint = -TotalOffset;
+    DrawDebugSphere(World, OriginPoint, 50.0f, 12, 
+                   FColor::Magenta, true, 60.0f, 0, 3.0f);
+    DrawDebugString(World, OriginPoint + FVector(0, 0, 80), 
+                   TEXT("ORIGIN"), nullptr, FColor::Magenta, 60.0f);
+    
+    // Force viewport refresh
+    if (GEditor)
+    {
+        GEditor->RedrawLevelEditingViewports();
+    }
 }
 
 
@@ -2588,6 +3783,42 @@ void FDiggerEdModeToolkit::ShutdownNetworking()
 }
 
 
+// Helper function to create disabled sections:
+TSharedRef<SWidget> CreateComingSoonSection(const FString& FeatureName, const FString& Description = TEXT(""))
+{
+    return SNew(SBorder)
+        .BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
+        .Padding(4)
+        [
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight()
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().FillWidth(1.0f)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(FeatureName))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
+                    .ColorAndOpacity(FSlateColor(FLinearColor::Gray))
+                ]
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("Coming Soon"))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Italic", 8))
+                    .ColorAndOpacity(FSlateColor(FLinearColor::Yellow))
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 0)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(Description.IsEmpty() ? TEXT("This feature is in development.") : Description))
+                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 8))
+                .ColorAndOpacity(FSlateColor(FLinearColor::Gray))
+                .AutoWrapText(true)
+            ]
+        ];
+}
 
 
 void FDiggerEdModeToolkit::ClearIslands()
@@ -2684,8 +3915,367 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeMirrorButton(double& Target, const
         .ContentPadding(FMargin(2,0));
 }
 
+/// ProcgenArcana Cave Methods ///
+
+// Preview Azgar cave import method
+void FDiggerEdModeToolkit::PreviewProcgenArcanaCave()
+{
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Starting preview process..."));
+
+    if (!CaveImporter)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG PREVIEW] Cave importer not initialized"));
+        return;
+    }
+
+    if (SelectedSVGFilePath.IsEmpty())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] No SVG file selected"));
+        return;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Preview file: %s"), *SelectedSVGFilePath);
+
+    // Get the correct world context - FIXED
+    UWorld* World = nullptr;
+    if (GEditor && GEditor->GetEditorWorldContext(false).World())
+    {
+        World = GEditor->GetEditorWorldContext(false).World();
+    }
+    else if (GEditor && GEditor->GetPIEWorldContext())
+    {
+        World = GEditor->GetPIEWorldContext()->World();
+    }
+    
+    if (!World)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG PREVIEW] Could not get valid world context for preview"));
+        return;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Got world context"));
+
+    // Clear any existing preview
+    ClearCavePreview();
+
+    // Prepare preview settings
+    FProcgenArcanaImportSettings PreviewSettings;
+    PreviewSettings.SVGFilePath = SelectedSVGFilePath;
+    PreviewSettings.CaveScale = CaveScale;
+    PreviewSettings.SimplificationLevel = SimplificationLevel;
+    PreviewSettings.MaxSplinePoints = MaxSplinePoints;
+    PreviewSettings.HeightMode = static_cast<EHeightMode>(HeightMode);
+    PreviewSettings.HeightVariation = HeightVariation;
+    PreviewSettings.DescentRate = DescentRate;
+    PreviewSettings.bAutoDetectEntrance = bAutoDetectEntrance;
+    PreviewSettings.ManualEntrancePoint = ManualEntrancePoint;
+    PreviewSettings.bPreviewMode = true;
+
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Settings prepared, calling PreviewCaveFromSVG..."));
+
+    // Get preview points with timeout protection
+    TArray<FVector> PreviewPoints;
+    TArray<FVector> EntrancePoints; 
+    TArray<FVector> ExitPoints;     
+    
+    try
+    {
+        // Add some basic error checking
+        if (!FPaths::FileExists(PreviewSettings.SVGFilePath))
+        {
+            UE_LOG(LogTemp, Error, TEXT("[DEBUG PREVIEW] SVG file does not exist: %s"), *PreviewSettings.SVGFilePath);
+            return;
+        }
+        
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] File exists, calling importer..."));
+        
+        PreviewPoints = CaveImporter->PreviewCaveFromSVG(PreviewSettings);
+        
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] PreviewCaveFromSVG returned %d points"), PreviewPoints.Num());
+    }
+    catch (...)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG PREVIEW] Exception during preview generation"));
+        return;
+    }
+    
+    if (PreviewPoints.Num() > 0)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[DEBUG PREVIEW] Preview generated with %d points"), PreviewPoints.Num());
+        
+        // Add basic entrance/exit points
+        EntrancePoints.Add(PreviewPoints[0]);
+        if (PreviewPoints.Num() > 1)
+        {
+            ExitPoints.Add(PreviewPoints.Last());
+        }
+        
+        // Apply pivot offset based on PivotMode
+        FVector PivotOffset = CalculatePivotOffset(PreviewPoints, EntrancePoints, ExitPoints);
+        
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Calculated pivot offset: %s"), *PivotOffset.ToString());
+        
+        // Adjust all points by pivot offset
+        for (FVector& Point : PreviewPoints)
+        {
+            Point -= PivotOffset;
+        }
+        for (FVector& Point : EntrancePoints)
+        {
+            Point -= PivotOffset;
+        }
+        for (FVector& Point : ExitPoints)
+        {
+            Point -= PivotOffset;
+        }
+        
+        // Store preview data for clearing later
+        StoredPreviewPoints = PreviewPoints;
+        StoredEntrancePoints = EntrancePoints;
+        StoredExitPoints = ExitPoints;
+        bHasActivePreview = true;
+        
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] About to draw debug lines..."));
+        
+        // Draw the main cave path with thick green lines
+        for (int32 i = 0; i < PreviewPoints.Num() - 1; i++)
+        {
+            DrawDebugLine(World, PreviewPoints[i], PreviewPoints[i + 1], 
+                         FColor::Green, true, 60.0f, 0, 8.0f);
+        }
+        
+        // Draw spline points as small spheres
+        for (int32 i = 0; i < PreviewPoints.Num(); i++)
+        {
+            FColor PointColor = (i == 0) ? FColor::Yellow : 
+                               (i == PreviewPoints.Num() - 1) ? FColor::Orange : FColor::Cyan;
+            DrawDebugSphere(World, PreviewPoints[i], 25.0f, 8, 
+                           PointColor, true, 60.0f, 0, 2.0f);
+        }
+        
+        // Draw entrance points as RED spheres
+        for (const FVector& Entrance : EntrancePoints)
+        {
+            DrawDebugSphere(World, Entrance, 75.0f, 12, 
+                           FColor::Red, true, 60.0f, 0, 5.0f);
+            // Add entrance label
+            DrawDebugString(World, Entrance + FVector(0, 0, 100), 
+                           TEXT("ENTRANCE"), nullptr, FColor::Red, 60.0f);
+        }
+        
+        // Draw exit points as BLUE spheres  
+        for (const FVector& Exit : ExitPoints)
+        {
+            DrawDebugSphere(World, Exit, 75.0f, 12, 
+                           FColor::Blue, true, 60.0f, 0, 5.0f);
+            // Add exit label
+            DrawDebugString(World, Exit + FVector(0, 0, 100), 
+                           TEXT("EXIT"), nullptr, FColor::Blue, 60.0f);
+        }
+        
+        // Draw pivot point
+        DrawDebugSphere(World, -PivotOffset, 50.0f, 12, 
+                       FColor::Magenta, true, 60.0f, 0, 3.0f);
+        DrawDebugString(World, -PivotOffset + FVector(0, 0, 80), 
+                       TEXT("ORIGIN"), nullptr, FColor::Magenta, 60.0f);
+        
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Debug lines drawn"));
+        
+        // Force viewport refresh
+        if (GEditor)
+        {
+            GEditor->RedrawLevelEditingViewports();
+        }
+        
+        // Show preview notification with more details
+        FString PivotModeText = GetPivotModeDisplayName(PivotMode);
+        FNotificationInfo Info(FText::FromString(FString::Printf(
+            TEXT("Preview: %d points, %s mode, %s pivot\nEntrances: %d, Exits: %d"), 
+            PreviewPoints.Num(), 
+            *UEnum::GetValueAsString(static_cast<EHeightMode>(HeightMode)),
+            *PivotModeText,
+            EntrancePoints.Num(),
+            ExitPoints.Num())));
+        Info.ExpireDuration = 8.0f;
+        Info.bFireAndForget = true;
+        Info.Image = FAppStyle::GetBrush(TEXT("LevelEditor.Tabs.Viewports"));
+        FSlateNotificationManager::Get().AddNotification(Info);
+        
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Preview completed successfully"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Preview failed - no points generated"));
+        
+        FNotificationInfo Info(FText::FromString(TEXT("Preview failed - no points generated from SVG")));
+        Info.ExpireDuration = 5.0f;
+        Info.bFireAndForget = true;
+        FSlateNotificationManager::Get().AddNotification(Info);
+    }
+}
 
 
+AActor* FDiggerEdModeToolkit::CreateCaveSplineActor(USplineComponent* SplineComponent, 
+                                                    const TArray<FVector>& OriginalPoints,
+                                                    const TArray<FVector>& EntrancePoints,
+                                                    const TArray<FVector>& ExitPoints)
+{
+    if (!SplineComponent)
+    {
+        return nullptr;
+    }
+
+    UWorld* World = nullptr;
+    if (GEditor && GEditor->GetEditorWorldContext(false).World())
+    {
+        World = GEditor->GetEditorWorldContext(false).World();
+    }
+    
+    if (!World)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[Digger] Could not get valid world context"));
+        return nullptr;
+    }
+
+    // Calculate the same pivot offset as used in preview INCLUDING manual adjustment
+    FVector TotalPivotOffset;
+    if (bUseWorldScalePositioning)
+    {
+        // Use world-scale positioning - place at the indicator location
+        TotalPivotOffset = CalculatePivotOffset(OriginalPoints, EntrancePoints, ExitPoints) - WorldScalePosition;
+    }
+    else
+    {
+        // Use local offset system
+        FVector BasePivotOffset = CalculatePivotOffset(OriginalPoints, EntrancePoints, ExitPoints);
+        TotalPivotOffset = BasePivotOffset - PreviewPositionOffset;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Creating spline actor with total pivot offset: %s"), *TotalPivotOffset.ToString());
+
+    // Create a new actor properly
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.Name = MakeUniqueObjectName(World, AActor::StaticClass(), 
+                                           *FString::Printf(TEXT("CaveSpline_%s"), 
+                                           *FPaths::GetBaseFilename(SelectedSVGFilePath)));
+    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+    AActor* CaveActor = World->SpawnActor<AActor>(AActor::StaticClass(), SpawnParams);
+    if (!CaveActor)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[Digger] Failed to spawn cave actor"));
+        return nullptr;
+    }
+
+    // CRITICAL FIX: Create spline component properly for runtime creation
+    USplineComponent* EditableSplineComp = NewObject<USplineComponent>(CaveActor, USplineComponent::StaticClass(), TEXT("CaveSpline"));
+    
+    // IMPORTANT: Set creation method and ownership flags BEFORE copying data
+    EditableSplineComp->CreationMethod = EComponentCreationMethod::UserConstructionScript;
+    EditableSplineComp->SetFlags(RF_Transactional | RF_DefaultSubObject);
+    
+    // Copy all the data from the imported spline to the new editable one
+    EditableSplineComp->ClearSplinePoints();
+    
+    int32 NumPoints = SplineComponent->GetNumberOfSplinePoints();
+    for (int32 i = 0; i < NumPoints; i++)
+    {
+        FVector PointLocation = SplineComponent->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::World);
+        FVector PointTangent = SplineComponent->GetTangentAtSplinePoint(i, ESplineCoordinateSpace::World);
+        
+        // Apply pivot offset to match preview (including manual adjustment)
+        PointLocation -= TotalPivotOffset;
+        
+        EditableSplineComp->AddSplinePoint(PointLocation, ESplineCoordinateSpace::Local);
+        EditableSplineComp->SetTangentAtSplinePoint(i, PointTangent, ESplineCoordinateSpace::Local);
+        EditableSplineComp->SetSplinePointType(i, SplineComponent->GetSplinePointType(i));
+    }
+    
+    // Copy other spline properties
+    EditableSplineComp->SetClosedLoop(SplineComponent->IsClosedLoop());
+    EditableSplineComp->UpdateSpline();
+
+    // Set as root component BEFORE registering
+    CaveActor->SetRootComponent(EditableSplineComp);
+    
+    // CRITICAL: Register and set up for editing
+    EditableSplineComp->RegisterComponentWithWorld(World);
+    
+    // IMPORTANT: Add as instance component so it shows in details panel
+    CaveActor->AddInstanceComponent(EditableSplineComp);
+    
+    // Alternative approach: Try to force it to be recognized as editable
+    EditableSplineComp->bEditableWhenInherited = true;
+    //EditableSplineComp->bCreatedByConstructionScript = false;
+    
+    // Set component tags for identification
+    EditableSplineComp->ComponentTags.Add(TEXT("Editable"));
+    EditableSplineComp->ComponentTags.Add(TEXT("ProcgenArcana"));
+    
+    // Set up the actor properties
+    CaveActor->SetActorLabel(SpawnParams.Name.ToString());
+    CaveActor->Tags.Add(TEXT("ProgenCave"));
+    CaveActor->Tags.Add(TEXT("ProcgenArcanaImport"));
+    
+    // CRITICAL: Set the actor location to ZERO since points already have correct positions
+    CaveActor->SetActorLocation(FVector::ZeroVector);
+    
+    // Set up spline properties for editability
+    EditableSplineComp->SetMobility(EComponentMobility::Movable);
+    EditableSplineComp->bInputSplinePointsToConstructionScript = false;
+    EditableSplineComp->bModifiedByConstructionScript = false;
+    EditableSplineComp->bDrawDebug = true;
+    EditableSplineComp->SetVisibility(true);
+    EditableSplineComp->bHiddenInGame = false;
+    
+    // Make sure the actor can be properly selected and edited
+    CaveActor->SetCanBeDamaged(false);
+    // Note: bCanBeInCluster is protected, so we skip this setting
+    
+    // Add metadata for easier identification
+    CaveActor->SetFolderPath(TEXT("Procgen Caves"));
+    
+    // Add custom metadata about the import
+    FString PivotModeText = GetPivotModeDisplayName(PivotMode);
+    CaveActor->Tags.Add(*FString::Printf(TEXT("Pivot_%s"), *PivotModeText.Replace(TEXT(" "), TEXT("_"))));
+    CaveActor->Tags.Add(*FString::Printf(TEXT("Points_%d"), NumPoints));
+    
+    // IMPORTANT: Mark components as editable
+    EditableSplineComp->SetFlags(RF_Transactional); // Allows undo/redo
+    CaveActor->SetFlags(RF_Transactional);
+    
+    // Mark the actor as dirty so it saves properly
+    CaveActor->MarkPackageDirty();
+    
+    // Clear any active preview since we've created the actual spline
+    ClearCavePreview();
+    
+    // Select the newly created actor
+    if (GEditor)
+    {
+        GEditor->SelectNone(false, true);
+        GEditor->SelectActor(CaveActor, true, true);
+        
+        // Force refresh the details panel
+        GEditor->RedrawLevelEditingViewports();
+        FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
+        PropertyModule.NotifyCustomizationModuleChanged();
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("[Digger] Created editable cave actor '%s' with %d spline points, pivot mode: %s"), 
+           *CaveActor->GetName(), NumPoints, *PivotModeText);
+    
+    // Show success notification
+    FNotificationInfo Info(FText::FromString(FString::Printf(
+        TEXT("Created editable cave spline: %d points, %s origin"), 
+        NumPoints, *PivotModeText)));
+    Info.ExpireDuration = 5.0f;
+    Info.bFireAndForget = true;
+    Info.Image = FAppStyle::GetBrush(TEXT("LevelEditor.Tabs.Viewports"));
+    FSlateNotificationManager::Get().AddNotification(Info);
+    
+    return CaveActor;
+}
 
 
 void FDiggerEdModeToolkit::RebuildCustomBrushGrid()
@@ -2733,8 +4323,630 @@ void FDiggerEdModeToolkit::RebuildCustomBrushGrid()
     }
 }
 
+// Helper method to calculate pivot offset based on mode
+FVector FDiggerEdModeToolkit::CalculatePivotOffset(const TArray<FVector>& Points, 
+                                                   const TArray<FVector>& Entrances, 
+                                                   const TArray<FVector>& Exits)
+{
+    if (Points.Num() == 0) return FVector::ZeroVector;
+    
+    switch (PivotMode)
+    {
+    case 0: // Spline Center
+        {
+            FVector Sum = FVector::ZeroVector;
+            for (const FVector& Point : Points)
+            {
+                Sum += Point;
+            }
+            return Sum / Points.Num();
+        }
+        
+    case 1: // First Entrance
+        {
+            if (Entrances.Num() > 0)
+            {
+                return Entrances[0];
+            }
+            return Points[0]; // Fallback to first point
+        }
+        
+    case 2: // First Exit
+        {
+            if (Exits.Num() > 0)
+            {
+                return Exits[0];
+            }
+            return Points.Last(); // Fallback to last point
+        }
+        
+    case 3: // Spline Start
+        {
+            return Points[0];
+        }
+        
+    case 4: // Spline End
+        {
+            return Points.Last();
+        }
+        
+    default:
+        return FVector::ZeroVector;
+    }
+}
+
+// Helper to get display name for pivot mode
+FString FDiggerEdModeToolkit::GetPivotModeDisplayName(int32 Mode)
+{
+    switch (Mode)
+    {
+    case 0: return TEXT("Spline Center");
+    case 1: return TEXT("First Entrance");
+    case 2: return TEXT("First Exit");
+    case 3: return TEXT("Spline Start");
+    case 4: return TEXT("Spline End");
+    default: return TEXT("Unknown");
+    }
+}
+
+void FDiggerEdModeToolkit::ClearCavePreview()
+{
+    UWorld* World = nullptr;
+    if (GEditor && GEditor->GetEditorWorldContext(false).World())
+    {
+        World = GEditor->GetEditorWorldContext(false).World();
+    }
+    
+    if (World)
+    {
+        FlushPersistentDebugLines(World);
+        FlushDebugStrings(World);
+        
+        if (GEditor)
+        {
+            GEditor->RedrawLevelEditingViewports();
+        }
+    }
+    
+    // Clear stored preview data
+    StoredPreviewPoints.Empty();
+    StoredEntrancePoints.Empty();
+    StoredExitPoints.Empty();
+    bHasActivePreview = false;
+}
+
+// Optional: Add validation function
+bool FDiggerEdModeToolkit::ValidateImportSettings()
+{
+    if (SelectedSVGFilePath.IsEmpty())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Digger] No SVG file selected"));
+        return false;
+    }
+
+    if (!FPaths::FileExists(SelectedSVGFilePath))
+    {
+        UE_LOG(LogTemp, Error, TEXT("[Digger] SVG file does not exist: %s"), *SelectedSVGFilePath);
+        return false;
+    }
+
+    if (CaveScale <= 0.0f)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Digger] Invalid cave scale: %f"), CaveScale);
+        return false;
+    }
+
+    if (MaxSplinePoints < 3)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Digger] Max spline points too low: %d"), MaxSplinePoints);
+        return false;
+    }
+
+    return true;
+}
+
+// Enhanced Import function with validation:
+void FDiggerEdModeToolkit::ImportProcgenArcanaCave()
+{
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Starting cave import process..."));
+    
+    // Check if multi-spline is selected and handle appropriately
+    if (OutputFormat == 1)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Multi-spline import selected"));
+        ImportMultiSplineCave();
+        return;
+    }
+    else if (OutputFormat != 0)
+    {
+        FString FormatName;
+        switch (OutputFormat)
+        {
+            case 2: FormatName = TEXT("Procedural Mesh"); break;
+            case 3: FormatName = TEXT("SDF Brush"); break;
+            default: FormatName = TEXT("Unknown"); break;
+        }
+        
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Non-implemented format selected: %s"), *FormatName);
+        
+        FNotificationInfo Info(FText::FromString(FString::Printf(
+            TEXT("%s import is coming soon! Currently using Single Spline mode."), *FormatName)));
+        Info.ExpireDuration = 5.0f;
+        Info.bFireAndForget = true;
+        FSlateNotificationManager::Get().AddNotification(Info);
+        
+        UE_LOG(LogTemp, Warning, TEXT("[ProcgenArcana Importer] %s format not yet implemented, falling back to Single Spline"), *FormatName);
+    }
+
+    if (!CaveImporter)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG] Cave importer not initialized"));
+        return;
+    }
+
+    if (SelectedSVGFilePath.IsEmpty())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG] No SVG file selected"));
+        return;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Importing from file: %s"), *SelectedSVGFilePath);
+
+    // Get the world context
+    UWorld* World = nullptr;
+    if (GEditor && GEditor->GetEditorWorldContext(false).World())
+    {
+        World = GEditor->GetEditorWorldContext(false).World();
+    }
+    
+    if (!World)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG] Could not get valid world context for import"));
+        return;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Got world context successfully"));
+
+    // Prepare import settings
+    FProcgenArcanaImportSettings ImportSettings;
+    ImportSettings.SVGFilePath = SelectedSVGFilePath;
+    ImportSettings.CaveScale = CaveScale;
+    ImportSettings.SimplificationLevel = SimplificationLevel;
+    ImportSettings.MaxSplinePoints = MaxSplinePoints;
+    ImportSettings.HeightMode = static_cast<EHeightMode>(HeightMode);
+    ImportSettings.HeightVariation = HeightVariation;
+    ImportSettings.DescentRate = DescentRate;
+    ImportSettings.bAutoDetectEntrance = bAutoDetectEntrance;
+    ImportSettings.ManualEntrancePoint = ManualEntrancePoint;
+    ImportSettings.bPreviewMode = false; // This is the real import
+
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Import settings prepared"));
+
+    // Get preview data for pivot calculation
+    TArray<FVector> OriginalPoints;
+    TArray<FVector> EntrancePoints; 
+    TArray<FVector> ExitPoints;
+    
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG] About to get preview data..."));
+    
+    // Try to get preview data first
+    if (StoredPreviewPoints.Num() > 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Using cached preview data: %d points"), StoredPreviewPoints.Num());
+        // Use cached preview data if available
+        OriginalPoints = StoredPreviewPoints;
+        EntrancePoints = StoredEntrancePoints;
+        ExitPoints = StoredExitPoints;
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG] No cached data, generating preview data..."));
+        
+        // IMPORTANT: Make sure this doesn't freeze - add timeout or simplify
+        try
+        {
+            OriginalPoints = CaveImporter->PreviewCaveFromSVG(ImportSettings);
+            UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Preview data generated: %d points"), OriginalPoints.Num());
+        }
+        catch (...)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[DEBUG] Exception during preview generation"));
+            return;
+        }
+        
+        if (OriginalPoints.Num() == 0)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[DEBUG] No preview points generated"));
+            return;
+        }
+        
+        // Add some default entrance/exit points
+        EntrancePoints.Add(OriginalPoints[0]);
+        if (OriginalPoints.Num() > 1)
+        {
+            ExitPoints.Add(OriginalPoints.Last());
+        }
+        
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Added default entrance/exit points"));
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG] About to call ImportCaveFromSVG..."));
+    
+    // FORCE SINGLE SPLINE MODE FOR NOW TO AVOID FREEZE
+    USplineComponent* SplineComponent = nullptr;
+    
+    try 
+    {
+        // Call the original single-spline import
+        SplineComponent = CaveImporter->ImportCaveFromSVG(ImportSettings, World, nullptr);
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG] ImportCaveFromSVG completed"));
+    }
+    catch (...)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG] Exception during ImportCaveFromSVG"));
+        return;
+    }
+    
+    if (SplineComponent)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Spline component created successfully"));
+        
+        // Create the actor with proper pivot handling
+        AActor* CaveActor = CreateCaveSplineActor(SplineComponent, OriginalPoints, EntrancePoints, ExitPoints);
+        
+        if (CaveActor)
+        {
+            UE_LOG(LogTemp, Log, TEXT("[DEBUG] Successfully imported cave from: %s"), *SelectedSVGFilePath);
+            
+            // Success notification
+            FNotificationInfo Info(FText::FromString(TEXT("Cave imported successfully!")));
+            Info.ExpireDuration = 3.0f;
+            Info.bFireAndForget = true;
+            Info.Image = FAppStyle::GetBrush(TEXT("LevelEditor.Tabs.Viewports"));
+            FSlateNotificationManager::Get().AddNotification(Info);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("[DEBUG] Failed to create cave actor"));
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG] Failed to import cave from SVG - spline component is null"));
+        
+        FNotificationInfo Info(FText::FromString(TEXT("Cave import failed - check the SVG file format")));
+        Info.ExpireDuration = 5.0f;
+        Info.bFireAndForget = true;
+        FSlateNotificationManager::Get().AddNotification(Info);
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Import process completed"));
+}
+
+// Add this new method for multi-spline import with extensive debugging
+void FDiggerEdModeToolkit::ImportMultiSplineCave()
+{
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG MULTI] Starting multi-spline cave import..."));
+    
+    if (!CaveImporter)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG MULTI] Cave importer not initialized"));
+        return;
+    }
+    
+    if (SelectedSVGFilePath.IsEmpty())
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG MULTI] No SVG file selected"));
+        return;
+    }
+    
+    // Get world context
+    UWorld* World = nullptr;
+    if (GEditor && GEditor->GetEditorWorldContext(false).World())
+    {
+        World = GEditor->GetEditorWorldContext(false).World();
+    }
+    
+    if (!World)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG MULTI] Could not get valid world context"));
+        return;
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG MULTI] Got world context, preparing settings..."));
+    
+    // Prepare import settings
+    FProcgenArcanaImportSettings ImportSettings;
+    ImportSettings.SVGFilePath = SelectedSVGFilePath;
+    ImportSettings.CaveScale = CaveScale;
+    ImportSettings.SimplificationLevel = SimplificationLevel;
+    ImportSettings.MaxSplinePoints = MaxSplinePoints;
+    ImportSettings.HeightMode = static_cast<EHeightMode>(HeightMode);
+    ImportSettings.HeightVariation = HeightVariation;
+    ImportSettings.DescentRate = DescentRate;
+    ImportSettings.bAutoDetectEntrance = bAutoDetectEntrance;
+    ImportSettings.ManualEntrancePoint = ManualEntrancePoint;
+    ImportSettings.bPreviewMode = false;
+    
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG MULTI] Settings prepared, about to call ImportMultiSplineCaveFromSVG..."));
+    
+    // CRITICAL: Add try-catch and timeout protection
+    FMultiSplineCaveData CaveData;
+    try
+    {
+        // Check if the method exists and is accessible
+        if (!CaveImporter->FindFunction(TEXT("ImportMultiSplineCaveFromSVG")))
+        {
+            UE_LOG(LogTemp, Error, TEXT("[DEBUG MULTI] ImportMultiSplineCaveFromSVG method not found! Falling back to single spline."));
+            
+            // Fallback to single spline
+            OutputFormat = 0; // Reset to single spline
+            ImportProcgenArcanaCave();
+            return;
+        }
+        
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG MULTI] Calling ImportMultiSplineCaveFromSVG..."));
+        
+        // Call the multi-spline import with timeout protection
+        CaveData = CaveImporter->ImportMultiSplineCaveFromSVG(ImportSettings);
+        
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG MULTI] ImportMultiSplineCaveFromSVG returned with %d splines"), CaveData.Splines.Num());
+    }
+    catch (...)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG MULTI] Exception during ImportMultiSplineCaveFromSVG! Falling back to single spline."));
+        
+        // Fallback to single spline
+        OutputFormat = 0;
+        ImportProcgenArcanaCave();
+        return;
+    }
+    
+    if (CaveData.Splines.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG MULTI] No splines generated from multi-spline import, falling back to single spline"));
+        
+        // Show notification
+        FNotificationInfo Info(FText::FromString(TEXT("Multi-spline import found no branches. Using single spline instead.")));
+        Info.ExpireDuration = 5.0f;
+        Info.bFireAndForget = true;
+        FSlateNotificationManager::Get().AddNotification(Info);
+        
+        // Fallback to single spline
+        OutputFormat = 0;
+        ImportProcgenArcanaCave();
+        return;
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG MULTI] Multi-spline data validated, calculating positioning..."));
+    
+    // Calculate positioning
+    FVector PivotOffset = FVector::ZeroVector;
+    if (bUseWorldScalePositioning)
+    {
+        PivotOffset = -WorldScalePosition; // Position at world-scale location
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG MULTI] Using world-scale positioning: %s"), *WorldScalePosition.ToString());
+    }
+    else
+    {
+        // Use standard pivot calculation with manual offset
+        TArray<FVector> AllPoints;
+        for (const FCaveSplineData& Spline : CaveData.Splines)
+        {
+            AllPoints.Append(Spline.Points);
+        }
+        
+        if (AllPoints.Num() > 0)
+        {
+            FVector BasePivotOffset = CalculatePivotOffset(AllPoints, CaveData.EntrancePoints, CaveData.ExitPoints);
+            PivotOffset = BasePivotOffset - PreviewPositionOffset;
+            UE_LOG(LogTemp, Warning, TEXT("[DEBUG MULTI] Using local positioning: Base=%s, Manual=%s, Total=%s"), 
+                   *BasePivotOffset.ToString(), *PreviewPositionOffset.ToString(), *PivotOffset.ToString());
+        }
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG MULTI] About to create multi-spline actor..."));
+    
+    // Create multi-spline actor with timeout protection
+    AActor* CaveActor = nullptr;
+    try
+    {
+        // Check if the method exists
+        if (!CaveImporter->FindFunction(TEXT("CreateMultiSplineCaveActor")))
+        {
+            UE_LOG(LogTemp, Error, TEXT("[DEBUG MULTI] CreateMultiSplineCaveActor method not found! Creating manual actor."));
+            CaveActor = CreateManualMultiSplineActor(CaveData, World, PivotOffset);
+        }
+        else
+        {
+            CaveActor = CaveImporter->CreateMultiSplineCaveActor(CaveData, World, PivotOffset);
+        }
+        
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG MULTI] Multi-spline actor creation completed"));
+    }
+    catch (...)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG MULTI] Exception during CreateMultiSplineCaveActor!"));
+        return;
+    }
+    
+    if (CaveActor)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG MULTI] Multi-spline actor created successfully"));
+        
+        // Clear preview
+        ClearCavePreview();
+        
+        // Select the new actor
+        if (GEditor)
+        {
+            GEditor->SelectNone(false, true);
+            GEditor->SelectActor(CaveActor, true, true);
+        }
+        
+        UE_LOG(LogTemp, Log, TEXT("[DEBUG MULTI] Successfully created multi-spline cave with %d splines"), CaveData.Splines.Num());
+        
+        FNotificationInfo Info(FText::FromString(FString::Printf(
+            TEXT("Multi-spline cave created: %d passages, %d junctions"), 
+            CaveData.Splines.Num(), CaveData.Junctions.Num())));
+        Info.ExpireDuration = 5.0f;
+        Info.bFireAndForget = true;
+        Info.Image = FAppStyle::GetBrush(TEXT("LevelEditor.Tabs.Viewports"));
+        FSlateNotificationManager::Get().AddNotification(Info);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG MULTI] Failed to create multi-spline cave actor"));
+        
+        FNotificationInfo Info(FText::FromString(TEXT("Multi-spline cave creation failed")));
+        Info.ExpireDuration = 5.0f;
+        Info.bFireAndForget = true;
+        FSlateNotificationManager::Get().AddNotification(Info);
+    }
+}
+
+// Add this method to your .cpp file as a fallback for multi-spline creation:
 
 
+AActor* FDiggerEdModeToolkit::CreateManualMultiSplineActor(const FMultiSplineCaveData& CaveData, UWorld* World, const FVector& PivotOffset)
+{
+    if (!World || CaveData.Splines.Num() == 0)
+    {
+        return nullptr;
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG MANUAL] Creating manual multi-spline actor with %d splines"), CaveData.Splines.Num());
+    
+    // Create the main actor
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.Name = MakeUniqueObjectName(World, AActor::StaticClass(), 
+                                           *FString::Printf(TEXT("MultiSplineCave_%s"), 
+                                           *FPaths::GetBaseFilename(CaveData.SourceSVGPath.IsEmpty() ? SelectedSVGFilePath : CaveData.SourceSVGPath)));
+    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    
+    AActor* CaveActor = World->SpawnActor<AActor>(AActor::StaticClass(), SpawnParams);
+    if (!CaveActor)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DEBUG MANUAL] Failed to spawn cave actor"));
+        return nullptr;
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG MANUAL] Cave actor spawned, creating root component..."));
+    
+    // Create root component
+    USceneComponent* RootComp = NewObject<USceneComponent>(CaveActor, USceneComponent::StaticClass(), TEXT("RootComponent"));
+    CaveActor->SetRootComponent(RootComp);
+    RootComp->RegisterComponentWithWorld(World);
+    
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG MANUAL] Root component created, creating %d spline components..."), CaveData.Splines.Num());
+    
+    // Create spline components for each passage
+    for (int32 i = 0; i < CaveData.Splines.Num(); i++)
+    {
+        const FCaveSplineData& SplineData = CaveData.Splines[i];
+        
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG MANUAL] Creating spline %d with %d points"), i, SplineData.Points.Num());
+        
+        if (SplineData.Points.Num() < 2)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[DEBUG MANUAL] Skipping spline %d - insufficient points"), i);
+            continue;
+        }
+        
+        // Create spline component
+        FString SplineName = FString::Printf(TEXT("Spline_%s_%d"), 
+                                           *UEnum::GetValueAsString(SplineData.Type), i);
+        
+        USplineComponent* SplineComp = NewObject<USplineComponent>(CaveActor, USplineComponent::StaticClass(), *SplineName);
+        if (!SplineComp)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[DEBUG MANUAL] Failed to create spline component %d"), i);
+            continue;
+        }
+        
+        // Set up spline properties for editability
+        SplineComp->CreationMethod = EComponentCreationMethod::UserConstructionScript;
+        SplineComp->SetFlags(RF_Transactional);
+        SplineComp->bEditableWhenInherited = true;
+
+        
+        // Setup spline points
+        SplineComp->ClearSplinePoints();
+        for (int32 j = 0; j < SplineData.Points.Num(); j++)
+        {
+            FVector PointLocation = SplineData.Points[j] - PivotOffset; // Apply pivot offset
+            SplineComp->AddSplinePoint(PointLocation, ESplineCoordinateSpace::Local);
+            SplineComp->SetSplinePointType(j, ESplinePointType::Curve);
+        }
+        
+        // Update and configure
+        SplineComp->UpdateSpline();
+        SplineComp->SetMobility(EComponentMobility::Movable);
+        SplineComp->bDrawDebug = true;
+        SplineComp->SetVisibility(true);
+        SplineComp->bHiddenInGame = false;
+        
+        // Color-code splines by type (if possible - this may not work in all UE versions)
+        // SplineComp->SetSplineColor(GetSplineColorForType(SplineData.Type));
+        
+        // Add component tags for identification
+        SplineComp->ComponentTags.Add(TEXT("ProcgenArcana"));
+        SplineComp->ComponentTags.Add(*UEnum::GetValueAsString(SplineData.Type));
+        SplineComp->ComponentTags.Add(*FString::Printf(TEXT("Width_%.0f"), SplineData.Width));
+        
+        // Attach to root component
+        SplineComp->AttachToComponent(RootComp, FAttachmentTransformRules::KeepWorldTransform);
+        SplineComp->RegisterComponentWithWorld(World);
+        
+        // Add to actor's component list
+        CaveActor->AddInstanceComponent(SplineComp);
+        
+        UE_LOG(LogTemp, Warning, TEXT("[DEBUG MANUAL] Spline component %d created and attached"), i);
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("[DEBUG MANUAL] Setting up actor properties..."));
+    
+    // Set up actor properties
+    CaveActor->SetActorLabel(SpawnParams.Name.ToString());
+    CaveActor->Tags.Add(TEXT("ProgenCave"));
+    CaveActor->Tags.Add(TEXT("MultiSpline"));
+    CaveActor->Tags.Add(TEXT("ProcgenArcanaImport"));
+    CaveActor->Tags.Add(*FString::Printf(TEXT("Splines_%d"), CaveData.Splines.Num()));
+    CaveActor->Tags.Add(*FString::Printf(TEXT("Junctions_%d"), CaveData.Junctions.Num()));
+    CaveActor->SetFolderPath(TEXT("Procgen Caves"));
+    
+    // Apply final positioning
+    CaveActor->SetActorLocation(FVector::ZeroVector); // Points already have offset applied
+    
+    // Mark as editable and dirty
+    CaveActor->SetFlags(RF_Transactional);
+    CaveActor->MarkPackageDirty();
+    
+    TArray<USplineComponent*> SplineComponents;
+    CaveActor->GetComponents<USplineComponent>(SplineComponents);
+
+    UE_LOG(LogTemp, Log, TEXT("[DEBUG MANUAL] Successfully created manual multi-spline cave actor with %d spline components"),
+           SplineComponents.Num());
+
+    
+    return CaveActor;
+}
+
+
+// Helper method to get spline color based on passage type
+FLinearColor FDiggerEdModeToolkit::GetSplineColorForType(ECavePassageType Type)
+{
+    switch (Type)
+    {
+        case ECavePassageType::MainTunnel:   return FLinearColor::Green;
+        case ECavePassageType::SideBranch:   return FLinearColor::Yellow;
+        case ECavePassageType::Chamber:      return FColor::Cyan;
+        case ECavePassageType::Connector:    return FColor::Orange;
+        case ECavePassageType::Entrance:     return FLinearColor::Red;
+        case ECavePassageType::Exit:         return FLinearColor::Blue;
+        default:                             return FLinearColor::White;
+    }
+}
 
 
 FName FDiggerEdModeToolkit::GetToolkitFName() const { return FName("DiggerEdMode"); }
