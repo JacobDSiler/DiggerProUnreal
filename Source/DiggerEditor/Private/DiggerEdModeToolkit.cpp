@@ -3842,7 +3842,6 @@ void FDiggerEdModeToolkit::RebuildIslandGrid()
 // In DiggerEdModeToolkit.cpp
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()
 {
-    // Example implementation:
     const int32 NumColumns = 4;
     TSharedRef<SUniformGridPanel> IslandGridPanel = SNew(SUniformGridPanel).SlotPadding(2.0f);
 
@@ -3851,17 +3850,35 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()
         IslandGridPanel->AddSlot(i % NumColumns, i / NumColumns)
         [
             SNew(SButton)
-            .ButtonColorAndOpacity_Lambda([this, i]() { return (SelectedIslandIndex == i) ? FLinearColor::Yellow : FLinearColor::White; })
-            .OnClicked_Lambda([this, i]() { SelectedIslandIndex = i; return FReply::Handled(); })
+            .ButtonColorAndOpacity_Lambda([this, i]() -> FLinearColor
+            {
+                // Defensive check in case of async changes
+                if (!this || i < 0 || i >= Islands.Num())
+                {
+                    return FLinearColor::Gray;
+                }
+                return (SelectedIslandIndex == i) ? FLinearColor::Yellow : FLinearColor::White;
+            })
+            .OnClicked_Lambda([this, i]() -> FReply
+            {
+                if (!this || i < 0 || i >= Islands.Num())
+                {
+                    return FReply::Unhandled();
+                }
+                SelectedIslandIndex = i;
+                return FReply::Handled();
+            })
             [
                 SNew(STextBlock)
-                .Text(FText::Format(FText::FromString("Island {0}"), FText::AsNumber(i+1)))
+                .Text(FText::Format(FText::FromString("Island {0}"), FText::AsNumber(i + 1)))
             ]
         ];
     }
 
     return IslandGridPanel;
 }
+
+
 
 
 
