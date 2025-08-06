@@ -9,7 +9,7 @@ class ADiggerManager;
 class UVoxelChunk;
 
 
-// Struct to hold SDF value and possibly other data like voxel material, etc.
+// Enhanced struct to hold SDF value and material data for the triplanar material
 USTRUCT()
 struct FVoxelData
 {
@@ -18,12 +18,98 @@ struct FVoxelData
 	// SDF value for marching cubes (negative inside, positive outside, zero on the surface)
 	float SDFValue;
 
-	// Optionally, additional data like material or color can be stored here
-	// Example: int32 MaterialID;
+	// Material weights for triplanar blending (should sum to 1.0 or be normalized)
+	UPROPERTY()
+	float RockWeight;
+    
+	UPROPERTY()
+	float DirtWeight;
+    
+	UPROPERTY()
+	float GrassWeight;
 
-	FVoxelData() : SDFValue(0.0f) {}
-	FVoxelData(float InSDFValue) : SDFValue(InSDFValue) {}
+	// Alternative: Single material ID if you prefer discrete materials
+	// int32 MaterialID; // 0=Rock, 1=Dirt, 2=Grass, etc.
+
+	// Optional: Additional properties
+	// float Hardness;    // For mining/digging mechanics
+	// float Temperature; // For environmental effects
+	// int32 BiomeID;     // For biome-specific materials
+
+	FVoxelData() 
+		: SDFValue(0.0f)
+		, RockWeight(0.0f)
+		, DirtWeight(0.0f) 
+		, GrassWeight(0.0f)
+	{}
+
+	FVoxelData(float InSDFValue) 
+		: SDFValue(InSDFValue)
+		, RockWeight(0.0f)
+		, DirtWeight(1.0f) // Default to dirt
+		, GrassWeight(0.0f)
+	{}
+
+	FVoxelData(float InSDFValue, float InRock, float InDirt, float InGrass)
+		: SDFValue(InSDFValue)
+		, RockWeight(InRock)
+		, DirtWeight(InDirt)
+		, GrassWeight(InGrass)
+	{}
+	// Helper function to normalize material weights
+	void NormalizeMaterialWeights()
+	{
+		float Total = RockWeight + DirtWeight + GrassWeight;
+		if (Total > 0.0f)
+		{
+			RockWeight /= Total;
+			DirtWeight /= Total;
+			GrassWeight /= Total;
+		}
+		else
+		{
+			// Default to dirt if no materials assigned
+			DirtWeight = 1.0f;
+		}
+	}
+	
+	// Helper function to set material based on height/biome
+	void SetMaterialByHeight(float WorldZ)
+	{
+		// Example height-based material assignment
+		if (WorldZ > 500.0f) // High altitude = rock
+		{
+			RockWeight = 0.8f;
+			DirtWeight = 0.2f;
+			GrassWeight = 0.0f;
+		}
+		else if (WorldZ > 50.0f) // Mid altitude = grass with some dirt
+		{
+			RockWeight = 0.0f;
+			DirtWeight = 0.3f;
+			GrassWeight = 0.7f;
+		}
+		else // Low altitude = mostly dirt
+		{
+			RockWeight = 0.1f;
+			DirtWeight = 0.9f;
+			GrassWeight = 0.0f;
+		}
+	}
+
+	// Helper function to blend materials based on noise or other factors
+	void BlendMaterials(const FVoxelData& Other, float BlendFactor)
+	{
+		BlendFactor = FMath::Clamp(BlendFactor, 0.0f, 1.0f);
+        
+		RockWeight = FMath::Lerp(RockWeight, Other.RockWeight, BlendFactor);
+		DirtWeight = FMath::Lerp(DirtWeight, Other.DirtWeight, BlendFactor);
+		GrassWeight = FMath::Lerp(GrassWeight, Other.GrassWeight, BlendFactor);
+        
+		NormalizeMaterialWeights();
+	}
 };
+
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnIslandDetected, const FIslandData&, Island);
 

@@ -2455,6 +2455,19 @@ TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Landscap
 
 TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos)
 {
+    // Check if the Landscape pointer is null
+    if (!Landscape)
+    {
+        UE_LOG(LogTemp, Error, TEXT("SampleLandscapeHeight: Landscape is null! WorldPos=%s"), *WorldPos.ToString());
+        return TOptional<float>(); // Or your fallback value
+    }
+
+    // Check if there are no landscape height caches.
+    if (LandscapeHeightCaches.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SampleLandscapeHeight: LandscapeHeightCaches is empty!"));
+    }
+
     // Check if we have a valid cache for the landscape height
     if (LandscapeHeightCaches.Contains(Landscape))
     {

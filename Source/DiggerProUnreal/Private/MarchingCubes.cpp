@@ -999,6 +999,10 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
         return;
     }
 
+	//Make the vertex colors data
+	//Parameter version: TArray<FColor>& OutVertexColors
+	TArray<FColor> OutVertexColors; // NEW: Vertex colors for material data
+	
     // WorldSpaceOffset for proper alignment for center aligned chunk schema.
     FVector TotalOffset = FVector(FVoxelConversion::LocalVoxelSize * 0.25F - FVoxelConversion::ChunkWorldSize * 0.25f);
     
@@ -1367,12 +1371,25 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
 	FindRimVertices(OutVertices, OutTriangles, RimVertices);
 	AddSkirtMesh(RimVertices, OutVertices, OutTriangles, OutNormals);*/
 
+	
+	// NEW: Generate vertex colors based on voxel material data
+	// ToDo: GenerateVertexColors(OutVertices, OutVertexColors);
+
+	// Optional: Generate UVs (even though we're using triplanar, some shaders might need them)
+	// ToDo: GenerateUVs(OutVertices, OutUVs);
+
+	// Apply world space offset to all vertices after mesh generation is complete
+	for (int32 i = 0; i < OutVertices.Num(); ++i) {
+		OutVertices[i] += TotalOffset;
+	}
 
     if (IsDebugging()) {
         UE_LOG(LogTemp, Log, TEXT("Mesh generated from grid: %d vertices, %d triangles."), OutVertices.Num(), OutTriangles.Num());
         UE_LOG(LogTemp, Log, TEXT("Cells with explicit voxels: %d"), CellsWithExplicitVoxels.Num());
         UE_LOG(LogTemp, Log, TEXT("Below-terrain cells with air voxels: %d"), BelowTerrainCellsWithAirVoxels.Num());
-        
+    	UE_LOG(LogTemp, Log, TEXT("Mesh generated: %d vertices, %d triangles, %d vertex colors"), 
+			   OutVertices.Num(), OutTriangles.Num(), OutVertexColors.Num());
+    	
         // Visualize below-terrain cells with air voxels
         for (const FIntVector& Cell : BelowTerrainCellsWithAirVoxels) {
             FVector CellOrigin = Origin + FVector(Cell) * VoxelSize;
@@ -1389,6 +1406,174 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
             );
         }
     }
+}
+
+// NEW: Function to generate vertex colors from voxel data
+/*void UMarchingCubes::GenerateVertexColors(
+	const TArray<FVector>& Vertices, 
+	TArray<FColor>& OutVertexColors)
+{
+	OutVertexColors.SetNum(Vertices.Num());
+
+	for (int32 i = 0; i < Vertices.Num(); ++i)
+	{
+		const FVector& WorldPos = Vertices[i];
+        
+		// Sample voxel data at this vertex position
+		FVoxelData VoxelData = VoxelGrid->SampleVoxelDataAtPosition(WorldPos);
+        
+		// Calculate blend factor from SDF (0 = landscape, 1 = pure voxel)
+		float BlendFactor = CalculateBlendFactor(VoxelData.SDFValue, WorldPos);
+        
+		// Pack material weights and blend factor into vertex color
+		OutVertexColors[i] = PackMaterialData(VoxelData, BlendFactor);
+	}
+}
+
+FVoxelData UMarchingCubes::SampleVoxelDataAtPosition(const FVector& WorldPos)
+{
+    // Convert world position to voxel grid coordinates
+    FVector LocalPos = WorldPos - FVoxelConversion::Origin;
+    FIntVector VoxelCoord = FIntVector(
+        FMath::FloorToInt(LocalPos.X / FVoxelConversion::LocalVoxelSize),
+        FMath::FloorToInt(LocalPos.Y / FVoxelConversion::LocalVoxelSize),
+        FMath::FloorToInt(LocalPos.Z / FVoxelConversion::LocalVoxelSize)
+    );
+
+    // Sample the voxel data (adjust based on your voxel storage system)
+    FVoxelData VoxelData;
+    
+   if (true)// if (IsValid(VoxelCoord))
+    {
+        // Get voxel data from your storage system
+        VoxelData = *VoxelGrid->GetVoxelData(VoxelCoord);
+        
+        // If material weights aren't set, calculate them based on world position
+        if (VoxelData.RockWeight + VoxelData.DirtWeight + VoxelData.GrassWeight <= 0.0f)
+        {
+            VoxelData.SetMaterialByHeight(WorldPos.Z);
+        }
+    }
+    else
+    {
+        // Default voxel data for out-of-bounds positions
+        VoxelData = FVoxelData(1.0f); // Positive SDF (outside)
+        VoxelData.SetMaterialByHeight(WorldPos.Z); 
+    }
+
+    return VoxelData;
+}
+*/
+// Calculate blend factor between landscape and voxel materials
+float UMarchingCubes::CalculateBlendFactor(float SDFValue, const FVector& WorldPos)
+{
+    // Option 1: Simple SDF-based blending
+    float BlendFactor = FMath::Clamp((SDFValue + 1.0f) / 2.0f, 0.0f, 1.0f);
+    
+    // Option 2: Distance from landscape surface
+    // float LandscapeHeight = GetLandscapeHeightAtPosition(WorldPos);
+    // float DistanceFromLandscape = FMath::Abs(WorldPos.Z - LandscapeHeight);
+    // BlendFactor = FMath::Clamp(DistanceFromLandscape / BlendDistance, 0.0f, 1.0f);
+    
+    // Option 3: Combination of both
+    // BlendFactor = FMath::Max(BlendFactor, DistanceBlendFactor);
+    
+    return BlendFactor;
+}
+
+// Pack material data into vertex color (RGBA channels)
+/* ToDo: FColor UMarchingCubes::PackMaterialData(const FVoxelData& VoxelData, float BlendFactor)
+{
+    // Ensure material weights are normalized
+    FVoxelData NormalizedData = VoxelData;
+    NormalizedData.NormalizeMaterialWeights();
+    
+    // Pack into vertex color:
+    // R = Rock weight (0-255)
+    // G = Dirt weight (0-255)  
+    // B = Grass weight (0-255)
+    // A = Blend factor (0-255)
+    
+    uint8 RockValue = (uint8)(NormalizedData.RockWeight * 255.0f);
+    uint8 DirtValue = (uint8)(NormalizedData.DirtWeight * 255.0f);
+    uint8 GrassValue = (uint8)(NormalizedData.GrassWeight * 255.0f);
+    uint8 BlendValue = (uint8)(FMath::Clamp(BlendFactor, 0.0f, 1.0f) * 255.0f);
+    
+    return FColor(RockValue, DirtValue, GrassValue, BlendValue);
+}*/
+
+// Optional: Generate UVs for vertices (simple planar projection)
+/* ToDo: void UMarchingCubes::GenerateUVs(const TArray<FVector>& Vertices, TArray<FVector2D>& OutUVs)
+{
+    OutUVs.SetNum(Vertices.Num());
+    
+    const float UVScale = 0.01f; // Adjust based on your world scale
+    
+    for (int32 i = 0; i < Vertices.Num(); ++i)
+    {
+        const FVector& Vertex = Vertices[i];
+        
+        // Simple XY projection for UVs (triplanar handles the rest)
+        OutUVs[i] = FVector2D(
+            Vertex.X * UVScale,
+            Vertex.Y * UVScale
+        );
+    }
+}
+*/
+// Update your mesh component creation to include vertex colors
+void UMarchingCubes::UpdateMeshComponent(UProceduralMeshComponent* MeshComponent)
+{
+    TArray<FVector> Vertices;
+    TArray<int32> Triangles;
+    TArray<FVector> Normals;
+    TArray<FColor> VertexColors;    // NEW
+    TArray<FVector2D> UVs;          // NEW
+    
+    // Generate mesh with material data
+    // ToDo: GenerateMeshWithMaterials(Vertices, Triangles, Normals, VertexColors, UVs);
+    
+    // Create mesh section with vertex colors
+    TArray<FProcMeshTangent> Tangents; // Can be empty for triplanar materials
+    
+    MeshComponent->CreateMeshSection_LinearColor(
+        0,                                    // Section index
+        Vertices,                            // Vertices
+        Triangles,                           // Triangles
+        Normals,                             // Normals
+        UVs,                                 // UVs
+        TArray<FLinearColor>(),              // Vertex colors (convert FColor to FLinearColor if needed)
+        Tangents,                            // Tangents
+        true                                 // Create collision
+    );
+    
+    // Alternative: If you need to convert FColor to FLinearColor
+    TArray<FLinearColor> LinearVertexColors;
+    LinearVertexColors.Reserve(VertexColors.Num());
+    for (const FColor& Color : VertexColors)
+    {
+        LinearVertexColors.Add(FLinearColor(Color));
+    }
+    
+    // Then use LinearVertexColors in CreateMeshSection_LinearColor
+}
+
+// Example: Enhanced voxel modification for digging/building
+void UMarchingCubes::ModifyVoxelWithMaterial(
+    const FIntVector& VoxelCoord, 
+    float NewSDFValue, 
+    float RockWeight = 0.0f,
+    float DirtWeight = 1.0f, 
+    float GrassWeight = 0.0f)
+{
+    FVoxelData NewVoxelData(NewSDFValue, RockWeight, DirtWeight, GrassWeight);
+    NewVoxelData.NormalizeMaterialWeights();
+    /* ToDo:
+    SetVoxel(VoxelCoord, NewVoxelData);
+    
+    // Mark chunk for remeshing
+    MarkChunkForUpdate(VoxelCoord);
+    */
 }
 
 

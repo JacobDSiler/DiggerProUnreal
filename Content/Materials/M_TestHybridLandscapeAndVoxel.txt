@@ -1,0 +1,339 @@
+Begin Object Class=/Script/Engine.Material Name="M_DiggerHybrid"
+   // Material Properties
+   MaterialDomain=MD_Surface
+   BlendMode=BLEND_Opaque
+   ShadingModel=MSM_DefaultLit
+   bUsedWithLandscape=True
+   bUsedWithStaticMeshes=True
+   bUsedWithInstancedStaticMeshes=True
+   
+   // PARAMETERS - Artist Controls
+   EditorParameters(0)=(ParameterName="VoxelBlendStrength",ParameterType=EMT_Scalar,ExpressionGuid=(A=1,B=2,C=3,D=4))
+   EditorParameters(1)=(ParameterName="TriplanarScale",ParameterType=EMT_Scalar,ExpressionGuid=(A=5,B=6,C=7,D=8))
+   EditorParameters(2)=(ParameterName="BlendSharpness",ParameterType=EMT_Scalar,ExpressionGuid=(A=9,B=10,C=11,D=12))
+   EditorParameters(3)=(ParameterName="RockAlbedo",ParameterType=EMT_Texture,ExpressionGuid=(A=13,B=14,C=15,D=16))
+   EditorParameters(4)=(ParameterName="RockNormal",ParameterType=EMT_Texture,ExpressionGuid=(A=17,B=18,C=19,D=20))
+   EditorParameters(5)=(ParameterName="DirtAlbedo",ParameterType=EMT_Texture,ExpressionGuid=(A=21,B=22,C=23,D=24))
+   EditorParameters(6)=(ParameterName="DirtNormal",ParameterType=EMT_Texture,ExpressionGuid=(A=25,B=26,C=27,D=28))
+
+   // EXPRESSION NODES
+   Expressions(0)=MaterialExpressionScalarParameter'"MaterialExpressionScalarParameter_0"'
+   Expressions(1)=MaterialExpressionScalarParameter'"MaterialExpressionScalarParameter_1"'
+   Expressions(2)=MaterialExpressionScalarParameter'"MaterialExpressionScalarParameter_2"'
+   Expressions(3)=MaterialExpressionTextureObjectParameter'"MaterialExpressionTextureObjectParameter_0"'
+   Expressions(4)=MaterialExpressionTextureObjectParameter'"MaterialExpressionTextureObjectParameter_1"'
+   Expressions(5)=MaterialExpressionTextureObjectParameter'"MaterialExpressionTextureObjectParameter_2"'
+   Expressions(6)=MaterialExpressionTextureObjectParameter'"MaterialExpressionTextureObjectParameter_3"'
+   Expressions(7)=MaterialExpressionVertexColor'"MaterialExpressionVertexColor_0"'
+   Expressions(8)=MaterialExpressionWorldPosition'"MaterialExpressionWorldPosition_0"'
+   Expressions(9)=MaterialExpressionVertexNormalWS'"MaterialExpressionVertexNormalWS_0"'
+   Expressions(10)=MaterialExpressionLandscapeLayerSample'"MaterialExpressionLandscapeLayerSample_0"'
+   Expressions(11)=MaterialExpressionLandscapeLayerSample'"MaterialExpressionLandscapeLayerSample_1"'
+   Expressions(12)=MaterialExpressionMaterialFunctionCall'"MaterialExpressionMaterialFunctionCall_0"'
+   Expressions(13)=MaterialExpressionMaterialFunctionCall'"MaterialExpressionMaterialFunctionCall_1"'
+   Expressions(14)=MaterialExpressionMaterialFunctionCall'"MaterialExpressionMaterialFunctionCall_2"'
+   Expressions(15)=MaterialExpressionMaterialFunctionCall'"MaterialExpressionMaterialFunctionCall_3"'
+   Expressions(16)=MaterialExpressionComponentMask'"MaterialExpressionComponentMask_0"'
+   Expressions(17)=MaterialExpressionComponentMask'"MaterialExpressionComponentMask_1"'
+   Expressions(18)=MaterialExpressionComponentMask'"MaterialExpressionComponentMask_2"'
+   Expressions(19)=MaterialExpressionMultiply'"MaterialExpressionMultiply_0"'
+   Expressions(20)=MaterialExpressionMultiply'"MaterialExpressionMultiply_1"'
+   Expressions(21)=MaterialExpressionMultiply'"MaterialExpressionMultiply_2"'
+   Expressions(22)=MaterialExpressionMultiply'"MaterialExpressionMultiply_3"'
+   Expressions(23)=MaterialExpressionMultiply'"MaterialExpressionMultiply_4"'
+   Expressions(24)=MaterialExpressionMultiply'"MaterialExpressionMultiply_5"'
+   Expressions(25)=MaterialExpressionAdd'"MaterialExpressionAdd_0"'
+   Expressions(26)=MaterialExpressionAdd'"MaterialExpressionAdd_1"'
+   Expressions(27)=MaterialExpressionAdd'"MaterialExpressionAdd_2"'
+   Expressions(28)=MaterialExpressionAdd'"MaterialExpressionAdd_3"'
+   Expressions(29)=MaterialExpressionSaturate'"MaterialExpressionSaturate_0"'
+   Expressions(30)=MaterialExpressionLinearInterpolate'"MaterialExpressionLinearInterpolate_0"'
+   Expressions(31)=MaterialExpressionLinearInterpolate'"MaterialExpressionLinearInterpolate_1"'
+
+   // MATERIAL OUTPUT CONNECTIONS
+   BaseColor=(Expression=MaterialExpressionLinearInterpolate_0,OutputIndex=0)
+   Normal=(Expression=MaterialExpressionLinearInterpolate_1,OutputIndex=0)
+   Roughness=(ConstR=0.8)
+   Metallic=(ConstR=0.0)
+End Object
+
+// SCALAR PARAMETERS
+Begin Object Class=/Script/Engine.MaterialExpressionScalarParameter Name="MaterialExpressionScalarParameter_0"
+   ParameterName="VoxelBlendStrength"
+   DefaultValue=1.000000
+   Group="Voxel Controls"
+   MaterialExpressionEditorX=-2048
+   MaterialExpressionEditorY=-512
+   MaterialExpressionGuid=(A=1,B=2,C=3,D=4)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionScalarParameter Name="MaterialExpressionScalarParameter_1"
+   ParameterName="TriplanarScale"
+   DefaultValue=1.000000
+   Group="Triplanar"
+   MaterialExpressionEditorX=-2048
+   MaterialExpressionEditorY=-448
+   MaterialExpressionGuid=(A=5,B=6,C=7,D=8)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionScalarParameter Name="MaterialExpressionScalarParameter_2"
+   ParameterName="BlendSharpness"
+   DefaultValue=4.000000
+   Group="Triplanar"
+   MaterialExpressionEditorX=-2048
+   MaterialExpressionEditorY=-384
+   MaterialExpressionGuid=(A=9,B=10,C=11,D=12)
+End Object
+
+// TEXTURE PARAMETERS
+Begin Object Class=/Script/Engine.MaterialExpressionTextureObjectParameter Name="MaterialExpressionTextureObjectParameter_0"
+   ParameterName="RockAlbedo"
+   Texture=None
+   Group="Rock Textures"
+   MaterialExpressionEditorX=-2048
+   MaterialExpressionEditorY=-256
+   MaterialExpressionGuid=(A=13,B=14,C=15,D=16)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionTextureObjectParameter Name="MaterialExpressionTextureObjectParameter_1"
+   ParameterName="RockNormal"
+   Texture=None
+   SamplerType=SAMPLERTYPE_Normal
+   Group="Rock Textures"
+   MaterialExpressionEditorX=-2048
+   MaterialExpressionEditorY=-192
+   MaterialExpressionGuid=(A=17,B=18,C=19,D=20)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionTextureObjectParameter Name="MaterialExpressionTextureObjectParameter_2"
+   ParameterName="DirtAlbedo"
+   Texture=None
+   Group="Dirt Textures"
+   MaterialExpressionEditorX=-2048
+   MaterialExpressionEditorY=-128
+   MaterialExpressionGuid=(A=21,B=22,C=23,D=24)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionTextureObjectParameter Name="MaterialExpressionTextureObjectParameter_3"
+   ParameterName="DirtNormal"
+   Texture=None
+   SamplerType=SAMPLERTYPE_Normal
+   Group="Dirt Textures"
+   MaterialExpressionEditorX=-2048
+   MaterialExpressionEditorY=-64
+   MaterialExpressionGuid=(A=25,B=26,C=27,D=28)
+End Object
+
+// INPUT NODES
+Begin Object Class=/Script/Engine.MaterialExpressionVertexColor Name="MaterialExpressionVertexColor_0"
+   MaterialExpressionEditorX=-1792
+   MaterialExpressionEditorY=-512
+   MaterialExpressionGuid=(A=29,B=30,C=31,D=32)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionWorldPosition Name="MaterialExpressionWorldPosition_0"
+   MaterialExpressionEditorX=-1792
+   MaterialExpressionEditorY=-448
+   MaterialExpressionGuid=(A=33,B=34,C=35,D=36)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionVertexNormalWS Name="MaterialExpressionVertexNormalWS_0"
+   MaterialExpressionEditorX=-1792
+   MaterialExpressionEditorY=-384
+   MaterialExpressionGuid=(A=37,B=38,C=39,D=40)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionLandscapeLayerSample Name="MaterialExpressionLandscapeLayerSample_0"
+   ParameterName="Rock"
+   MaterialExpressionEditorX=-1792
+   MaterialExpressionEditorY=-320
+   MaterialExpressionGuid=(A=41,B=42,C=43,D=44)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionLandscapeLayerSample Name="MaterialExpressionLandscapeLayerSample_1"
+   ParameterName="Dirt"
+   MaterialExpressionEditorX=-1792
+   MaterialExpressionEditorY=-256
+   MaterialExpressionGuid=(A=45,B=46,C=47,D=48)
+End Object
+
+// TRIPLANAR MATERIAL FUNCTIONS
+Begin Object Class=/Script/Engine.MaterialExpressionMaterialFunctionCall Name="MaterialExpressionMaterialFunctionCall_0"
+   MaterialFunction=/Engine/Functions/Engine_MaterialFunctions01/Texturing/WorldAlignedTexture.WorldAlignedTexture
+   FunctionInputs(0)=(ExpressionInput=(Expression=MaterialExpressionTextureObjectParameter_0))
+   FunctionInputs(1)=(ExpressionInput=(Expression=MaterialExpressionScalarParameter_1))
+   FunctionInputs(2)=(ExpressionInput=(Expression=MaterialExpressionWorldPosition_0))
+   FunctionInputs(3)=(ExpressionInput=(Expression=MaterialExpressionVertexNormalWS_0))
+   FunctionInputs(4)=(ExpressionInput=(Expression=MaterialExpressionScalarParameter_2))
+   MaterialExpressionEditorX=-1536
+   MaterialExpressionEditorY=-384
+   MaterialExpressionGuid=(A=49,B=50,C=51,D=52)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionMaterialFunctionCall Name="MaterialExpressionMaterialFunctionCall_1"
+   MaterialFunction=/Engine/Functions/Engine_MaterialFunctions01/Texturing/WorldAlignedNormal.WorldAlignedNormal
+   FunctionInputs(0)=(ExpressionInput=(Expression=MaterialExpressionTextureObjectParameter_1))
+   FunctionInputs(1)=(ExpressionInput=(Expression=MaterialExpressionScalarParameter_1))
+   FunctionInputs(2)=(ExpressionInput=(Expression=MaterialExpressionWorldPosition_0))
+   FunctionInputs(3)=(ExpressionInput=(Expression=MaterialExpressionVertexNormalWS_0))
+   FunctionInputs(4)=(ExpressionInput=(Expression=MaterialExpressionScalarParameter_2))
+   MaterialExpressionEditorX=-1536
+   MaterialExpressionEditorY=-320
+   MaterialExpressionGuid=(A=53,B=54,C=55,D=56)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionMaterialFunctionCall Name="MaterialExpressionMaterialFunctionCall_2"
+   MaterialFunction=/Engine/Functions/Engine_MaterialFunctions01/Texturing/WorldAlignedTexture.WorldAlignedTexture
+   FunctionInputs(0)=(ExpressionInput=(Expression=MaterialExpressionTextureObjectParameter_2))
+   FunctionInputs(1)=(ExpressionInput=(Expression=MaterialExpressionScalarParameter_1))
+   FunctionInputs(2)=(ExpressionInput=(Expression=MaterialExpressionWorldPosition_0))
+   FunctionInputs(3)=(ExpressionInput=(Expression=MaterialExpressionVertexNormalWS_0))
+   FunctionInputs(4)=(ExpressionInput=(Expression=MaterialExpressionScalarParameter_2))
+   MaterialExpressionEditorX=-1536
+   MaterialExpressionEditorY=-256
+   MaterialExpressionGuid=(A=57,B=58,C=59,D=60)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionMaterialFunctionCall Name="MaterialExpressionMaterialFunctionCall_3"
+   MaterialFunction=/Engine/Functions/Engine_MaterialFunctions01/Texturing/WorldAlignedNormal.WorldAlignedNormal
+   FunctionInputs(0)=(ExpressionInput=(Expression=MaterialExpressionTextureObjectParameter_3))
+   FunctionInputs(1)=(ExpressionInput=(Expression=MaterialExpressionScalarParameter_1))
+   FunctionInputs(2)=(ExpressionInput=(Expression=MaterialExpressionWorldPosition_0))
+   FunctionInputs(3)=(ExpressionInput=(Expression=MaterialExpressionVertexNormalWS_0))
+   FunctionInputs(4)=(ExpressionInput=(Expression=MaterialExpressionScalarParameter_2))
+   MaterialExpressionEditorX=-1536
+   MaterialExpressionEditorY=-192
+   MaterialExpressionGuid=(A=61,B=62,C=63,D=64)
+End Object
+
+// VERTEX COLOR EXTRACTION
+Begin Object Class=/Script/Engine.MaterialExpressionComponentMask Name="MaterialExpressionComponentMask_0"
+   Input=(Expression=MaterialExpressionVertexColor_0,Mask=1,MaskR=1,MaskG=0,MaskB=0,MaskA=0)
+   MaterialExpressionEditorX=-1280
+   MaterialExpressionEditorY=-512
+   MaterialExpressionGuid=(A=65,B=66,C=67,D=68)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionComponentMask Name="MaterialExpressionComponentMask_1"
+   Input=(Expression=MaterialExpressionVertexColor_0,Mask=1,MaskR=0,MaskG=1,MaskB=0,MaskA=0)
+   MaterialExpressionEditorX=-1280
+   MaterialExpressionEditorY=-448
+   MaterialExpressionGuid=(A=69,B=70,C=71,D=72)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionComponentMask Name="MaterialExpressionComponentMask_2"
+   Input=(Expression=MaterialExpressionVertexColor_0,Mask=1,MaskR=0,MaskG=0,MaskB=0,MaskA=1)
+   MaterialExpressionEditorX=-1280
+   MaterialExpressionEditorY=-384
+   MaterialExpressionGuid=(A=73,B=74,C=75,D=76)
+End Object
+
+// VOXEL MATERIAL BLENDING
+Begin Object Class=/Script/Engine.MaterialExpressionMultiply Name="MaterialExpressionMultiply_0"
+   A=(Expression=MaterialExpressionMaterialFunctionCall_0)
+   B=(Expression=MaterialExpressionComponentMask_0)
+   MaterialExpressionEditorX=-1024
+   MaterialExpressionEditorY=-384
+   MaterialExpressionGuid=(A=77,B=78,C=79,D=80)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionMultiply Name="MaterialExpressionMultiply_1"
+   A=(Expression=MaterialExpressionMaterialFunctionCall_2)
+   B=(Expression=MaterialExpressionComponentMask_1)
+   MaterialExpressionEditorX=-1024
+   MaterialExpressionEditorY=-320
+   MaterialExpressionGuid=(A=81,B=82,C=83,D=84)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionMultiply Name="MaterialExpressionMultiply_2"
+   A=(Expression=MaterialExpressionMaterialFunctionCall_1)
+   B=(Expression=MaterialExpressionComponentMask_0)
+   MaterialExpressionEditorX=-1024
+   MaterialExpressionEditorY=-256
+   MaterialExpressionGuid=(A=85,B=86,C=87,D=88)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionMultiply Name="MaterialExpressionMultiply_3"
+   A=(Expression=MaterialExpressionMaterialFunctionCall_3)
+   B=(Expression=MaterialExpressionComponentMask_1)
+   MaterialExpressionEditorX=-1024
+   MaterialExpressionEditorY=-192
+   MaterialExpressionGuid=(A=89,B=90,C=91,D=92)
+End Object
+
+// LANDSCAPE MATERIAL BLENDING
+Begin Object Class=/Script/Engine.MaterialExpressionMultiply Name="MaterialExpressionMultiply_4"
+   A=(Expression=MaterialExpressionMaterialFunctionCall_0)
+   B=(Expression=MaterialExpressionLandscapeLayerSample_0)
+   MaterialExpressionEditorX=-1024
+   MaterialExpressionEditorY=-128
+   MaterialExpressionGuid=(A=93,B=94,C=95,D=96)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionMultiply Name="MaterialExpressionMultiply_5"
+   A=(Expression=MaterialExpressionMaterialFunctionCall_2)
+   B=(Expression=MaterialExpressionLandscapeLayerSample_1)
+   MaterialExpressionEditorX=-1024
+   MaterialExpressionEditorY=-64
+   MaterialExpressionGuid=(A=97,B=98,C=99,D=100)
+End Object
+
+// COMBINE LAYERS
+Begin Object Class=/Script/Engine.MaterialExpressionAdd Name="MaterialExpressionAdd_0"
+   A=(Expression=MaterialExpressionMultiply_0)
+   B=(Expression=MaterialExpressionMultiply_1)
+   MaterialExpressionEditorX=-768
+   MaterialExpressionEditorY=-352
+   MaterialExpressionGuid=(A=101,B=102,C=103,D=104)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionAdd Name="MaterialExpressionAdd_1"
+   A=(Expression=MaterialExpressionMultiply_2)
+   B=(Expression=MaterialExpressionMultiply_3)
+   MaterialExpressionEditorX=-768
+   MaterialExpressionEditorY=-224
+   MaterialExpressionGuid=(A=105,B=106,C=107,D=108)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionAdd Name="MaterialExpressionAdd_2"
+   A=(Expression=MaterialExpressionMultiply_4)
+   B=(Expression=MaterialExpressionMultiply_5)
+   MaterialExpressionEditorX=-768
+   MaterialExpressionEditorY=-96
+   MaterialExpressionGuid=(A=109,B=110,C=111,D=112)
+End Object
+
+// BLEND FACTOR PROCESSING
+Begin Object Class=/Script/Engine.MaterialExpressionMultiply Name="MaterialExpressionMultiply_6"
+   A=(Expression=MaterialExpressionComponentMask_2)
+   B=(Expression=MaterialExpressionScalarParameter_0)
+   MaterialExpressionEditorX=-768
+   MaterialExpressionEditorY=32
+   MaterialExpressionGuid=(A=113,B=114,C=115,D=116)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionSaturate Name="MaterialExpressionSaturate_0"
+   Input=(Expression=MaterialExpressionMultiply_6)
+   MaterialExpressionEditorX=-512
+   MaterialExpressionEditorY=32
+   MaterialExpressionGuid=(A=117,B=118,C=119,D=120)
+End Object
+
+// FINAL BLENDING
+Begin Object Class=/Script/Engine.MaterialExpressionLinearInterpolate Name="MaterialExpressionLinearInterpolate_0"
+   A=(Expression=MaterialExpressionAdd_2)
+   B=(Expression=MaterialExpressionAdd_0)
+   Alpha=(Expression=MaterialExpressionSaturate_0)
+   MaterialExpressionEditorX=-256
+   MaterialExpressionEditorY=-288
+   MaterialExpressionGuid=(A=121,B=122,C=123,D=124)
+End Object
+
+Begin Object Class=/Script/Engine.MaterialExpressionLinearInterpolate Name="MaterialExpressionLinearInterpolate_1"
+   A=(ConstR=0.5,ConstG=0.5,ConstB=1.0)
+   B=(Expression=MaterialExpressionAdd_1)
+   Alpha=(Expression=MaterialExpressionSaturate_0)
+   MaterialExpressionEditorX=-256
+   MaterialExpressionEditorY=-160
+   MaterialExpressionGuid=(A=125,B=126,C=127,D=128)
+End Object

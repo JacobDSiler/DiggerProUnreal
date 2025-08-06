@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
 // Error in MarchingCubes.cpp
+#include "ProceduralMeshComponent.h"
 #include "UDynamicMesh.h" // Not found
 #include "MarchingCubes.generated.h"
 
@@ -49,6 +50,9 @@ private:
 	int32 CachedChunkSize;
 
 public:
+	void UpdateMeshComponent(UProceduralMeshComponent* MeshComponent);
+	void ModifyVoxelWithMaterial(const FIntVector& VoxelCoord, float NewSDFValue, float RockWeight, float DirtWeight,
+	                             float GrassWeight);
 	// Height cache methods
 	void InitializeHeightCache(const FVector& ChunkOrigin, float VoxelSize);
 	float GetCachedHeight(const FVector& WorldPosition) const;
@@ -77,8 +81,9 @@ public:
 	TArray<int32>& OutTriangles,
 	TArray<FVector>& OutNormals
 	);
-	
-	
+	float CalculateBlendFactor(float SDFValue, const FVector& WorldPos);
+
+
 	void PopulateHeightValues(
 	TArray<float>& OutHeights,
 	TSharedPtr<TMap<FIntPoint, float>>* HeightCachePtr,
