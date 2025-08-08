@@ -623,6 +623,7 @@ public:
     
     bool DeleteSaveFile(const FString& SaveFileName);
     void InvalidateSavedChunkCache(const FString& SaveFileName = TEXT(""));
+    void InvalidateSavedChunkCache();
 
 private:
     // Cache for saved chunk coordinates to avoid constant filesystem scanning

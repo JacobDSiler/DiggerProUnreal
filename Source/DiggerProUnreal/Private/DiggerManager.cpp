@@ -107,7 +107,6 @@ class StaticMeshAttributes;
 
 
 //New Multi Save Files System
-
 // Updated ADiggerManager methods for multiple save file support
 
 FString ADiggerManager::GetSaveFileDirectory(const FString& SaveFileName) const
@@ -123,7 +122,6 @@ FString ADiggerManager::GetChunkFilePath(const FIntVector& ChunkCoords, const FS
     
     return GetSaveFileDirectory(SaveFileName) / FileName;
 }
-
 
 // Overload for backward compatibility - uses "Default" save file
 FString ADiggerManager::GetChunkFilePath(const FIntVector& ChunkCoords) const
@@ -401,18 +399,62 @@ TArray<FString> ADiggerManager::GetAllSaveFileNames() const
     TArray<FString> SaveFileNames;
     FString MainDir = FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY;
     
+    UE_LOG(LogTemp, Log, TEXT("GetAllSaveFileNames: Searching in directory: %s"), *MainDir);
+    
     if (!FPaths::DirectoryExists(MainDir))
     {
+        UE_LOG(LogTemp, Log, TEXT("GetAllSaveFileNames: Main directory does not exist"));
         return SaveFileNames;
     }
     
-    TArray<FString> SubDirs;
-    FFileManagerGeneric::Get().FindFiles(SubDirs, *MainDir, false, true);
+    // Get all entries in the main directory
+    TArray<FString> DirectoryContents;
+    IFileManager& FileManager = IFileManager::Get();
+    FileManager.FindFiles(DirectoryContents, *(MainDir / TEXT("*")), false, true);
     
-    for (const FString& SubDir : SubDirs)
+    UE_LOG(LogTemp, Log, TEXT("Found %d potential directories"), DirectoryContents.Num());
+    
+    // Check each directory to see if it contains chunk files
+    for (const FString& DirName : DirectoryContents)
     {
-        SaveFileNames.Add(SubDir);
+        FString FullDirPath = MainDir / DirName;
+        
+        UE_LOG(LogTemp, Log, TEXT("Checking directory: %s"), *DirName);
+        
+        // Skip any hidden directories or files
+        if (DirName.StartsWith(TEXT(".")))
+        {
+            UE_LOG(LogTemp, Log, TEXT("Skipping hidden directory: %s"), *DirName);
+            continue;
+        }
+        
+        // Verify it's actually a directory
+        if (!FPaths::DirectoryExists(FullDirPath))
+        {
+            UE_LOG(LogTemp, Log, TEXT("Not a directory: %s"), *DirName);
+            continue;
+        }
+        
+        // Check if this directory contains chunk files
+        TArray<FString> ChunkFiles;
+        FString ChunkSearchPattern = FullDirPath / FString::Printf(TEXT("*%s"), *CHUNK_FILE_EXTENSION);
+        FileManager.FindFiles(ChunkFiles, *ChunkSearchPattern, true, false);
+        
+        UE_LOG(LogTemp, Log, TEXT("Directory '%s' contains %d chunk files"), *DirName, ChunkFiles.Num());
+        
+        if (ChunkFiles.Num() > 0)
+        {
+            SaveFileNames.Add(DirName);
+            UE_LOG(LogTemp, Log, TEXT("Added '%s' to save files list"), *DirName);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Log, TEXT("Skipping '%s' - no chunk files found"), *DirName);
+        }
     }
+    
+    UE_LOG(LogTemp, Log, TEXT("GetAllSaveFileNames: Final result - %d save files: [%s]"), 
+        SaveFileNames.Num(), *FString::Join(SaveFileNames, TEXT(", ")));
     
     return SaveFileNames;
 }
@@ -473,7 +515,9 @@ void ADiggerManager::InvalidateSavedChunkCache(const FString& SaveFileName)
         SavedChunkCache.Remove(SaveFileName);
     }
 }
-//End New Mullti Save Files System.
+
+
+//End New Multi Save Files System.
 
 
 void ADiggerManager::ApplyBrushInEditor(bool bDig)
@@ -4089,7 +4133,7 @@ bool ADiggerManager::DeleteChunkFile(const FIntVector& ChunkCoords)
         }
         
         // Invalidate cache after deletion
-        InvalidateSavedChunkCache();
+        InvalidateSavedChunkCache(TEXT(""));
     }
     else
     {
