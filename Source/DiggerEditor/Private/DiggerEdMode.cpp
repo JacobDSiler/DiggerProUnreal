@@ -187,7 +187,11 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
                 Digger->EditorBrushHoleShape = GetHoleShapeForBrush(BrushType);
                 Digger->EditorBrushLightType = DiggerToolkit->GetCurrentLightType(); // ✅ Light Type
                 Digger->EditorBrushLightColor = DiggerToolkit->GetCurrentLightColor(); // ✅ Light Color
-                UE_LOG(LogTemp, Warning, TEXT("Toolkit is passing light type: %d"), (int32)Digger->EditorBrushLightType);
+
+                if (DiggerDebug::Lights || DiggerDebug::Brush)
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("Toolkit is passing light type: %d"), (int32)Digger->EditorBrushLightType);
+                }
 
                 if (DiggerToolkit->IsUsingAdvancedCubeBrush())
                 {
@@ -195,10 +199,13 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
                     Digger->EditorCubeHalfExtentX = DiggerToolkit->GetAdvancedCubeHalfExtentX();
                     Digger->EditorCubeHalfExtentY = DiggerToolkit->GetAdvancedCubeHalfExtentY();
                     Digger->EditorCubeHalfExtentZ = DiggerToolkit->GetAdvancedCubeHalfExtentZ();
-                    UE_LOG(LogTemp, Warning, TEXT("DiggerEdMode.cpp: Extent X: %.2f  Extent Y: %.2f  Extent Z: %.2f"),
-                        Digger->EditorCubeHalfExtentX,
-                        Digger->EditorCubeHalfExtentY,
-                        Digger->EditorCubeHalfExtentZ);
+                    if (DiggerDebug::Brush)
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("DiggerEdMode.cpp: Extent X: %.2f  Extent Y: %.2f  Extent Z: %.2f"),
+                               Digger->EditorCubeHalfExtentX,
+                               Digger->EditorCubeHalfExtentY,
+                               Digger->EditorCubeHalfExtentZ);
+                    }
                 }
                 else
                 {
@@ -400,7 +407,10 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
 {
     if (!ContinuousSettings.bIsValid)
     {
-        UE_LOG(LogTemp, Error, TEXT("ContinuousSettings are invalid in DiggerEdMode ApplyContinuousBrush!"));
+        if (DiggerDebug::Brush)
+        {
+            UE_LOG(LogTemp, Error, TEXT("ContinuousSettings are invalid in DiggerEdMode ApplyContinuousBrush!"));
+        }
         return;
     }
 
@@ -411,6 +421,7 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
         ADiggerManager* Digger = FindDiggerManager();
         if (!Digger)
         {
+            if (DiggerDebug::Brush)
             UE_LOG(LogTemp, Warning, TEXT("No DiggerManager in in DiggerEdMode ApplyContinuousBrush!"));
             return;
         }
@@ -418,6 +429,7 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
         TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = StaticCastSharedPtr<FDiggerEdModeToolkit>(Toolkit);
         if (!DiggerToolkit.IsValid())
         {
+            if (DiggerDebug::Brush)
             UE_LOG(LogTemp, Warning, TEXT("No DiggerToolKit in in DiggerEdMode ApplyContinuousBrush!"));
             return;
         }
@@ -447,6 +459,7 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
             Digger->EditorCubeHalfExtentX = DiggerToolkit->GetAdvancedCubeHalfExtentX();
             Digger->EditorCubeHalfExtentY = DiggerToolkit->GetAdvancedCubeHalfExtentY();
             Digger->EditorCubeHalfExtentZ = DiggerToolkit->GetAdvancedCubeHalfExtentZ();
+            if (DiggerDebug::Brush)
             UE_LOG(LogTemp, Warning, TEXT("DiggerEdMode.cpp: Extent X: %.2f  Extent Y: %.2f  Extent Z: %.2f"),
            Digger->EditorCubeHalfExtentX,
            Digger->EditorCubeHalfExtentY,
@@ -517,6 +530,7 @@ ADiggerManager* FDiggerEdMode::FindDiggerManager()
     {
         return *It;
     }
+    if (DiggerDebug::Manager)
     UE_LOG(LogTemp, Error, TEXT("DiggerManager not found in: FDiggerEdMode::FindDiggerManager()!!!"));
     return nullptr;
 }

@@ -1139,7 +1139,8 @@ void USparseVoxelGrid::SynchronizeBordersWithNeighbors()
 
 
 
-void USparseVoxelGrid::RenderVoxels() {
+void USparseVoxelGrid::RenderVoxels() 
+{
     if (!EnsureDiggerManager()) {
         UE_LOG(LogTemp, Error, TEXT("DiggerManager is null or invalid in SparseVoxelGrid RenderVoxels()!!"));
         return;
@@ -1156,44 +1157,73 @@ void USparseVoxelGrid::RenderVoxels() {
         return;
     }
 
-    // Collect voxel positions by type
+    // Get the fast debug subsystem
+    auto* FastDebug = UFastDebugSubsystem::Get(DiggerManager);
+    if (!FastDebug) return;
+
+    // Get the parent chunk coordinates
+    FIntVector ChunkCoords = GetParentChunkCoordinates();
+    
+    UE_LOG(LogTemp, Warning, TEXT("Fast rendering voxels for chunk %s"), *ChunkCoords.ToString());
+
+    // Prepare batch arrays for different voxel types
     TArray<FVector> AirVoxelPositions;
     TArray<FVector> SolidVoxelPositions;
     TArray<FVector> SurfaceVoxelPositions;
 
+    // Reserve space to avoid reallocations
+    const int32 VoxelCount = VoxelData.Num();
+    AirVoxelPositions.Reserve(VoxelCount);
+    SolidVoxelPositions.Reserve(VoxelCount);
+    SurfaceVoxelPositions.Reserve(VoxelCount);
+
+    // Process each voxel and categorize by SDF value
     for (const auto& Voxel : VoxelData) {
         const FIntVector& LocalVoxelCoords = Voxel.Key;
         const FVoxelData& VoxelDataValue = Voxel.Value;
 
+        // Convert local voxel coordinates to global voxel coordinates
         FIntVector GlobalVoxelCoords = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(
-            ParentChunkCoordinates, LocalVoxelCoords);
+            ChunkCoords, LocalVoxelCoords);
+        
+        // Convert global voxel coordinates to world position
         FVector WorldPosition = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(GlobalVoxelCoords);
-        FVector Center = WorldPosition + DebugRenderOffset + FVector(FVoxelConversion::LocalVoxelSize / 2.0f);
+        FVector Center = WorldPosition + DebugRenderOffset;
+        FVector VoxelCenter = Center + FVector(FVoxelConversion::LocalVoxelSize / 2.0f);
 
         const float SDFValue = VoxelDataValue.SDFValue;
 
+        // Categorize voxels by SDF value
         if (SDFValue > 0.0f) {
-            AirVoxelPositions.Add(Center); // Air
+            AirVoxelPositions.Add(VoxelCenter); // Air
         } else if (SDFValue < 0.0f) {
-            SolidVoxelPositions.Add(Center); // Solid
+            SolidVoxelPositions.Add(VoxelCenter); // Solid
         } else {
-            SurfaceVoxelPositions.Add(Center); // Surface
+            SurfaceVoxelPositions.Add(VoxelCenter); // Surface
         }
+
+        UE_LOG(LogTemp, VeryVerbose, TEXT("Voxel: Local %s -> Global %s -> World %s"), 
+               *LocalVoxelCoords.ToString(), *GlobalVoxelCoords.ToString(), *Center.ToString());
     }
 
-    // Batch render all voxels by type - MUCH faster!
-    const FVector VoxelExtent = FVector(FVoxelConversion::LocalVoxelSize);
+    // Batch draw all voxels by type for maximum performance
+    const FVector VoxelExtent = FVector(FVoxelConversion::LocalVoxelSize / 2.0f);
     
     if (AirVoxelPositions.Num() > 0) {
-        FAST_DEBUG_BOXES_BATCH(AirVoxelPositions, VoxelExtent, FLinearColor::Green);
-    }
-    if (SolidVoxelPositions.Num() > 0) {
-        FAST_DEBUG_BOXES_BATCH(SolidVoxelPositions, VoxelExtent, FLinearColor::Red);
-    }
-    if (SurfaceVoxelPositions.Num() > 0) {
-        FAST_DEBUG_BOXES_BATCH(SurfaceVoxelPositions, VoxelExtent, FLinearColor::Yellow);
+        FastDebug->DrawBoxes(AirVoxelPositions, VoxelExtent, 
+                           FFastDebugConfig(FLinearColor::Green, 15.0f, 1.0f));
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("Fast rendered %d voxels: %d Air, %d Solid, %d Surface"), 
-           VoxelData.Num(), AirVoxelPositions.Num(), SolidVoxelPositions.Num(), SurfaceVoxelPositions.Num());
+    if (SolidVoxelPositions.Num() > 0) {
+        FastDebug->DrawBoxes(SolidVoxelPositions, VoxelExtent, 
+                           FFastDebugConfig(FLinearColor::Red, 15.0f, 2.0f));
+    }
+
+    if (SurfaceVoxelPositions.Num() > 0) {
+        FastDebug->DrawBoxes(SurfaceVoxelPositions, VoxelExtent, 
+                           FFastDebugConfig(FLinearColor::Yellow, 15.0f, 3.0f));
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("Fast batch rendered %d voxels: %d Air, %d Solid, %d Surface"), 
+           VoxelCount, AirVoxelPositions.Num(), SolidVoxelPositions.Num(), SurfaceVoxelPositions.Num());
 }

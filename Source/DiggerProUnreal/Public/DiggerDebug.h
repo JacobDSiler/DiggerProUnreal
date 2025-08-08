@@ -25,4 +25,5 @@ namespace DiggerDebug
 	inline bool Casts = false;
 	inline bool Manager = false;
 	inline bool Caves = false;
+	inline bool Lights = false;
 }

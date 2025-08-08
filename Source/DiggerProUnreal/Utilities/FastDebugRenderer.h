@@ -14,7 +14,7 @@ struct FFastDebugConfig
     FLinearColor Color = FLinearColor::Red;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    float Duration = 0.0f;
+    float Duration = 5.0f;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     float Thickness = 2.0f;

@@ -1052,7 +1052,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
     const float HalfVoxelSize = CachedVoxelSize * 0.5f;
 
-    // Get brush-specific bounds
+    // Get brush-specific bounds from the brush shape itself
     FVector BrushBounds = CalculateBrushBounds(Stroke);
 
     // Convert brush bounds to voxel space
@@ -1103,15 +1103,9 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
         FIntVector Coords;
         FVector WorldPos;
         float TerrainHeight;
-        float DistanceToBrush; // ADD: Distance for seamless chunk boundary handling
     };
     
     TArray<FVoxelInfo> ValidVoxels;
-    
-    // SEAMLESS: Calculate brush parameters for consistent distance checking
-    FVector AdjustedBrushPos = Stroke.BrushPosition + Stroke.BrushOffset;
-    float OuterRadius = Stroke.BrushRadius + Stroke.BrushFalloff;
-    float OuterRadiusSq = OuterRadius * OuterRadius;
     
     for (int32 X = MinX; X <= MaxX; ++X)
     {
@@ -1126,9 +1120,9 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
                     (Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
                 );
 
-                // SEAMLESS: Quick distance check to filter out obviously irrelevant voxels
-                float DistanceToBrushSq = FVector::DistSquared(WorldPos, AdjustedBrushPos);
-                if (DistanceToBrushSq > OuterRadiusSq)
+                // Let the brush shape itself determine if this voxel is relevant
+                // Use the brush shape's bounds checking method
+                if (!BrushShape->IsWithinBounds(WorldPos, Stroke))
                 {
                     continue;
                 }
@@ -1142,49 +1136,53 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
                 VoxelInfo.Coords = FIntVector(X, Y, Z);
                 VoxelInfo.WorldPos = WorldPos;
                 VoxelInfo.TerrainHeight = TerrainHeight;
-                VoxelInfo.DistanceToBrush = FMath::Sqrt(DistanceToBrushSq); // SEAMLESS: Store distance
                 
                 ValidVoxels.Add(VoxelInfo);
             }
         }
     }
 
-    // Process valid voxels in parallel - COMBINED: Best of both versions
+    // Process valid voxels in parallel - Let brush shape determine everything
     ParallelFor(ValidVoxels.Num(), [&](int32 VoxelIndex)
     {
         const FVoxelInfo& VoxelInfo = ValidVoxels[VoxelIndex];
         const FIntVector& Coords = VoxelInfo.Coords;
         const FVector& WorldPos = VoxelInfo.WorldPos;
         const float TerrainHeight = VoxelInfo.TerrainHeight;
-        const float DistanceToBrush = VoxelInfo.DistanceToBrush; // SEAMLESS: Use stored distance
         const bool bAboveTerrain = WorldPos.Z >= TerrainHeight;
 
         // Calculate SDF value using the specific brush shape with precise terrain height
         const float SDF = BrushShape->CalculateSDF(WorldPos, Stroke, TerrainHeight);
 
-        // COMBINED: Awesome rim generation logic + seamless distance checking
+        // Let the brush shape's SDF completely determine voxel creation
         if (Stroke.bDig)
         {
-            // RIM VERSION: EXPLICITLY create air where SDF indicates we're inside the shape
-            if (SDF > 0.1f && DistanceToBrush <= OuterRadius) // SEAMLESS: Add distance check
+            // Create air where SDF indicates we're inside the shape
+            if (SDF > 0.1f) // Only use SDF threshold, no distance override
             {
-                // CRITICAL: Explicitly create AIR voxels - this IS digging!
-                SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, true); // true = EXPLICIT AIR
+                // Add depth validation to prevent far-off subterranean voxels
+                const float MaxDepthBelowBrush = Stroke.BrushRadius * 1.5f;
+                const float VerticalDistanceFromBrush = FMath::Abs(WorldPos.Z - Stroke.BrushPosition.Z);
                 
-                // Track air voxels below terrain for solid shell creation
-                if (!bAboveTerrain)
+                if (VerticalDistanceFromBrush <= MaxDepthBelowBrush)
                 {
-                    FScopeLock Lock(&BrushStrokeMutex);
-                    AirVoxelsBelowTerrain.Add(Coords);
+                    SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, true); // true = EXPLICIT AIR
+                    
+                    // Track air voxels below terrain for solid shell creation
+                    if (!bAboveTerrain)
+                    {
+                        FScopeLock Lock(&BrushStrokeMutex);
+                        AirVoxelsBelowTerrain.Add(Coords);
+                    }
+                    
+                    ModifiedVoxels.Increment();
                 }
-                
-                ModifiedVoxels.Increment();
             }
         }
         else
         {
-            // RIM VERSION: Create beautiful solid rims + SEAMLESS: distance checking
-            if (SDF < -0.1f && DistanceToBrush <= OuterRadius) // SEAMLESS: Add distance check
+            // Create solid where SDF indicates
+            if (SDF < -0.1f) // Only use SDF threshold, no distance override
             {
                 SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, false); // false = solid
                 ModifiedVoxels.Increment();
@@ -1213,18 +1211,38 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 }
 
 
-
 void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels)
 {
-    // Pre-generate neighbor offsets with wider range for rim stacking
-    static const TArray<FIntVector> NeighborOffsets = []()
+    if (AirVoxels.IsEmpty())
+    {
+        return;
+    }
+
+    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
+    const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
+    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
+    const float HalfVoxelSize = CachedVoxelSize * 0.5f;
+
+    // Cache landscape proxies and heights
+    TMap<FIntVector, ALandscapeProxy*> ProxyCache;
+    TMap<FVector, float> HeightCache;
+
+    // Convert air voxels array to set for fast lookup
+    TSet<FIntVector> AirVoxelSet(AirVoxels);
+
+    // Find boundary positions: neighbors of air voxels that are NOT air voxels
+    TSet<FIntVector> BoundaryPositions;
+    
+    // Extended neighbor offsets for wider shell detection (including diagonal connections)
+    const TArray<FIntVector> NeighborOffsets = []()
     {
         TArray<FIntVector> Offsets;
-        for (int32 x = -3; x <= 3; x++)
+        for (int32 x = -2; x <= 2; x++)
         {
-            for (int32 y = -3; y <= 3; y++)
+            for (int32 y = -2; y <= 2; y++)
             {
-                for (int32 z = -3; z <= 3; z++)
+                for (int32 z = -2; z <= 2; z++)
                 {
                     if (x == 0 && y == 0 && z == 0) continue; // Skip center
                     Offsets.Add(FIntVector(x, y, z));
@@ -1233,26 +1251,37 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
         }
         return Offsets;
     }();
-    
-    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
-    const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
-    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
-    const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
-    const float HalfVoxelSize = CachedVoxelSize * 0.5f;
 
-    // Cache landscape proxies to avoid repeated lookups
-    TMap<FIntVector, ALandscapeProxy*> ProxyCache;
-    TMap<FVector, float> HeightCache; // Cache terrain heights
+    // Find all boundary positions (shell candidates)
+    for (const FIntVector& AirVoxel : AirVoxels)
+    {
+        for (const FIntVector& Offset : NeighborOffsets)
+        {
+            const FIntVector BoundaryCandidate = AirVoxel + Offset;
+            
+            // Skip if this position is also an air voxel IN THIS CHUNK
+            if (AirVoxelSet.Contains(BoundaryCandidate))
+                continue;
+                
+            // IMPORTANT: Don't skip if it's an air voxel in ANOTHER chunk
+            // Check if it's an air voxel in this chunk's sparse grid
+            if (SparseVoxelGrid->VoxelData.Contains(BoundaryCandidate))
+            {
+                const FVoxelData& ExistingData = SparseVoxelGrid->VoxelData[BoundaryCandidate];
+                if (ExistingData.SDFValue > 0.0f) // It's air in this chunk
+                    continue;
+                if (ExistingData.SDFValue <= FVoxelConversion::SDF_SOLID) // Already solid
+                    continue;
+            }
+                
+            // This is a valid boundary position
+            BoundaryPositions.Add(BoundaryCandidate);
+        }
+    }
 
-    // Optimized rim thickness calculation with caching
+    // Rim thickness calculation function
     auto GetRimThickness = [&, CachedVoxelSize](const FVector& WorldPos) -> float
     {
-        // Check height cache first
-        if (float* CachedHeight = HeightCache.Find(WorldPos))
-        {
-            // Use cached calculation if available
-        }
-
         // Get cached landscape proxy
         const FIntVector ProxyCacheKey = FIntVector(WorldPos.X / 1000.0f, WorldPos.Y / 1000.0f, 0);
         ALandscapeProxy* LandscapeProxy = nullptr;
@@ -1267,19 +1296,18 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
             ProxyCache.Add(ProxyCacheKey, LandscapeProxy);
         }
 
-        // Retrieve the terrain height at the world position
         TOptional<float> TerrainHeightOptional = DiggerManager->SampleLandscapeHeight(
             LandscapeProxy, WorldPos, true);
 
         if (!TerrainHeightOptional.IsSet())
         {
-            return 2.0f; // Safe default thickness
+            return 2.0f;
         }
 
         float TerrainHeight = TerrainHeightOptional.GetValue();
         HeightCache.Add(WorldPos, TerrainHeight);
 
-        // Multi-directional slope calculation for better accuracy
+        // Multi-directional slope calculation
         const TArray<FVector> SampleOffsets = {
             FVector(CachedVoxelSize, 0, 0),
             FVector(0, CachedVoxelSize, 0),
@@ -1294,7 +1322,6 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
         {
             const FVector SamplePos = WorldPos + Offset;
             
-            // Check cache first
             if (float* CachedSampleHeight = HeightCache.Find(SamplePos))
             {
                 const float HeightDiff = FMath::Abs(TerrainHeight - *CachedSampleHeight);
@@ -1321,154 +1348,131 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
 
         if (ValidSamples == 0)
         {
-            return 2.0f; // Safe default
+            return 2.0f;
         }
 
-        // Enhanced slope-based rim thickness with stacking for light leak prevention
         if (MaxSlope > 0.1f)
         {
-            // Exponential scaling for steep slopes + extra stacking layers
             float RimThickness = FMath::Clamp(MaxSlope * MaxSlope * 4.0f + 2.0f, 3.0f, 12.0f);
             return RimThickness;
         }
         
-        return 2.0f; // Minimum 2-voxel thickness to prevent alignment issues
+        return 2.0f;
     };
 
-    // Use TSet to track processed voxels for performance
-    TSet<FIntVector> ProcessedVoxels;
-    
-    // Loop through all air voxels
-    for (const FIntVector& AirVoxel : AirVoxels)
+    // Process each boundary position to determine if it should be solid
+    for (const FIntVector& BoundaryPos : BoundaryPositions)
     {
-        // Check all neighbors
-        for (const FIntVector& Offset : NeighborOffsets)
+        // Bounds check
+        if (BoundaryPos.X < -1 || BoundaryPos.X >= VoxelsPerChunk + 1 ||
+            BoundaryPos.Y < -1 || BoundaryPos.Y >= VoxelsPerChunk + 1 ||
+            BoundaryPos.Z < -1 || BoundaryPos.Z >= VoxelsPerChunk + 1)
+            continue;
+
+        // Calculate world position
+        const FVector WorldPos = ChunkOrigin + FVector(
+            (BoundaryPos.X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+            (BoundaryPos.Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+            (BoundaryPos.Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
+        );
+
+        // Get terrain height
+        float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
+        const float RimThickness = GetRimThickness(WorldPos);
+        
+        // Enhanced rim height consistency logic to prevent floating point issues
+        const float VoxelCenterZ = WorldPos.Z;
+        const float VoxelBottomZ = VoxelCenterZ - HalfVoxelSize;
+        const float VoxelTopZ = VoxelCenterZ + HalfVoxelSize;
+        
+        // Calculate terrain-relative positioning with consistent thresholds
+        const float TerrainToVoxelBottom = VoxelBottomZ - TerrainHeight;
+        const float TerrainToVoxelCenter = VoxelCenterZ - TerrainHeight;
+        
+        bool ShouldCreateVoxel = false;
+        
+        // Layer 1: Base solid layer - always create if voxel intersects terrain surface
+        if (TerrainToVoxelBottom <= HalfVoxelSize) // Within half-voxel of terrain surface
         {
-            // Skip offsets beyond rim thickness (we'll calculate this per voxel)
-            const float OffsetDistance = FMath::Sqrt(static_cast<float>(
-                Offset.X * Offset.X + Offset.Y * Offset.Y + Offset.Z * Offset.Z));
-            if (OffsetDistance > 3.0f) // Max reasonable rim thickness
-            {
-                continue;
-            }
-
-            const FIntVector NeighborCoord = AirVoxel + Offset;
-
-            // Allow one voxel negative overflow, clamp at chunk size (from your working version)
-            if (NeighborCoord.X < -1 || NeighborCoord.X >= VoxelsPerChunk + 1 ||
-                NeighborCoord.Y < -1 || NeighborCoord.Y >= VoxelsPerChunk + 1 ||
-                NeighborCoord.Z < -1 || NeighborCoord.Z >= VoxelsPerChunk + 1)
-                continue;
-
-            // Skip if this neighbor already exists
-            if (SparseVoxelGrid->VoxelData.Contains(NeighborCoord))
-                continue;
-
-            // Skip if already processed
-            if (ProcessedVoxels.Contains(NeighborCoord))
-                continue;
-
-            ProcessedVoxels.Add(NeighborCoord);
-
-            // Use the EXACT world position calculation from your working version
-            const FVector WorldPos = ChunkOrigin + FVector(
-                (NeighborCoord.X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
-                (NeighborCoord.Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
-                (NeighborCoord.Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
-            );
-
-            // Get rim thickness based on this specific position
-            const float RimThickness = GetRimThickness(WorldPos);
-
-            // Get cached or calculate terrain height using your working method
-            float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
-            HeightCache.Add(WorldPos, TerrainHeight);
+            ShouldCreateVoxel = true;
+        }
+        // Layer 2: Consistent rim layer - create if voxel center is within rim thickness
+        else if (TerrainToVoxelCenter <= (RimThickness * CachedVoxelSize) && 
+                 TerrainToVoxelBottom <= (CachedVoxelSize * 1.5f)) // Max 1.5 voxels above terrain
+        {
+            // Enhanced connectivity check to prevent floating voxels in large holes
+            int32 SolidConnections = 0;
+            int32 TerrainConnections = 0; // Track connections specifically to terrain
             
-            // Enhanced rim stacking logic to prevent light leaks and floating voxels
-            const float VoxelCenterZ = WorldPos.Z;
-            const float VoxelBottomZ = VoxelCenterZ - HalfVoxelSize;
+            const TArray<FIntVector> FaceOffsets = {
+                FIntVector(1,0,0), FIntVector(-1,0,0),
+                FIntVector(0,1,0), FIntVector(0,-1,0),
+                FIntVector(0,0,1), FIntVector(0,0,-1)
+            };
             
-            // Create solid voxel with improved logic:
-            // 1. Always create if below terrain (prevents doom holes)
-            // 2. Create rim only if properly connected (prevents floating)
-            bool ShouldCreateVoxel = false;
-            
-            if (VoxelBottomZ <= TerrainHeight + KINDA_SMALL_NUMBER)
+            for (const FIntVector& FaceOffset : FaceOffsets)
             {
-                // Below or intersecting terrain - ALWAYS create to prevent doom holes
-                ShouldCreateVoxel = true;
-            }
-            else if (VoxelBottomZ <= TerrainHeight + CachedVoxelSize && OffsetDistance <= RimThickness) 
-            {
-                // Above terrain but within rim thickness - check for solid connections
-                int32 SolidConnections = 0;
+                const FIntVector ConnectionCoord = BoundaryPos + FaceOffset;
                 
-                // Check 6 face neighbors for solid connections
-                const TArray<FIntVector> FaceOffsets = {
-                    FIntVector(1,0,0), FIntVector(-1,0,0),
-                    FIntVector(0,1,0), FIntVector(0,-1,0),
-                    FIntVector(0,0,1), FIntVector(0,0,-1)
-                };
+                // Check if connection is below terrain
+                const FVector ConnectionWorldPos = ChunkOrigin + FVector(
+                    (ConnectionCoord.X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+                    (ConnectionCoord.Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+                    (ConnectionCoord.Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
+                );
                 
-                for (const FIntVector& FaceOffset : FaceOffsets)
+                float ConnectionTerrainHeight = DiggerManager->GetLandscapeHeightAt(ConnectionWorldPos);
+                const float ConnectionTerrainDistance = (ConnectionWorldPos.Z - HalfVoxelSize) - ConnectionTerrainHeight;
+                
+                // Count terrain connections with consistent thresholds
+                if (ConnectionTerrainDistance <= HalfVoxelSize)
                 {
-                    const FIntVector ConnectionCoord = NeighborCoord + FaceOffset;
-                    
-                    // Use same world position calculation for connections
-                    const FVector ConnectionWorldPos = ChunkOrigin + FVector(
-                        (ConnectionCoord.X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
-                        (ConnectionCoord.Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
-                        (ConnectionCoord.Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
-                    );
-                    
-                    // Check if this connection would be below terrain (solid)
-                    float ConnectionTerrainHeight = DiggerManager->GetLandscapeHeightAt(ConnectionWorldPos);
-                    
-                    // Count as solid connection if below terrain
-                    if ((ConnectionWorldPos.Z - HalfVoxelSize) <= ConnectionTerrainHeight + KINDA_SMALL_NUMBER)
+                    SolidConnections++;
+                    TerrainConnections++;
+                }
+                
+                // Check existing solid voxels
+                if (SparseVoxelGrid->VoxelData.Contains(ConnectionCoord))
+                {
+                    const FVoxelData& ExistingData = SparseVoxelGrid->VoxelData[ConnectionCoord];
+                    if (ExistingData.SDFValue <= FVoxelConversion::SDF_SOLID)
                     {
                         SolidConnections++;
                     }
-                    
-                    // Also check if it's an existing solid voxel
-                    if (SparseVoxelGrid->VoxelData.Contains(ConnectionCoord))
-                    {
-                        const FVoxelData& ExistingData = SparseVoxelGrid->VoxelData[ConnectionCoord];
-                        if (ExistingData.SDFValue <= FVoxelConversion::SDF_SOLID)
-                        {
-                            SolidConnections++;
-                        }
-                    }
                 }
-                
-                // Only create rim voxel if it has at least 2 solid connections (prevents floating scraps)
-                if (SolidConnections >= 2)
+                // Count boundary positions as potential connections (for cross-chunk continuity)
+                else if (BoundaryPositions.Contains(ConnectionCoord))
                 {
-                    ShouldCreateVoxel = true;
+                    SolidConnections++;
                 }
             }
-
-            if (ShouldCreateVoxel)
+            
+            // Stricter connectivity requirements for rim voxels to prevent floating
+            // Require at least 2 solid connections AND at least 1 terrain connection
+            if (SolidConnections >= 2 && TerrainConnections >= 1)
             {
-                // Enhanced bounds checking - allow overflow for seamless transitions
-                bool InMainChunk = (NeighborCoord.X >= 0 && NeighborCoord.X < VoxelsPerChunk &&
-                                   NeighborCoord.Y >= 0 && NeighborCoord.Y < VoxelsPerChunk &&
-                                   NeighborCoord.Z >= 0 && NeighborCoord.Z < VoxelsPerChunk);
-                
-                bool InOverflowRegion = (NeighborCoord.X >= -1 && NeighborCoord.X <= VoxelsPerChunk &&
-                                        NeighborCoord.Y >= -1 && NeighborCoord.Y <= VoxelsPerChunk &&
-                                        NeighborCoord.Z >= -1 && NeighborCoord.Z <= VoxelsPerChunk);
-                
-                if (InMainChunk || InOverflowRegion)
-                {
-                    SparseVoxelGrid->SetVoxel(NeighborCoord, FVoxelConversion::SDF_SOLID, false);
-                }
+                ShouldCreateVoxel = true;
+            }
+        }
+
+        if (ShouldCreateVoxel)
+        {
+            // Enhanced bounds checking - allow overflow for seamless transitions
+            bool InMainChunk = (BoundaryPos.X >= 0 && BoundaryPos.X < VoxelsPerChunk &&
+                               BoundaryPos.Y >= 0 && BoundaryPos.Y < VoxelsPerChunk &&
+                               BoundaryPos.Z >= 0 && BoundaryPos.Z < VoxelsPerChunk);
+            
+            bool InOverflowRegion = (BoundaryPos.X >= -1 && BoundaryPos.X <= VoxelsPerChunk &&
+                                    BoundaryPos.Y >= -1 && BoundaryPos.Y <= VoxelsPerChunk &&
+                                    BoundaryPos.Z >= -1 && BoundaryPos.Z <= VoxelsPerChunk);
+            
+            if (InMainChunk || InOverflowRegion)
+            {
+                SparseVoxelGrid->SetVoxel(BoundaryPos, FVoxelConversion::SDF_SOLID, false);
             }
         }
     }
 }
-
-
 
 void UVoxelChunk::BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction,
 	const FString& String)

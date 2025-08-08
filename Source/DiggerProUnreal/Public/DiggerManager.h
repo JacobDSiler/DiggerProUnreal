@@ -567,6 +567,9 @@ private:
     UPROPERTY()
     TArray<UProceduralMeshComponent*> ProceduralMeshComponents;
 
+    // Update the cache to support multiple save files
+    TMap<FString, TArray<FIntVector>> SavedChunkCache;
+
 public:
     // Single chunk serialization methods
     UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
@@ -597,6 +600,30 @@ public:
     void EnsureVoxelDataDirectoryExists() const;
     void Tick(float DeltaTime);
 
+    // New methods for multiple save file support
+    FString GetSaveFileDirectory(const FString& SaveFileName) const;
+    FString GetChunkFilePath(const FIntVector& ChunkCoords, const FString& SaveFileName) const;
+    
+    bool DoesSaveFileExist(const FString& SaveFileName) const;
+    bool DoesChunkFileExist(const FIntVector& ChunkCoords, const FString& SaveFileName) const;
+    
+    void EnsureSaveFileDirectoryExists(const FString& SaveFileName) const;
+    
+    bool SaveChunk(const FIntVector& ChunkCoords, const FString& SaveFileName);
+    bool LoadChunk(const FIntVector& ChunkCoords, const FString& SaveFileName);
+    
+    bool SaveAllChunks(const FString& SaveFileName);
+    bool LoadAllChunks(const FString& SaveFileName);
+
+    // Default Save
+    TArray<FIntVector> GetAllSavedChunkCoordinates(bool bForceRefresh);
+    // Named Save
+    TArray<FIntVector> GetAllSavedChunkCoordinates(const FString& SaveFileName, bool bForceRefresh = false);
+    TArray<FString> GetAllSaveFileNames() const;
+    
+    bool DeleteSaveFile(const FString& SaveFileName);
+    void InvalidateSavedChunkCache(const FString& SaveFileName = TEXT(""));
+
 private:
     // Cache for saved chunk coordinates to avoid constant filesystem scanning
     UPROPERTY()
@@ -617,8 +644,6 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
     void RefreshSavedChunkCache();
     
-    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
-    void InvalidateSavedChunkCache();
 
     // In ADiggerManager.h
     TArray<FIntVector> GetAllPhysicalStorageChunks(const FIntVector& GlobalVoxel);

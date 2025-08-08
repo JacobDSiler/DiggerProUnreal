@@ -88,7 +88,14 @@ public:
 	
 	// Logs the current voxels and their SDF values
 	void LogVoxelData() const;
+	// Existing RenderVoxels method - called frequently
 	void RenderVoxels();
+    
+	// New persistent rendering method - call this for long-lasting debug visualization
+	void RenderVoxelsOnce();
+    
+	// Clear method for when voxel data changes
+	void ClearVoxelDebugRender();
 
 	bool CollectIslandAtPosition(const FVector& Center, TArray<FIntVector>& OutVoxels);
 

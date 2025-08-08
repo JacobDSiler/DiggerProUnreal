@@ -185,6 +185,14 @@ public:
 
 private:
 	FDiggerUIFeatureFlags FeatureFlags;
+
+	// New members for save file management
+	TSharedPtr<SEditableTextBox> SaveFileNameWidget;
+	TSharedPtr<SComboBox<TSharedPtr<FString>>> SaveFileComboBox;
+	TArray<TSharedPtr<FString>> AvailableSaveFiles;
+	// Helper methods
+	void RefreshSaveFilesList();
+
 	
 #if WITH_SOCKETIO
 	USocketIOLobbyManager* SocketIOLobbyManager = nullptr;

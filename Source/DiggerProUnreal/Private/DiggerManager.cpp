@@ -96,6 +96,7 @@
 #include "Components/DirectionalLightComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SpotLightComponent.h"
+#include "HAL/FileManagerGeneric.h"
 
 class ADynamicLightActor;
 class Editor;
@@ -104,6 +105,375 @@ class FDiggerEdMode;
 class MeshDescriptors;
 class StaticMeshAttributes;
 
+
+//New Multi Save Files System
+
+// Updated ADiggerManager methods for multiple save file support
+
+FString ADiggerManager::GetSaveFileDirectory(const FString& SaveFileName) const
+{
+    // Create a subdirectory for each save file
+    return FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY / SaveFileName;
+}
+
+FString ADiggerManager::GetChunkFilePath(const FIntVector& ChunkCoords, const FString& SaveFileName) const
+{
+    FString FileName = FString::Printf(TEXT("Chunk_%d_%d_%d%s"), 
+        ChunkCoords.X, ChunkCoords.Y, ChunkCoords.Z, *CHUNK_FILE_EXTENSION);
+    
+    return GetSaveFileDirectory(SaveFileName) / FileName;
+}
+
+
+// Overload for backward compatibility - uses "Default" save file
+FString ADiggerManager::GetChunkFilePath(const FIntVector& ChunkCoords) const
+{
+    return GetChunkFilePath(ChunkCoords, TEXT("Default"));
+}
+
+bool ADiggerManager::DoesSaveFileExist(const FString& SaveFileName) const
+{
+    FString SaveDir = GetSaveFileDirectory(SaveFileName);
+    return FPaths::DirectoryExists(SaveDir);
+}
+
+bool ADiggerManager::DoesChunkFileExist(const FIntVector& ChunkCoords, const FString& SaveFileName) const
+{
+    FString FilePath = GetChunkFilePath(ChunkCoords, SaveFileName);
+    return FPaths::FileExists(FilePath);
+}
+
+// Overload for backward compatibility
+bool ADiggerManager::DoesChunkFileExist(const FIntVector& ChunkCoords) const
+{
+    return DoesChunkFileExist(ChunkCoords, TEXT("Default"));
+}
+
+void ADiggerManager::EnsureSaveFileDirectoryExists(const FString& SaveFileName) const
+{
+    FString SaveDir = GetSaveFileDirectory(SaveFileName);
+    
+    // Create the main voxel data directory first
+    FString MainDir = FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY;
+    if (!FPaths::DirectoryExists(MainDir))
+    {
+        FPlatformFileManager::Get().GetPlatformFile().CreateDirectoryTree(*MainDir);
+        UE_LOG(LogTemp, Log, TEXT("Created main voxel data directory: %s"), *MainDir);
+    }
+    
+    // Create the save file specific directory
+    if (!FPaths::DirectoryExists(SaveDir))
+    {
+        FPlatformFileManager::Get().GetPlatformFile().CreateDirectoryTree(*SaveDir);
+        UE_LOG(LogTemp, Log, TEXT("Created save file directory: %s"), *SaveDir);
+    }
+}
+
+bool ADiggerManager::SaveChunk(const FIntVector& ChunkCoords, const FString& SaveFileName)
+{
+    EnsureSaveFileDirectoryExists(SaveFileName);
+    
+    UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
+    if (!ChunkPtr || !*ChunkPtr)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Cannot save chunk at %s to save file '%s' - chunk not found in memory"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+        return false;
+    }
+    
+    UVoxelChunk* Chunk = *ChunkPtr;
+    FString FilePath = GetChunkFilePath(ChunkCoords, SaveFileName);
+    
+    bool bSaveSuccess = Chunk->SaveChunkData(FilePath);
+    
+    if (bSaveSuccess)
+    {
+        UE_LOG(LogTemp, Log, TEXT("Successfully saved chunk %s to save file '%s'"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+        
+        // Invalidate cache so it gets refreshed
+        InvalidateSavedChunkCache(SaveFileName);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to save chunk %s to save file '%s'"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+    }
+    
+    return bSaveSuccess;
+}
+
+// Overload for backward compatibility
+bool ADiggerManager::SaveChunk(const FIntVector& ChunkCoords)
+{
+    return SaveChunk(ChunkCoords, TEXT("Default"));
+}
+
+bool ADiggerManager::LoadChunk(const FIntVector& ChunkCoords, const FString& SaveFileName)
+{
+    FString FilePath = GetChunkFilePath(ChunkCoords, SaveFileName);
+    
+    if (!FPaths::FileExists(FilePath))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Cannot load chunk at %s from save file '%s' - file does not exist"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+        return false;
+    }
+    
+    // Get or create the chunk
+    UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords);
+    if (!Chunk)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to get or create chunk at %s for save file '%s'"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+        return false;
+    }
+    
+    // Load the chunk data
+    bool bLoadSuccess = Chunk->LoadChunkData(FilePath);
+    
+    if (bLoadSuccess)
+    {
+        UE_LOG(LogTemp, Log, TEXT("Successfully loaded chunk %s from save file '%s'"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+        
+        // IMPORTANT: Force mesh regeneration after loading
+        Chunk->ForceUpdate();
+        
+        UE_LOG(LogTemp, Log, TEXT("Triggered mesh regeneration for loaded chunk %s from save file '%s'"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to load chunk %s from save file '%s'"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+    }
+    
+    return bLoadSuccess;
+}
+
+// Overload for backward compatibility
+bool ADiggerManager::LoadChunk(const FIntVector& ChunkCoords)
+{
+    return LoadChunk(ChunkCoords, TEXT("Default"));
+}
+
+bool ADiggerManager::SaveAllChunks(const FString& SaveFileName)
+{
+    EnsureSaveFileDirectoryExists(SaveFileName);
+    
+    if (ChunkMap.Num() == 0)
+    {
+        UE_LOG(LogTemp, Log, TEXT("No chunks to save to save file '%s' - ChunkMap is empty"), *SaveFileName);
+        return true;
+    }
+    
+    int32 SavedCount = 0;
+    int32 FailedCount = 0;
+    
+    UE_LOG(LogTemp, Log, TEXT("Starting to save %d chunks to save file '%s'..."), ChunkMap.Num(), *SaveFileName);
+    
+    for (const auto& ChunkPair : ChunkMap)
+    {
+        const FIntVector& ChunkCoords = ChunkPair.Key;
+        
+        if (SaveChunk(ChunkCoords, SaveFileName))
+        {
+            SavedCount++;
+        }
+        else
+        {
+            FailedCount++;
+        }
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Finished saving chunks to save file '%s': %d successful, %d failed"), 
+        *SaveFileName, SavedCount, FailedCount);
+    
+    // Invalidate cache after batch save
+    InvalidateSavedChunkCache(SaveFileName);
+    
+    return FailedCount == 0;
+}
+
+// Overload for backward compatibility
+bool ADiggerManager::SaveAllChunks()
+{
+    return SaveAllChunks(TEXT("Default"));
+}
+
+bool ADiggerManager::LoadAllChunks(const FString& SaveFileName)
+{
+    TArray<FIntVector> SavedChunkCoords = GetAllSavedChunkCoordinates(SaveFileName, true); // Force refresh
+    
+    if (SavedChunkCoords.Num() == 0)
+    {
+        UE_LOG(LogTemp, Log, TEXT("No saved chunks found to load from save file '%s'"), *SaveFileName);
+        return true;
+    }
+    
+    int32 LoadedCount = 0;
+    int32 FailedCount = 0;
+    
+    UE_LOG(LogTemp, Log, TEXT("Starting to load %d chunks from save file '%s'..."), SavedChunkCoords.Num(), *SaveFileName);
+    
+    for (const FIntVector& ChunkCoords : SavedChunkCoords)
+    {
+        if (LoadChunk(ChunkCoords, SaveFileName))
+        {
+            LoadedCount++;
+        }
+        else
+        {
+            FailedCount++;
+        }
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Finished loading chunks from save file '%s': %d successful, %d failed"), 
+        *SaveFileName, LoadedCount, FailedCount);
+    
+    return FailedCount == 0;
+}
+
+// Overload for backward compatibility
+bool ADiggerManager::LoadAllChunks()
+{
+    return LoadAllChunks(TEXT("Default"));
+}
+
+TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates(const FString& SaveFileName, bool bForceRefresh)
+{
+    // Use per-save-file caching
+    FString CacheKey = SaveFileName;
+    
+    if (!bForceRefresh && SavedChunkCache.Contains(CacheKey))
+    {
+        return SavedChunkCache[CacheKey];
+    }
+    
+    TArray<FIntVector> SavedChunks;
+    FString SaveDir = GetSaveFileDirectory(SaveFileName);
+    
+    if (!FPaths::DirectoryExists(SaveDir))
+    {
+        // Directory doesn't exist, so no saved chunks
+        SavedChunkCache.Add(CacheKey, SavedChunks);
+        return SavedChunks;
+    }
+    
+    TArray<FString> FoundFiles;
+    FString SearchPattern = SaveDir / FString::Printf(TEXT("*%s"), *CHUNK_FILE_EXTENSION);
+    FFileManagerGeneric::Get().FindFiles(FoundFiles, *SearchPattern, true, false);
+    
+    for (const FString& FileName : FoundFiles)
+    {
+        // Parse filename to extract coordinates
+        FString BaseName = FPaths::GetBaseFilename(FileName);
+        
+        // Expected format: Chunk_X_Y_Z
+        TArray<FString> Parts;
+        BaseName.ParseIntoArray(Parts, TEXT("_"), true);
+        
+        if (Parts.Num() >= 4 && Parts[0] == TEXT("Chunk"))
+        {
+            int32 X = FCString::Atoi(*Parts[1]);
+            int32 Y = FCString::Atoi(*Parts[2]);
+            int32 Z = FCString::Atoi(*Parts[3]);
+            
+            SavedChunks.Add(FIntVector(X, Y, Z));
+        }
+    }
+    
+    // Cache the results
+    SavedChunkCache.Add(CacheKey, SavedChunks);
+    
+    return SavedChunks;
+}
+
+// Overload for backward compatibility
+TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates(bool bForceRefresh)
+{
+    return GetAllSavedChunkCoordinates(TEXT("Default"), bForceRefresh);
+}
+
+TArray<FString> ADiggerManager::GetAllSaveFileNames() const
+{
+    TArray<FString> SaveFileNames;
+    FString MainDir = FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY;
+    
+    if (!FPaths::DirectoryExists(MainDir))
+    {
+        return SaveFileNames;
+    }
+    
+    TArray<FString> SubDirs;
+    FFileManagerGeneric::Get().FindFiles(SubDirs, *MainDir, false, true);
+    
+    for (const FString& SubDir : SubDirs)
+    {
+        SaveFileNames.Add(SubDir);
+    }
+    
+    return SaveFileNames;
+}
+
+bool ADiggerManager::DeleteSaveFile(const FString& SaveFileName)
+{
+    FString SaveDir = GetSaveFileDirectory(SaveFileName);
+    
+    if (!FPaths::DirectoryExists(SaveDir))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Cannot delete save file '%s' - directory does not exist"), *SaveFileName);
+        return false;
+    }
+    
+    // Delete all files in the directory first
+    TArray<FString> FilesToDelete;
+    FFileManagerGeneric::Get().FindFilesRecursive(FilesToDelete, *SaveDir, TEXT("*"), true, false);
+    
+    bool bAllFilesDeleted = true;
+    for (const FString& FileToDelete : FilesToDelete)
+    {
+        if (!FPlatformFileManager::Get().GetPlatformFile().DeleteFile(*FileToDelete))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Failed to delete file: %s"), *FileToDelete);
+            bAllFilesDeleted = false;
+        }
+    }
+    
+    // Delete the directory itself
+    bool bDirectoryDeleted = FPlatformFileManager::Get().GetPlatformFile().DeleteDirectory(*SaveDir);
+    
+    if (bDirectoryDeleted && bAllFilesDeleted)
+    {
+        UE_LOG(LogTemp, Log, TEXT("Successfully deleted save file '%s'"), *SaveFileName);
+        
+        // Remove from cache
+        InvalidateSavedChunkCache(SaveFileName);
+        
+        return true;
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to completely delete save file '%s'"), *SaveFileName);
+        return false;
+    }
+}
+
+void ADiggerManager::InvalidateSavedChunkCache(const FString& SaveFileName)
+{
+    if (SaveFileName.IsEmpty())
+    {
+        // Clear all cache entries
+        SavedChunkCache.Empty();
+    }
+    else
+    {
+        // Clear specific save file cache
+        SavedChunkCache.Remove(SaveFileName);
+    }
+}
+//End New Mullti Save Files System.
 
 
 void ADiggerManager::ApplyBrushInEditor(bool bDig)
@@ -137,9 +507,12 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
         BrushStroke.LightType = EditorBrushLightType;
         BrushStroke.LightColor = EditorBrushLightColor;
 
-        UE_LOG(LogTemp, Warning, TEXT("Light brush setup: LightType = %d, Color = %s"),
-            (int32)BrushStroke.LightType,
-            *BrushStroke.LightColor.ToString());
+        if (DiggerDebug::Lights || DiggerDebug::Brush)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Light brush setup: LightType = %d, Color = %s"),
+                (int32)BrushStroke.LightType,
+                *BrushStroke.LightColor.ToString());
+        }
 
         ApplyLightBrushInEditor(BrushStroke);
         return;
@@ -163,15 +536,21 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
                 {
                     BrushStroke.LightType = Toolkit->GetCurrentLightType();
                     BrushStroke.LightColor = Toolkit->GetCurrentLightColor(); // Add this line
-                    UE_LOG(LogTemp, Warning, TEXT("Light type from toolkit: %d, Color: %s"), 
-                           (int32)BrushStroke.LightType, 
-                           *BrushStroke.LightColor.ToString());
+
+                    if (DiggerDebug::Lights || DiggerDebug::Brush)
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Light type from toolkit: %d, Color: %s"), 
+                               (int32)BrushStroke.LightType, 
+                               *BrushStroke.LightColor.ToString());
+                    }
                 }
             }
         }
-        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushInEditor: this = %p"), this);
-        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushInEditor: EditorBrushType = %d"), (int32)EditorBrushType);
-
+        if (DiggerDebug::Lights || DiggerDebug::Brush)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("ApplyBrushInEditor: this = %p"), this);
+            UE_LOG(LogTemp, Warning, TEXT("ApplyBrushInEditor: EditorBrushType = %d"), (int32)EditorBrushType);
+        }
     
         // Route to light handler with the full brush stroke
         ApplyLightBrushInEditor(BrushStroke);
@@ -257,7 +636,7 @@ void ADiggerManager::RemoveIslandAtPosition(const FVector& IslandCenter, const F
 
 void ADiggerManager::ApplyLightBrushInEditor(const FBrushStroke& BrushStroke)
 {
-    if (DiggerDebug::Brush) {
+    if (DiggerDebug::Lights || DiggerDebug::Brush) {
         UE_LOG(LogTemp, Warning, TEXT("ApplyLightBrushInEditor called at position: %s"), *BrushStroke.BrushPosition.ToString());
         UE_LOG(LogTemp, Warning, TEXT("Light stroke - Type: %d, Radius: %f, Strength: %f, Rotation: %s"), 
                (int32)BrushStroke.LightType, 
@@ -366,6 +745,7 @@ void ADiggerManager::SpawnLight(const FBrushStroke& BrushStroke)
 {
     if (!GetWorld())
     {
+        if (DiggerDebug::Lights || DiggerDebug::Brush || DiggerDebug::Context)
         UE_LOG(LogTemp, Error, TEXT("SpawnLight: World is null"));
         return;
     }
@@ -381,11 +761,13 @@ void ADiggerManager::SpawnLight(const FBrushStroke& BrushStroke)
         Light->InitializeFromBrush(BrushStroke);
         SpawnedLights.Add(Light);
 
-        UE_LOG(LogTemp, Warning, TEXT("✅ Successfully spawned dynamic light actor of type %d"), (int32)BrushStroke.LightType);
+        if (DiggerDebug::Lights || DiggerDebug::Brush)
+        UE_LOG(LogTemp, Warning, TEXT("Successfully spawned dynamic light actor of type %d"), (int32)BrushStroke.LightType);
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("❌ Failed to spawn dynamic light actor"));
+        if (DiggerDebug::Lights || DiggerDebug::Brush)
+        UE_LOG(LogTemp, Error, TEXT("Failed to spawn dynamic light actor"));
     }
 }
 
@@ -777,11 +1159,11 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
             }
 
             // Batch draw edge voxels as points (cyan)
-            // if (EdgeVoxelPositions.Num() > 0)
-            // {
-            //     FastDebug->DrawPoints(EdgeVoxelPositions, 5.0f, 
-            //                          FFastDebugConfig(FColor::Cyan, 30.0f, 2.0f));
-            // }
+            if (EdgeVoxelPositions.Num() > 0)
+            {
+                FastDebug->DrawPoints(EdgeVoxelPositions, 5.0f, 
+                                     FFastDebugConfig(FColor::Cyan, 30.0f, 2.0f));
+            }
 
             // Draw the selected voxel (magenta box)
             if (SelectedVoxelCenter != FVector::ZeroVector)
@@ -821,7 +1203,6 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
         UE_LOG(LogTemp, Warning, TEXT("DebugBrushPlacement: completed"));
     }
 }
-
 // Updated ADiggerManager::DebugDrawVoxelAtWorldPosition()
 void ADiggerManager::DebugDrawVoxelAtWorldPositionFast(const FVector& WorldPosition, const FLinearColor& BoxColor, float Duration, float Thickness)
 {
@@ -3495,63 +3876,6 @@ TArray<FIntVector> ADiggerManager::GetPossibleOwningChunks(const FIntVector& Glo
 }
 
 
-
-// In ADiggerManager.cpp
-/*
-TArray<FIslandData> ADiggerManager::GetAllIslands() const
-{
-    // Create a local array to collect islands before broadcasting
-    TArray<FIslandData> AllIslands;
-    TMap<FIntVector, FIslandData> UniqueIslands;
-    
-    // First collect all islands without broadcasting
-    for (const auto& ChunkPair : ChunkMap)
-    {
-        UVoxelChunk* Chunk = ChunkPair.Value;
-        if (!Chunk || !Chunk->IsValidLowLevel())
-            continue;
-            
-        USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
-        if (!Grid || !Grid->IsValidLowLevel())
-            continue;
-            
-        TArray<FIslandData> ChunkIslands = Grid->DetectIslands(0.0f);
-        for (const FIslandData& Island : ChunkIslands)
-        {
-            FIntVector Center = FIntVector(
-                FMath::RoundToInt(Island.Location.X),
-                FMath::RoundToInt(Island.Location.Y),
-                FMath::RoundToInt(Island.Location.Z)
-            );
-            if (!UniqueIslands.Contains(Center))
-            {
-                UniqueIslands.Add(Center, Island);
-            }
-        }
-    }
-    
-    // Generate the final array
-    UniqueIslands.GenerateValueArray(AllIslands);
-    
-    // Now it's safe to broadcast
-#if WITH_EDITOR
-    // First notify listeners to clear existing islands
-    OnIslandsDetectionStarted.Broadcast();
-    
-    // Then broadcast each island
-    for (const FIslandData& Island : AllIslands)
-    {
-        OnIslandDetected.Broadcast(Island);
-        if (DiggerDebug::Islands)
-            {UE_LOG(LogTemp, Error, TEXT("Island Broadcast Sent!"));}
-    }
-#endif
-
-    return AllIslands;
-}
-*/
-
-
 #if WITH_EDITOR
 void ADiggerManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
@@ -3646,106 +3970,8 @@ void ADiggerManager::Tick(float DeltaTime)
     // Your existing tick code...
 }
 
-FString ADiggerManager::GetChunkFilePath(const FIntVector& ChunkCoords) const
-{
-    FString FileName = FString::Printf(TEXT("Chunk_%d_%d_%d%s"), 
-        ChunkCoords.X, ChunkCoords.Y, ChunkCoords.Z, *CHUNK_FILE_EXTENSION);
-    
-    return FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY / FileName;
-}
 
-bool ADiggerManager::DoesChunkFileExist(const FIntVector& ChunkCoords) const
-{
-    FString FilePath = GetChunkFilePath(ChunkCoords);
-    return FPaths::FileExists(FilePath);
-}
 
-bool ADiggerManager::SaveChunk(const FIntVector& ChunkCoords)
-{
-    EnsureVoxelDataDirectoryExists();
-    
-    UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
-    if (!ChunkPtr || !*ChunkPtr)
-    {
-        if (DiggerDebug::IO)
-        UE_LOG(LogTemp, Warning, TEXT("Cannot save chunk at %s - chunk not found in memory"), 
-            *ChunkCoords.ToString());
-        return false;
-    }
-    
-    UVoxelChunk* Chunk = *ChunkPtr;
-    FString FilePath = GetChunkFilePath(ChunkCoords);
-    
-    bool bSaveSuccess = Chunk->SaveChunkData(FilePath);
-    
-    if (bSaveSuccess)
-    {
-        if (DiggerDebug::IO)
-        UE_LOG(LogTemp, Log, TEXT("Successfully saved chunk %s"), *ChunkCoords.ToString());
-        
-        // Invalidate cache so it gets refreshed
-        InvalidateSavedChunkCache();
-    }
-    else
-    {
-        if (DiggerDebug::IO || DiggerDebug::Error)
-        UE_LOG(LogTemp, Error, TEXT("Failed to save chunk %s"), *ChunkCoords.ToString());
-    }
-    
-    return bSaveSuccess;
-}
-
-bool ADiggerManager::LoadChunk(const FIntVector& ChunkCoords)
-{
-    FString FilePath = GetChunkFilePath(ChunkCoords);
-    
-    if (!FPaths::FileExists(FilePath))
-    {
-        if (DiggerDebug::IO)
-        UE_LOG(LogTemp, Warning, TEXT("Cannot load chunk at %s - file does not exist"), 
-            *ChunkCoords.ToString());
-        return false;
-    }
-    
-    // Get or create the chunk
-    UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords);
-    if (!Chunk)
-    {
-        if (DiggerDebug::IO || DiggerDebug::Error || DiggerDebug::Chunks)
-        UE_LOG(LogTemp, Error, TEXT("Failed to get or create chunk at %s"), 
-            *ChunkCoords.ToString());
-        return false;
-    }
-    
-    // Load the chunk data
-    bool bLoadSuccess = Chunk->LoadChunkData(FilePath);
-    
-    if (bLoadSuccess)
-    {
-        if (DiggerDebug::IO || DiggerDebug::Chunks)
-        UE_LOG(LogTemp, Log, TEXT("Successfully loaded chunk %s"), *ChunkCoords.ToString());
-        
-        // IMPORTANT: Force mesh regeneration after loading
-        Chunk->ForceUpdate();
-        
-        // Alternative: If you have a specific mesh update method, use that instead
-        // For example:
-        // if (USparseVoxelGrid* VoxelGrid = Chunk->GetSparseVoxelGrid())
-        // {
-        //     VoxelGrid->UpdateMesh();
-        // }
-        if (DiggerDebug::IO || DiggerDebug::Mesh)
-        UE_LOG(LogTemp, Log, TEXT("Triggered mesh regeneration for loaded chunk %s"), 
-            *ChunkCoords.ToString());
-    }
-    else
-    {
-        if (DiggerDebug::Chunks || DiggerDebug::Error)
-        UE_LOG(LogTemp, Error, TEXT("Failed to load chunk %s"), *ChunkCoords.ToString());
-    }
-    
-    return bLoadSuccess;
-}
 
 void ADiggerManager::CreateHoleAt(FVector WorldPosition, FRotator Rotation, FVector Scale, TSubclassOf<AActor> HoleBPClass)
 {
@@ -3767,77 +3993,6 @@ bool ADiggerManager::RemoveHoleNear(FVector WorldPosition, float MaxDistance)
     return false;
 }
 
-
-bool ADiggerManager::SaveAllChunks()
-{
-    EnsureVoxelDataDirectoryExists();
-    
-    if (ChunkMap.Num() == 0)
-    {
-        UE_LOG(LogTemp, Log, TEXT("No chunks to save - ChunkMap is empty"));
-        return true;
-    }
-    
-    int32 SavedCount = 0;
-    int32 FailedCount = 0;
-    
-    UE_LOG(LogTemp, Log, TEXT("Starting to save %d chunks..."), ChunkMap.Num());
-    
-    for (const auto& ChunkPair : ChunkMap)
-    {
-        const FIntVector& ChunkCoords = ChunkPair.Key;
-        
-        if (SaveChunk(ChunkCoords))
-        {
-            SavedCount++;
-        }
-        else
-        {
-            FailedCount++;
-        }
-    }
-    
-    UE_LOG(LogTemp, Log, TEXT("Finished saving chunks: %d successful, %d failed"), 
-        SavedCount, FailedCount);
-    
-    // Invalidate cache after batch save
-    InvalidateSavedChunkCache();
-    
-    return FailedCount == 0;
-}
-
-bool ADiggerManager::LoadAllChunks()
-{
-    TArray<FIntVector> SavedChunkCoords = GetAllSavedChunkCoordinates(true); // Force refresh
-    
-    if (SavedChunkCoords.Num() == 0)
-    {
-        UE_LOG(LogTemp, Log, TEXT("No saved chunks found to load"));
-        return true;
-    }
-    
-    int32 LoadedCount = 0;
-    int32 FailedCount = 0;
-    
-    UE_LOG(LogTemp, Log, TEXT("Starting to load %d chunks..."), SavedChunkCoords.Num());
-    
-    for (const FIntVector& ChunkCoords : SavedChunkCoords)
-    {
-        if (LoadChunk(ChunkCoords))
-        {
-            LoadedCount++;
-        }
-        else
-        {
-            FailedCount++;
-        }
-    }
-    
-    UE_LOG(LogTemp, Log, TEXT("Finished loading chunks: %d successful, %d failed"), 
-        LoadedCount, FailedCount);
-    
-    return FailedCount == 0;
-}
 
 
 TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates(bool bForceRefresh) const
@@ -3909,10 +4064,6 @@ void ADiggerManager::RefreshSavedChunkCache()
     }
 }
 
-void ADiggerManager::InvalidateSavedChunkCache()
-{
-    bSavedChunkCacheValid = false;
-}
 
 bool ADiggerManager::DeleteChunkFile(const FIntVector& ChunkCoords)
 {

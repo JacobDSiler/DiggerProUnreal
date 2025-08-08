@@ -122,6 +122,9 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
 
     Manager = GetDiggerManager();
 
+    // Initialize the save files list
+    RefreshSaveFilesList();
+
     // In your Init() or constructor, before SNew(SVerticalBox):
     LightTypeOptions.Empty();
     for (int32 i = 0; i < StaticEnum<ELightBrushType>()->NumEnums() - 1; ++i)
@@ -1632,42 +1635,121 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
             .ColorAndOpacity(FSlateColor::UseForeground())
         ]
 
+        // Save File Name Input
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+        [
+            SNew(SHorizontalBox)
+            
+            + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 8, 0).VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString("Save File:"))
+                .Font(FAppStyle::GetFontStyle("PropertyWindow.NormalFont"))
+            ]
+            
+            + SHorizontalBox::Slot().FillWidth(1.0f)
+            [
+                SAssignNew(SaveFileNameWidget, SEditableTextBox)
+                .Text(FText::FromString("Default"))
+                .HintText(FText::FromString("Enter save file name..."))
+                .Font(FAppStyle::GetFontStyle("PropertyWindow.NormalFont"))
+            ]
+        ]
+
+        // Save File Selection Dropdown
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+        [
+            SNew(SHorizontalBox)
+            
+            + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 8, 0).VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString("Load File:"))
+                .Font(FAppStyle::GetFontStyle("PropertyWindow.NormalFont"))
+            ]
+            
+            + SHorizontalBox::Slot().FillWidth(1.0f)
+            [
+                SAssignNew(SaveFileComboBox, SComboBox<TSharedPtr<FString>>)
+                .OptionsSource(&AvailableSaveFiles)
+                .OnGenerateWidget_Lambda([](TSharedPtr<FString> InOption)
+                {
+                    return SNew(STextBlock).Text(FText::FromString(*InOption));
+                })
+                .OnSelectionChanged_Lambda([this](TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
+                {
+                    if (NewSelection.IsValid())
+                    {
+                        SaveFileNameWidget->SetText(FText::FromString(*NewSelection));
+                    }
+                })
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([this]() -> FText
+                    {
+                        TSharedPtr<FString> Selected = SaveFileComboBox->GetSelectedItem();
+                        return Selected.IsValid() ? FText::FromString(*Selected) : FText::FromString("Select save file...");
+                    })
+                ]
+            ]
+            
+            + SHorizontalBox::Slot().AutoWidth().Padding(8, 0, 0, 0)
+            [
+                SNew(SButton)
+                .Text(FText::FromString("Refresh"))
+                .ToolTipText(FText::FromString("Refresh the list of available save files"))
+                .OnClicked_Lambda([this]() -> FReply {
+                    RefreshSaveFilesList();
+                    return FReply::Handled();
+                })
+            ]
+        ]
+
         // Save/Load Buttons Row
         + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
         [
             SNew(SHorizontalBox)
 
             // Save All Chunks Button
-            + SHorizontalBox::Slot().FillWidth(0.5f).Padding(0, 0, 4, 0)
+            + SHorizontalBox::Slot().FillWidth(0.33f).Padding(0, 0, 4, 0)
             [
                 SNew(SButton)
                 .Text(FText::FromString("Save All Chunks"))
-                .ToolTipText(FText::FromString("Save all currently loaded chunks to disk"))
+                .ToolTipText(FText::FromString("Save all currently loaded chunks to the specified save file"))
                 .HAlign(HAlign_Center)
                 .VAlign(VAlign_Center)
                 .OnClicked_Lambda([this]() -> FReply {
                     if (Manager == GetDiggerManager())
                     {
-                        bool bSuccess = Manager->SaveAllChunks();
+                        FString SaveFileName = SaveFileNameWidget->GetText().ToString().TrimStartAndEnd();
+                        if (SaveFileName.IsEmpty())
+                        {
+                            SaveFileName = "Default";
+                        }
+                        
+                        bool bSuccess = Manager->SaveAllChunks(SaveFileName);
                         if (bSuccess)
                         {
                             // Show success notification
-                            FNotificationInfo Info(FText::FromString("Successfully saved all chunks"));
+                            FNotificationInfo Info(FText::FromString(FString::Printf(TEXT("Successfully saved all chunks to '%s'"), *SaveFileName)));
                             Info.ExpireDuration = 3.0f;
                             Info.bUseSuccessFailIcons = true;
                             FSlateNotificationManager::Get().AddNotification(Info);
                             
-                            UE_LOG(LogTemp, Log, TEXT("Save All Chunks: Success"));
+                            UE_LOG(LogTemp, Log, TEXT("Save All Chunks to '%s': Success"), *SaveFileName);
+                            
+                            // Refresh the save files list
+                            RefreshSaveFilesList();
                         }
                         else
                         {
                             // Show error notification
-                            FNotificationInfo Info(FText::FromString("Failed to save some chunks - check log"));
+                            FNotificationInfo Info(FText::FromString(FString::Printf(TEXT("Failed to save chunks to '%s' - check log"), *SaveFileName)));
                             Info.ExpireDuration = 5.0f;
                             Info.bUseSuccessFailIcons = true;
                             FSlateNotificationManager::Get().AddNotification(Info);
                             
-                            UE_LOG(LogTemp, Error, TEXT("Save All Chunks: Failed"));
+                            UE_LOG(LogTemp, Error, TEXT("Save All Chunks to '%s': Failed"), *SaveFileName);
                         }
                     }
                     else
@@ -1683,36 +1765,42 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
             ]
 
             // Load All Chunks Button
-            + SHorizontalBox::Slot().FillWidth(0.5f).Padding(4, 0, 0, 0)
+            + SHorizontalBox::Slot().FillWidth(0.33f).Padding(2, 0, 2, 0)
             [
                 SNew(SButton)
                 .Text(FText::FromString("Load All Chunks"))
-                .ToolTipText(FText::FromString("Load all saved chunks from disk"))
+                .ToolTipText(FText::FromString("Load all saved chunks from the specified save file"))
                 .HAlign(HAlign_Center)
                 .VAlign(VAlign_Center)
                 .OnClicked_Lambda([this]() -> FReply {
                     if (Manager == GetDiggerManager())
                     {
-                        bool bSuccess = Manager->LoadAllChunks();
+                        FString SaveFileName = SaveFileNameWidget->GetText().ToString().TrimStartAndEnd();
+                        if (SaveFileName.IsEmpty())
+                        {
+                            SaveFileName = "Default";
+                        }
+                        
+                        bool bSuccess = Manager->LoadAllChunks(SaveFileName);
                         if (bSuccess)
                         {
                             // Show success notification
-                            FNotificationInfo Info(FText::FromString("Successfully loaded all chunks"));
+                            FNotificationInfo Info(FText::FromString(FString::Printf(TEXT("Successfully loaded all chunks from '%s'"), *SaveFileName)));
                             Info.ExpireDuration = 3.0f;
                             Info.bUseSuccessFailIcons = true;
                             FSlateNotificationManager::Get().AddNotification(Info);
                             
-                            UE_LOG(LogTemp, Log, TEXT("Load All Chunks: Success"));
+                            UE_LOG(LogTemp, Log, TEXT("Load All Chunks from '%s': Success"), *SaveFileName);
                         }
                         else
                         {
                             // Show error notification
-                            FNotificationInfo Info(FText::FromString("Failed to load some chunks - check log"));
+                            FNotificationInfo Info(FText::FromString(FString::Printf(TEXT("Failed to load chunks from '%s' - check log"), *SaveFileName)));
                             Info.ExpireDuration = 5.0f;
                             Info.bUseSuccessFailIcons = true;
                             FSlateNotificationManager::Get().AddNotification(Info);
                             
-                            UE_LOG(LogTemp, Error, TEXT("Load All Chunks: Failed"));
+                            UE_LOG(LogTemp, Error, TEXT("Load All Chunks from '%s': Failed"), *SaveFileName);
                         }
                     }
                     else
@@ -1725,9 +1813,89 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
                     Manager = GetDiggerManager();
                     if (!Manager) return false;
                     
-                    // Check if there are any saved chunks to load
-                    TArray<FIntVector> SavedChunks = Manager->GetAllSavedChunkCoordinates();
+                    FString SaveFileName = SaveFileNameWidget->GetText().ToString().TrimStartAndEnd();
+                    if (SaveFileName.IsEmpty())
+                    {
+                        SaveFileName = "Default";
+                    }
+                    
+                    // Check if there are any saved chunks to load for this save file
+                    TArray<FIntVector> SavedChunks = Manager->GetAllSavedChunkCoordinates(SaveFileName);
                     return SavedChunks.Num() > 0;
+                })
+            ]
+
+            // Delete Save File Button
+            + SHorizontalBox::Slot().FillWidth(0.33f).Padding(4, 0, 0, 0)
+            [
+                SNew(SButton)
+                .Text(FText::FromString("Delete Save File"))
+                .ToolTipText(FText::FromString("Delete the specified save file and all its chunks"))
+                .HAlign(HAlign_Center)
+                .VAlign(VAlign_Center)
+                .ButtonColorAndOpacity(FSlateColor(FLinearColor(0.8f, 0.2f, 0.2f, 1.0f)))
+                .OnClicked_Lambda([this]() -> FReply {
+                    if (Manager == GetDiggerManager())
+                    {
+                        FString SaveFileName = SaveFileNameWidget->GetText().ToString().TrimStartAndEnd();
+                        if (SaveFileName.IsEmpty())
+                        {
+                            SaveFileName = "Default";
+                        }
+                        
+                        // Show confirmation dialog
+                        FText DialogTitle = FText::FromString("Delete Save File");
+                        FText DialogText = FText::FromString(FString::Printf(TEXT("Are you sure you want to delete save file '%s'? This action cannot be undone."), *SaveFileName));
+                        
+                        EAppReturnType::Type Result = FMessageDialog::Open(EAppMsgType::YesNo, DialogText, &DialogTitle);
+                        
+                        if (Result == EAppReturnType::Yes)
+                        {
+                            bool bSuccess = Manager->DeleteSaveFile(SaveFileName);
+                            if (bSuccess)
+                            {
+                                // Show success notification
+                                FNotificationInfo Info(FText::FromString(FString::Printf(TEXT("Successfully deleted save file '%s'"), *SaveFileName)));
+                                Info.ExpireDuration = 3.0f;
+                                Info.bUseSuccessFailIcons = true;
+                                FSlateNotificationManager::Get().AddNotification(Info);
+                                
+                                UE_LOG(LogTemp, Log, TEXT("Delete Save File '%s': Success"), *SaveFileName);
+                                
+                                // Refresh the save files list and clear the text box
+                                RefreshSaveFilesList();
+                                SaveFileNameWidget->SetText(FText::FromString("Default"));
+                            }
+                            else
+                            {
+                                // Show error notification
+                                FNotificationInfo Info(FText::FromString(FString::Printf(TEXT("Failed to delete save file '%s' - check log"), *SaveFileName)));
+                                Info.ExpireDuration = 5.0f;
+                                Info.bUseSuccessFailIcons = true;
+                                FSlateNotificationManager::Get().AddNotification(Info);
+                                
+                                UE_LOG(LogTemp, Error, TEXT("Delete Save File '%s': Failed"), *SaveFileName);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Error, TEXT("Delete Save File: No DiggerManager found"));
+                    }
+                    return FReply::Handled();
+                })
+                .IsEnabled_Lambda([this]() -> bool {
+                    Manager = GetDiggerManager();
+                    if (!Manager) return false;
+                    
+                    FString SaveFileName = SaveFileNameWidget->GetText().ToString().TrimStartAndEnd();
+                    if (SaveFileName.IsEmpty())
+                    {
+                        SaveFileName = "Default";
+                    }
+                    
+                    // Only enable if the save file exists
+                    return Manager->DoesSaveFileExist(SaveFileName);
                 })
             ]
         ]
@@ -1752,22 +1920,110 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
                 .ToolTipText(FText::FromString("Number of chunks currently loaded in memory"))
             ]
 
-            // Saved Chunks Count
+            // Saved Chunks Count for current save file
             + SHorizontalBox::Slot().FillWidth(0.5f).Padding(4, 0, 0, 0)
             [
                 SNew(STextBlock)
                 .Text_Lambda([this]() -> FText {
                     if (Manager == GetDiggerManager())
                     {
-                        TArray<FIntVector> SavedChunks = Manager->GetAllSavedChunkCoordinates();
-                        return FText::FromString(FString::Printf(TEXT("Saved: %d"), SavedChunks.Num()));
+                        FString SaveFileName = SaveFileNameWidget->GetText().ToString().TrimStartAndEnd();
+                        if (SaveFileName.IsEmpty())
+                        {
+                            SaveFileName = "Default";
+                        }
+                        
+                        TArray<FIntVector> SavedChunks = Manager->GetAllSavedChunkCoordinates(SaveFileName);
+                        return FText::FromString(FString::Printf(TEXT("Saved (%s): %d"), *SaveFileName, SavedChunks.Num()));
                     }
                     return FText::FromString("Saved: 0");
                 })
                 .Font(FAppStyle::GetFontStyle("PropertyWindow.NormalFont"))
-                .ToolTipText(FText::FromString("Number of chunks saved to disk"))
+                .ToolTipText(FText::FromString("Number of chunks saved to disk for the current save file"))
             ]
         ];
+}
+
+// Add this implementation to your FDiggerEdModeToolkit.cpp file:
+
+// Add this implementation to your FDiggerEdModeToolkit.cpp file:
+
+void FDiggerEdModeToolkit::RefreshSaveFilesList()
+{
+    UE_LOG(LogTemp, Log, TEXT("RefreshSaveFilesList: Starting refresh..."));
+    
+    AvailableSaveFiles.Empty();
+    
+    Manager = GetDiggerManager(); // Make sure Manager is up to date
+    if (Manager)
+    {
+        TArray<FString> SaveFileNames = Manager->GetAllSaveFileNames();
+        UE_LOG(LogTemp, Log, TEXT("RefreshSaveFilesList: Found %d save files from manager"), SaveFileNames.Num());
+        
+        for (const FString& SaveFileName : SaveFileNames)
+        {
+            UE_LOG(LogTemp, Log, TEXT("Adding save file to list: '%s'"), *SaveFileName);
+            AvailableSaveFiles.Add(MakeShareable(new FString(SaveFileName)));
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("RefreshSaveFilesList: No DiggerManager found"));
+    }
+    
+    // Always add "Default" if it's not already there
+    bool bHasDefault = false;
+    for (const auto& SaveFile : AvailableSaveFiles)
+    {
+        if (SaveFile.IsValid() && *SaveFile == "Default")
+        {
+            bHasDefault = true;
+            break;
+        }
+    }
+    
+    if (!bHasDefault)
+    {
+        AvailableSaveFiles.Insert(MakeShareable(new FString("Default")), 0);
+        UE_LOG(LogTemp, Log, TEXT("Added 'Default' to save files list"));
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Total save files in dropdown: %d"), AvailableSaveFiles.Num());
+    
+    if (SaveFileComboBox.IsValid())
+    {
+        // Clear current selection first
+        SaveFileComboBox->ClearSelection();
+        
+        // Refresh the options
+        SaveFileComboBox->RefreshOptions();
+        
+        // Set default selection if available
+        if (AvailableSaveFiles.Num() > 0)
+        {
+            // Try to find "Default" and select it
+            for (const auto& SaveFile : AvailableSaveFiles)
+            {
+                if (SaveFile.IsValid() && *SaveFile == "Default")
+                {
+                    SaveFileComboBox->SetSelectedItem(SaveFile);
+                    break;
+                }
+            }
+            
+            // If no default found, select the first item
+            if (!SaveFileComboBox->GetSelectedItem().IsValid())
+            {
+                SaveFileComboBox->SetSelectedItem(AvailableSaveFiles[0]);
+            }
+        }
+        
+        UE_LOG(LogTemp, Log, TEXT("Refreshed combo box options and set selection"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SaveFileComboBox is not valid"));
+    }
 }
 
 bool FDiggerEdModeToolkit::IsSocketIOPluginAvailable() const
