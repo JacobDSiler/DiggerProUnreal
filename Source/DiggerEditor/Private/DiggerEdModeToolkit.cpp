@@ -172,7 +172,204 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         MakeBrushShapeSection()
     ]
 
-     // --- Light Type UI: Only visible for Light brush ---
+
+
+        // --- Debug Brush Settings Section (Conditional) ---
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SNew(SBox)
+            .Visibility_Lambda([this]() {
+                return GetCurrentBrushType() == EVoxelBrushType::Debug ? EVisibility::Visible : EVisibility::Collapsed;
+            })
+            [
+                SNew(SExpandableArea)
+                .InitiallyCollapsed(false)
+                .HeaderContent()
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("Debug Brush Options"))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+                ]
+                .BodyContent()
+                [
+                    SNew(SVerticalBox)
+                    
+                    // --- Chunk Debugging ---
+                    + SVerticalBox::Slot().AutoHeight().Padding(2)
+                    [
+                        SNew(SExpandableArea)
+                        .InitiallyCollapsed(true)
+                        .HeaderContent()
+                        [
+                            SNew(STextBlock).Text(FText::FromString("Chunk"))
+                        ]
+                        .BodyContent()
+                        [
+                            SNew(SVerticalBox)
+                            + SVerticalBox::Slot().AutoHeight().Padding(1)
+                            [
+                                this->MakeDebugCheckbox(TEXT("Draw Chunk"), &DiggerDebug::Chunks)
+                            ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(1)
+                            [
+                                this->MakeDebugCheckbox(TEXT("Log Chunk Data"), &DiggerDebug::Cache)
+                            ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(1)
+                            [
+                                this->MakeDebugCheckbox(TEXT("Log Marching Cubes"), &DiggerDebug::Mesh)
+                            ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(1)
+                            [
+                                this->MakeDebugCheckbox(TEXT("Log Grid Ownership"), &DiggerDebug::Manager)
+                            ]
+                        ]
+                    ]
+
+                    // --- Voxels Debugging ---
+                    + SVerticalBox::Slot().AutoHeight().Padding(2)
+                    [
+                        SNew(SExpandableArea)
+                        .InitiallyCollapsed(true)
+                        .HeaderContent()
+                        [
+                            SNew(STextBlock).Text(FText::FromString("Voxels"))
+                        ]
+                        .BodyContent()
+                        [
+                            SNew(SVerticalBox)
+                            + SVerticalBox::Slot().AutoHeight().Padding(1)
+                            [
+                                this->MakeDebugCheckbox(TEXT("Visualize Grid"), &DiggerDebug::Space)
+                            ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(1)
+                            [
+                                this->MakeDebugCheckbox(TEXT("Draw All Voxels"), &DiggerDebug::Voxels)
+                            ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(1)
+                            [
+                                this->MakeDebugCheckbox(TEXT("Log Voxel Data"), &DiggerDebug::IO)
+                            ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(1)
+                            [
+                                this->MakeDebugCheckbox(TEXT("Log Grid Contents"), &DiggerDebug::UserConv)
+                            ]
+                        ]
+                    ]
+
+                    // --- Manager Debugging ---
+                    + SVerticalBox::Slot().AutoHeight().Padding(2)
+                    [
+                        SNew(SExpandableArea)
+                        .InitiallyCollapsed(true)
+                        .HeaderContent()
+                        [
+                            SNew(STextBlock).Text(FText::FromString("Digger Manager"))
+                        ]
+                        .BodyContent()
+                        [
+                            SNew(SVerticalBox)
+                            + SVerticalBox::Slot().AutoHeight().Padding(1)
+                            [
+                                this->MakeDebugCheckbox(TEXT("Log All Chunk Data"), &DiggerDebug::Chunks)
+                            ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(1)
+                            [
+                                this->MakeDebugCheckbox(TEXT("Log All Grid Data"), &DiggerDebug::UserConv)
+                            ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(1)
+                            [
+                                this->MakeDebugCheckbox(TEXT("Draw All Chunks"), &DiggerDebug::Brush)
+                            ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(1)
+                            [
+                                this->MakeDebugCheckbox(TEXT("Draw All Grids"), &DiggerDebug::Context)
+                            ]
+                            + SVerticalBox::Slot().AutoHeight().Padding(1)
+                            [
+                                this->MakeDebugCheckbox(TEXT("Log Context States"), &DiggerDebug::Context)
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        ]
+
+
+    // --- Persistent Debug Settings Section ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SExpandableArea)
+        .InitiallyCollapsed(true)
+        .HeaderContent()
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString("Debug Flags"))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
+        ]
+        .BodyContent()
+        [
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+            [
+                SNew(STextBlock).Text(FText::FromString("General Debug Flags"))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Verbose"), &DiggerDebug::Verbose)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Performance"), &DiggerDebug::Performance)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Normals"), &DiggerDebug::Normals)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Error"), &DiggerDebug::Error)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Holes"), &DiggerDebug::Holes)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Landscape"), &DiggerDebug::Landscape)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Voxel Conversion"), &DiggerDebug::VoxelConv)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Islands"), &DiggerDebug::Islands)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Brush"), &DiggerDebug::Brush)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Casts"), &DiggerDebug::Casts)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Threads"), &DiggerDebug::Threads)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Manager"), &DiggerDebug::Manager)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Caves"), &DiggerDebug::Caves)
+            ]
+        ]
+    ]
+
+
+    // --- Light Type UI: Only visible for Light brush ---
     + SVerticalBox::Slot().AutoHeight().Padding(4)
     [
         SNew(SBox)
@@ -1137,6 +1334,31 @@ void FDiggerEdModeToolkit::ClearBrushDigPreviewOverride()
 {
     bUseBrushDigPreviewOverride = false;
 }
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDebugCheckbox(const FString& Label, bool* FlagPtr)
+{
+    return SNew(SCheckBox)
+    .IsChecked_Lambda([FlagPtr, Label]() -> ECheckBoxState
+    {
+        const bool bChecked = *FlagPtr;
+        UE_LOG(LogTemp, Verbose, TEXT("[DebugFlags] Checkbox for %s is currently: %s"),
+            *Label,
+            bChecked ? TEXT("Checked") : TEXT("Unchecked"));
+        return bChecked ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+    })
+    .OnCheckStateChanged_Lambda([FlagPtr, Label](ECheckBoxState NewState)
+    {
+        const bool bIsChecked = (NewState == ECheckBoxState::Checked);
+        *FlagPtr = bIsChecked;
+        UE_LOG(LogTemp, Warning, TEXT("[DebugFlags] %s was %s"), *Label, bIsChecked ? TEXT("Enabled") : TEXT("Disabled"));
+    })
+    .Content()
+    [
+        SNew(STextBlock)
+        .Text(FText::FromString(Label))
+    ];
+}
+
 
 
 
@@ -3823,6 +4045,7 @@ TSharedRef<SWidget> CreateComingSoonSection(const FString& FeatureName, const FS
 
 void FDiggerEdModeToolkit::ClearIslands()
 {
+    if (DiggerDebug::Islands)
     UE_LOG(LogTemp, Warning, TEXT("ClearIslands called on toolkit: %p"), this);
     Islands.Empty();
     SelectedIslandIndex = INDEX_NONE;
@@ -3832,12 +4055,22 @@ void FDiggerEdModeToolkit::ClearIslands()
 
 void FDiggerEdModeToolkit::RebuildIslandGrid()
 {
-    UE_LOG(LogTemp, Warning, TEXT("RebuildIslandGrid called!"));
-    if (IslandGridContainer.IsValid())
+    if (!IslandGridContainer.IsValid())
     {
-        IslandGridContainer->SetContent(MakeIslandGridWidget());
+        if (DiggerDebug::Islands)
+            UE_LOG(LogTemp, Warning, TEXT("RebuildIslandGrid: IslandGridContainer is invalid."));
+        return;
     }
+
+    TSharedRef<SWidget> NewWidget = MakeIslandGridWidget(); // Make sure this returns a valid widget (not SWidget)
+
+    IslandGridContainer->SetContent(NewWidget);
+
+    if (DiggerDebug::Islands)
+        UE_LOG(LogTemp, Warning, TEXT("RebuildIslandGrid: Grid rebuilt successfully."));
 }
+
+
 
 // In DiggerEdModeToolkit.cpp
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()
@@ -3937,20 +4170,23 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeMirrorButton(double& Target, const
 // Preview Azgar cave import method
 void FDiggerEdModeToolkit::PreviewProcgenArcanaCave()
 {
+    if (DiggerDebug::Caves)
     UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Starting preview process..."));
 
     if (!CaveImporter)
     {
+        if (DiggerDebug::Caves)
         UE_LOG(LogTemp, Error, TEXT("[DEBUG PREVIEW] Cave importer not initialized"));
         return;
     }
 
     if (SelectedSVGFilePath.IsEmpty())
     {
+        if (DiggerDebug::Caves)
         UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] No SVG file selected"));
         return;
     }
-
+    if (DiggerDebug::Caves)
     UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Preview file: %s"), *SelectedSVGFilePath);
 
     // Get the correct world context - FIXED
@@ -3966,10 +4202,12 @@ void FDiggerEdModeToolkit::PreviewProcgenArcanaCave()
     
     if (!World)
     {
+        if (DiggerDebug::Caves || DiggerDebug::Context)
         UE_LOG(LogTemp, Error, TEXT("[DEBUG PREVIEW] Could not get valid world context for preview"));
         return;
     }
 
+    if (DiggerDebug::Caves || DiggerDebug::Context)
     UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Got world context"));
 
     // Clear any existing preview
@@ -3988,6 +4226,7 @@ void FDiggerEdModeToolkit::PreviewProcgenArcanaCave()
     PreviewSettings.ManualEntrancePoint = ManualEntrancePoint;
     PreviewSettings.bPreviewMode = true;
 
+    if (DiggerDebug::Caves)
     UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Settings prepared, calling PreviewCaveFromSVG..."));
 
     // Get preview points with timeout protection
@@ -4000,24 +4239,28 @@ void FDiggerEdModeToolkit::PreviewProcgenArcanaCave()
         // Add some basic error checking
         if (!FPaths::FileExists(PreviewSettings.SVGFilePath))
         {
+            if (DiggerDebug::Caves || DiggerDebug::IO)
             UE_LOG(LogTemp, Error, TEXT("[DEBUG PREVIEW] SVG file does not exist: %s"), *PreviewSettings.SVGFilePath);
             return;
         }
         
+        if (DiggerDebug::Caves || DiggerDebug::IO)
         UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] File exists, calling importer..."));
         
         PreviewPoints = CaveImporter->PreviewCaveFromSVG(PreviewSettings);
-        
+        if (DiggerDebug::Caves)
         UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] PreviewCaveFromSVG returned %d points"), PreviewPoints.Num());
     }
     catch (...)
     {
+        if (DiggerDebug::Caves || DiggerDebug::IO || DiggerDebug::Error)
         UE_LOG(LogTemp, Error, TEXT("[DEBUG PREVIEW] Exception during preview generation"));
         return;
     }
     
     if (PreviewPoints.Num() > 0)
     {
+        if (DiggerDebug::Caves)
         UE_LOG(LogTemp, Log, TEXT("[DEBUG PREVIEW] Preview generated with %d points"), PreviewPoints.Num());
         
         // Add basic entrance/exit points
@@ -4029,7 +4272,8 @@ void FDiggerEdModeToolkit::PreviewProcgenArcanaCave()
         
         // Apply pivot offset based on PivotMode
         FVector PivotOffset = CalculatePivotOffset(PreviewPoints, EntrancePoints, ExitPoints);
-        
+
+        if (DiggerDebug::Caves)
         UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Calculated pivot offset: %s"), *PivotOffset.ToString());
         
         // Adjust all points by pivot offset
@@ -4051,7 +4295,8 @@ void FDiggerEdModeToolkit::PreviewProcgenArcanaCave()
         StoredEntrancePoints = EntrancePoints;
         StoredExitPoints = ExitPoints;
         bHasActivePreview = true;
-        
+
+        if (DiggerDebug::Caves)
         UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] About to draw debug lines..."));
         
         // Draw the main cave path with thick green lines
@@ -4117,11 +4362,13 @@ void FDiggerEdModeToolkit::PreviewProcgenArcanaCave()
         Info.bFireAndForget = true;
         Info.Image = FAppStyle::GetBrush(TEXT("LevelEditor.Tabs.Viewports"));
         FSlateNotificationManager::Get().AddNotification(Info);
-        
+
+        if (DiggerDebug::Caves)
         UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Preview completed successfully"));
     }
     else
     {
+        if (DiggerDebug::Caves)
         UE_LOG(LogTemp, Warning, TEXT("[DEBUG PREVIEW] Preview failed - no points generated"));
         
         FNotificationInfo Info(FText::FromString(TEXT("Preview failed - no points generated from SVG")));
@@ -4150,6 +4397,7 @@ AActor* FDiggerEdModeToolkit::CreateCaveSplineActor(USplineComponent* SplineComp
     
     if (!World)
     {
+        if (DiggerDebug::Caves || DiggerDebug::Context)
         UE_LOG(LogTemp, Error, TEXT("[Digger] Could not get valid world context"));
         return nullptr;
     }
@@ -4168,6 +4416,7 @@ AActor* FDiggerEdModeToolkit::CreateCaveSplineActor(USplineComponent* SplineComp
         TotalPivotOffset = BasePivotOffset - PreviewPositionOffset;
     }
 
+    if (DiggerDebug::Caves)
     UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Creating spline actor with total pivot offset: %s"), *TotalPivotOffset.ToString());
 
     // Create a new actor properly
@@ -4180,6 +4429,7 @@ AActor* FDiggerEdModeToolkit::CreateCaveSplineActor(USplineComponent* SplineComp
     AActor* CaveActor = World->SpawnActor<AActor>(AActor::StaticClass(), SpawnParams);
     if (!CaveActor)
     {
+        if (DiggerDebug::Caves)
         UE_LOG(LogTemp, Error, TEXT("[Digger] Failed to spawn cave actor"));
         return nullptr;
     }
@@ -4278,7 +4528,8 @@ AActor* FDiggerEdModeToolkit::CreateCaveSplineActor(USplineComponent* SplineComp
         FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
         PropertyModule.NotifyCustomizationModuleChanged();
     }
-    
+
+    if (DiggerDebug::Caves)
     UE_LOG(LogTemp, Log, TEXT("[Digger] Created editable cave actor '%s' with %d spline points, pivot mode: %s"), 
            *CaveActor->GetName(), NumPoints, *PivotModeText);
     
@@ -4437,24 +4688,28 @@ bool FDiggerEdModeToolkit::ValidateImportSettings()
 {
     if (SelectedSVGFilePath.IsEmpty())
     {
+        if (DiggerDebug::Caves || DiggerDebug::IO)
         UE_LOG(LogTemp, Warning, TEXT("[Digger] No SVG file selected"));
         return false;
     }
 
     if (!FPaths::FileExists(SelectedSVGFilePath))
     {
+        if (DiggerDebug::Caves || DiggerDebug::IO)
         UE_LOG(LogTemp, Error, TEXT("[Digger] SVG file does not exist: %s"), *SelectedSVGFilePath);
         return false;
     }
 
     if (CaveScale <= 0.0f)
     {
+        if (DiggerDebug::Caves || DiggerDebug::IO)
         UE_LOG(LogTemp, Warning, TEXT("[Digger] Invalid cave scale: %f"), CaveScale);
         return false;
     }
 
     if (MaxSplinePoints < 3)
     {
+        if (DiggerDebug::Caves || DiggerDebug::IO)
         UE_LOG(LogTemp, Warning, TEXT("[Digger] Max spline points too low: %d"), MaxSplinePoints);
         return false;
     }
@@ -4470,6 +4725,7 @@ void FDiggerEdModeToolkit::ImportProcgenArcanaCave()
     // Check if multi-spline is selected and handle appropriately
     if (OutputFormat == 1)
     {
+        if (DiggerDebug::Caves)
         UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Multi-spline import selected"));
         ImportMultiSplineCave();
         return;
@@ -4483,7 +4739,8 @@ void FDiggerEdModeToolkit::ImportProcgenArcanaCave()
             case 3: FormatName = TEXT("SDF Brush"); break;
             default: FormatName = TEXT("Unknown"); break;
         }
-        
+
+        // if (DiggerDebug::Caves)
         UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Non-implemented format selected: %s"), *FormatName);
         
         FNotificationInfo Info(FText::FromString(FString::Printf(
@@ -4491,22 +4748,26 @@ void FDiggerEdModeToolkit::ImportProcgenArcanaCave()
         Info.ExpireDuration = 5.0f;
         Info.bFireAndForget = true;
         FSlateNotificationManager::Get().AddNotification(Info);
-        
+
+        //if (DiggerDebug::Caves)
         UE_LOG(LogTemp, Warning, TEXT("[ProcgenArcana Importer] %s format not yet implemented, falling back to Single Spline"), *FormatName);
     }
 
     if (!CaveImporter)
     {
+        if (DiggerDebug::Caves || DiggerDebug::IO)
         UE_LOG(LogTemp, Error, TEXT("[DEBUG] Cave importer not initialized"));
         return;
     }
 
     if (SelectedSVGFilePath.IsEmpty())
     {
+        if (DiggerDebug::Caves || DiggerDebug::IO)
         UE_LOG(LogTemp, Warning, TEXT("[DEBUG] No SVG file selected"));
         return;
     }
 
+    if (DiggerDebug::Caves || DiggerDebug::IO)
     UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Importing from file: %s"), *SelectedSVGFilePath);
 
     // Get the world context
@@ -4518,10 +4779,12 @@ void FDiggerEdModeToolkit::ImportProcgenArcanaCave()
     
     if (!World)
     {
+        if (DiggerDebug::Caves || DiggerDebug::Context || DiggerDebug::IO)
         UE_LOG(LogTemp, Error, TEXT("[DEBUG] Could not get valid world context for import"));
         return;
     }
 
+    if (DiggerDebug::Caves || DiggerDebug::Context || DiggerDebug::IO)
     UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Got world context successfully"));
 
     // Prepare import settings
@@ -4537,18 +4800,21 @@ void FDiggerEdModeToolkit::ImportProcgenArcanaCave()
     ImportSettings.ManualEntrancePoint = ManualEntrancePoint;
     ImportSettings.bPreviewMode = false; // This is the real import
 
+    if (DiggerDebug::Caves || DiggerDebug::Context || DiggerDebug::IO)
     UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Import settings prepared"));
 
     // Get preview data for pivot calculation
     TArray<FVector> OriginalPoints;
     TArray<FVector> EntrancePoints; 
     TArray<FVector> ExitPoints;
-    
+
+    if (DiggerDebug::Caves || DiggerDebug::Context || DiggerDebug::IO)
     UE_LOG(LogTemp, Warning, TEXT("[DEBUG] About to get preview data..."));
     
     // Try to get preview data first
     if (StoredPreviewPoints.Num() > 0)
     {
+        if (DiggerDebug::Caves || DiggerDebug::Context || DiggerDebug::IO)
         UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Using cached preview data: %d points"), StoredPreviewPoints.Num());
         // Use cached preview data if available
         OriginalPoints = StoredPreviewPoints;
@@ -4557,22 +4823,26 @@ void FDiggerEdModeToolkit::ImportProcgenArcanaCave()
     }
     else
     {
+        if (DiggerDebug::Caves || DiggerDebug::Context || DiggerDebug::IO)
         UE_LOG(LogTemp, Warning, TEXT("[DEBUG] No cached data, generating preview data..."));
         
         // IMPORTANT: Make sure this doesn't freeze - add timeout or simplify
         try
         {
             OriginalPoints = CaveImporter->PreviewCaveFromSVG(ImportSettings);
+            if (DiggerDebug::Caves || DiggerDebug::Context || DiggerDebug::IO)
             UE_LOG(LogTemp, Warning, TEXT("[DEBUG] Preview data generated: %d points"), OriginalPoints.Num());
         }
         catch (...)
         {
+            if (DiggerDebug::Caves || DiggerDebug::Context || DiggerDebug::IO)
             UE_LOG(LogTemp, Error, TEXT("[DEBUG] Exception during preview generation"));
             return;
         }
         
         if (OriginalPoints.Num() == 0)
         {
+            if (DiggerDebug::Caves || DiggerDebug::Context || DiggerDebug::IO)
             UE_LOG(LogTemp, Error, TEXT("[DEBUG] No preview points generated"));
             return;
         }

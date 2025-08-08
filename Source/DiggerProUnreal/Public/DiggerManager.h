@@ -70,6 +70,37 @@ struct FIslandSaveData
 };
 
 
+USTRUCT(BlueprintType)
+struct FDebugBrushSettings
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    bool bDrawChunkBounds = true;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    bool bDrawEdgeVoxels = false;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    bool bDrawSelectedVoxel = true;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    bool bDrawClickPoint = true;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    bool bLogPlacementDetails = false;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    float DebugDuration = 30.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    float EdgeVoxelSize = 5.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    float SelectionMarkerSize = 20.0f;
+};
+
+
 #if WITH_EDITOR
 class FDiggerEdModeToolkit;
 #endif
@@ -176,9 +207,12 @@ public:
     FCriticalSection UpdateChunksCriticalSection;
 
     void DebugBrushPlacement(const FVector& ClickPosition);
+    void DebugDrawVoxelAtWorldPositionFast(const FVector& WorldPosition, const FLinearColor& BoxColor, float Duration,
+                                           float Thickness);
     void DebugDrawVoxelAtWorldPosition(const FVector& WorldPosition, FColor BoxColor, float Duration, float Thickness);
 
     void DrawDiagonalDebugVoxels(FIntVector ChunkCoords);
+    void DrawDiagonalDebugVoxelsFast(FIntVector ChunkCoords);
     UStaticMesh* ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName);
     void UpdateAllDirtyChunks();
     AIslandActor* SpawnIslandActorFromIslandAtPosition(const FVector& IslandCenter, bool bEnablePhysics);
@@ -406,6 +440,7 @@ public:
 
 
 
+
 #endif
 
 public:
@@ -422,6 +457,10 @@ public:
     int Subdivisions = 4;  // Number of subdivisions per grid size
 
     int VoxelSize=TerrainGridSize/Subdivisions;
+
+    // Debug Brush Settings
+    UPROPERTY(EditAnywhere, Category = "Debug Brush")
+    FDebugBrushSettings DebugBrushSettings;
 
     // The active brush shape
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel System")
@@ -636,6 +675,11 @@ public:
     ALandscapeProxy* GetLandscapeProxyAt(const FVector& WorldPos);
     TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos, bool bForcePrecise);
     TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos);
+    // Delete this after it works!!!11!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // In DiggerManager.h
+    UFUNCTION(CallInEditor, BlueprintCallable, Category = "Debug")
+    void QuickDebugTest();
+    
     float GetSmartLandscapeHeightAt(const FVector& WorldPos);
     float GetSmartLandscapeHeightAt(const FVector& WorldPos, bool bForcePrecise);
     //bool IsNearLandscapeEdge(const FVector& WorldPos, float Threshold);

@@ -6,10 +6,12 @@
 #include "Editor.h"
 #include "VoxelChunk.h"
 #include "VoxelConversion.h"
+#include "VoxelLogManager.h"
 #include "Engine/World.h"
 #include "Misc/FileHelper.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Async/Async.h"
+#include "DiggerProUnreal/Utilities/FastDebugRenderer.h"
 #include "Serialization/BufferArchive.h"
 
 constexpr float SDF_SOLID = -1.0f; // or whatever your convention is
@@ -1154,56 +1156,44 @@ void USparseVoxelGrid::RenderVoxels() {
         return;
     }
 
-    // Get the parent chunk coordinates
-    FIntVector ChunkCoords = GetParentChunkCoordinates();
-    
-    UE_LOG(LogTemp, Warning, TEXT("Rendering voxels for chunk %s"), *ChunkCoords.ToString());
+    // Collect voxel positions by type
+    TArray<FVector> AirVoxelPositions;
+    TArray<FVector> SolidVoxelPositions;
+    TArray<FVector> SurfaceVoxelPositions;
 
-    // Render each voxel
     for (const auto& Voxel : VoxelData) {
         const FIntVector& LocalVoxelCoords = Voxel.Key;
         const FVoxelData& VoxelDataValue = Voxel.Value;
 
-        // Convert local voxel coordinates to global voxel coordinates
         FIntVector GlobalVoxelCoords = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(
-            ChunkCoords, 
-            LocalVoxelCoords
-        );
-        
-        // Convert global voxel coordinates to world position
+            ParentChunkCoordinates, LocalVoxelCoords);
         FVector WorldPosition = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(GlobalVoxelCoords);
-        FVector Center = WorldPosition + DebugRenderOffset;
+        FVector Center = WorldPosition + DebugRenderOffset + FVector(FVoxelConversion::LocalVoxelSize / 2.0f);
 
         const float SDFValue = VoxelDataValue.SDFValue;
 
-        FColor VoxelColor = FColor::White;
         if (SDFValue > 0.0f) {
-            VoxelColor = FColor::Green; // Air
+            AirVoxelPositions.Add(Center); // Air
         } else if (SDFValue < 0.0f) {
-            VoxelColor = FColor::Red;   // Solid
+            SolidVoxelPositions.Add(Center); // Solid
         } else {
-            VoxelColor = FColor::Yellow; // Surface
+            SurfaceVoxelPositions.Add(Center); // Surface
         }
-
-        DrawDebugBox(World, 
-                    Center + FVector(FVoxelConversion::LocalVoxelSize / 2.0f), 
-                    FVector(FVoxelConversion::LocalVoxelSize / 2.0f), 
-                    FQuat::Identity, 
-                    VoxelColor, 
-                    false, 
-                    15.f, 
-                    0, 
-                    2);
-                    
-        DrawDebugPoint(World, 
-                      Center + FVector(FVoxelConversion::LocalVoxelSize / 2.0f), 
-                      2.0f, 
-                      VoxelColor, 
-                      false, 
-                      15.f, 
-                      0);
-
-        UE_LOG(LogTemp, Warning, TEXT("Voxel: Local %s -> Global %s -> World %s"), 
-               *LocalVoxelCoords.ToString(), *GlobalVoxelCoords.ToString(), *Center.ToString());
     }
+
+    // Batch render all voxels by type - MUCH faster!
+    const FVector VoxelExtent = FVector(FVoxelConversion::LocalVoxelSize);
+    
+    if (AirVoxelPositions.Num() > 0) {
+        FAST_DEBUG_BOXES_BATCH(AirVoxelPositions, VoxelExtent, FLinearColor::Green);
+    }
+    if (SolidVoxelPositions.Num() > 0) {
+        FAST_DEBUG_BOXES_BATCH(SolidVoxelPositions, VoxelExtent, FLinearColor::Red);
+    }
+    if (SurfaceVoxelPositions.Num() > 0) {
+        FAST_DEBUG_BOXES_BATCH(SurfaceVoxelPositions, VoxelExtent, FLinearColor::Yellow);
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("Fast rendered %d voxels: %d Air, %d Solid, %d Surface"), 
+           VoxelData.Num(), AirVoxelPositions.Num(), SolidVoxelPositions.Num(), SurfaceVoxelPositions.Num());
 }

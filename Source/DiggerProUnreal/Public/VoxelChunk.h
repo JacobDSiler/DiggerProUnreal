@@ -150,7 +150,7 @@ private:
     FVector CalculateBrushBounds(const FBrushStroke& Stroke) const;
     
 
-    void CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels);
+    void CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxelsBelowTerrain);
 
     void ApplySmoothBrush(const FVector& Center, float Radius, bool bDig, int NumIterations);
     float ComputeSDFValue(float NormalizedDist, bool bDig, float TransitionStart, float TransitionEnd);

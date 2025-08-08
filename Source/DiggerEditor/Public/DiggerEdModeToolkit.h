@@ -328,7 +328,7 @@ private:
 	ADiggerManager* GetDiggerManager();
 
 	TSharedRef<SWidget> MakeIslandGridWidget();
-
+	TSharedRef<SWidget> MakeDebugCheckbox(const FString& Label, bool* FlagPtr);
 	TSharedRef<SWidget> MakeAngleButton(float Angle, float& Target, const FString& Label);
     TSharedRef<SWidget> MakeAngleButton(double Angle, double& Target, const FString& Label);
     TSharedRef<SWidget> MakeMirrorButton(float& Target, const FString& Label);
