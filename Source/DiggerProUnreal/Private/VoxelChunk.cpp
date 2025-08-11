@@ -43,6 +43,7 @@ UVoxelChunk::UVoxelChunk()
 	  SparseVoxelGrid(CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid")))
 {
 	MarchingCubesGenerator = CreateDefaultSubobject<UMarchingCubes>(TEXT("MarchingCubesGenerator"));
+
 }
 
 void UVoxelChunk::Tick(float DeltaTime)
@@ -1045,6 +1046,10 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
         return;
     }
 
+    // Initialize counters for tracking modifications
+    FThreadSafeCounter VoxelsDugCounter;
+    FThreadSafeCounter VoxelsAddedCounter;
+
     // Get chunk origin and voxel size - cache these values
     const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
     const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
@@ -1093,8 +1098,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
         return;
     }
 
-    // Thread-safe counter and array for air voxels below terrain
-    FThreadSafeCounter ModifiedVoxels;
+    // Thread-safe array for air voxels below terrain
     TArray<FIntVector> AirVoxelsBelowTerrain;
 
     // Pre-filter voxels and compute terrain heights on game thread using precise queries
@@ -1167,6 +1171,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
                 if (VerticalDistanceFromBrush <= MaxDepthBelowBrush)
                 {
                     SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, true); // true = EXPLICIT AIR
+                    VoxelsDugCounter.Increment();
                     
                     // Track air voxels below terrain for solid shell creation
                     if (!bAboveTerrain)
@@ -1174,8 +1179,6 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
                         FScopeLock Lock(&BrushStrokeMutex);
                         AirVoxelsBelowTerrain.Add(Coords);
                     }
-                    
-                    ModifiedVoxels.Increment();
                 }
             }
         }
@@ -1185,34 +1188,79 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
             if (SDF < -0.1f) // Only use SDF threshold, no distance override
             {
                 SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, false); // false = solid
-                ModifiedVoxels.Increment();
+                VoxelsAddedCounter.Increment();
             }
         }
     });
 
+    // Track shell voxels separately if needed
+    int32 ShellVoxelsAdded = 0;
+    
     // Create shell of solid voxels around air voxels below terrain
     // This is ESSENTIAL for marching cubes to detect isosurfaces
     if (!AirVoxelsBelowTerrain.IsEmpty())
     {
-        CreateSolidShellAroundAirVoxels(AirVoxelsBelowTerrain);
+    	CreateSolidShellAroundAirVoxels(AirVoxelsBelowTerrain, Stroke.bHiddenSeam);
     }
 
-    // Optional: Log performance info in debug builds
-    #if UE_BUILD_DEBUG
-    if (ModifiedVoxels.GetValue() > 0)
+    // Get final counts
+    const int32 FinalVoxelsDug = VoxelsDugCounter.GetValue();
+    const int32 FinalVoxelsAdded = VoxelsAddedCounter.GetValue();
+
+    // Create and broadcast modification report
+    if (FinalVoxelsDug > 0 || FinalVoxelsAdded > 0)
     {
+        FVoxelModificationReport Report;
+        Report.VoxelsDug = FinalVoxelsDug;
+        Report.VoxelsAdded = FinalVoxelsAdded;
+        Report.ChunkCoordinates = ChunkCoordinates;
+        Report.BrushPosition = Stroke.BrushPosition;
+        Report.BrushRadius = Stroke.BrushRadius;
+
+        // Broadcast the modification report through the DiggerManager
+    	if (DiggerManager)
+    	{
+    		DiggerManager->OnVoxelsModified.Broadcast(Report);
+		    //if (DiggerDebug::Chunks || DiggerDebug::Manager)
+		    {
+    			int TotalVoxelsDug=Report.VoxelsDug;
+			    UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushStroke] Voxel Modification report Broadcast on an instance of UVoxelChunk. Voxels Modification Report: %d"), TotalVoxelsDug);
+		    }
+    	}
+    	else
+    	{
+    		if (DiggerDebug::Chunks || DiggerDebug::Manager)
+    		{
+    			UE_LOG(LogTemp, Error, TEXT("[ApplyBrushStroke] Manager Missing in ApplyBrushStroke in an instance UVoxelChunk."));
+    		}
+    	}
+
+        // Optional: Log performance info in debug builds
+        #if UE_BUILD_DEBUG
         if (DiggerDebug::Chunks || DiggerDebug::Voxels)
         {
-            UE_LOG(LogTemp, Message, TEXT("ApplyBrushStroke modified %d voxels in chunk %s using %s brush"), 
-                   ModifiedVoxels.GetValue(), *ChunkCoordinates.ToString(), *UEnum::GetValueAsString(Stroke.BrushType));
+            UE_LOG(LogTemp, Message, TEXT("ApplyBrushStroke in chunk %s using %s brush: Dug %d voxels, Added %d voxels"), 
+                   *ChunkCoordinates.ToString(), 
+                   *UEnum::GetValueAsString(Stroke.BrushType),
+                   FinalVoxelsDug,
+                   FinalVoxelsAdded
+                   );
         }
+        #endif
     }
-    #endif
 }
 
 
-void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels)
+
+// Update the method signature in your header file (VoxelChunk.h):
+// int32 CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels, bool bHiddenSeam);
+
+void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels, bool bHiddenSeam)
 {
+    // DEBUG: Log the seam mode being used
+    UE_LOG(LogTemp, Warning, TEXT("CreateSolidShellAroundAirVoxels: Using %s seam for %d air voxels in chunk %s"), 
+           bHiddenSeam ? TEXT("HIDDEN") : TEXT("NATURAL"), AirVoxels.Num(), *ChunkCoordinates.ToString());
+           
     if (AirVoxels.IsEmpty())
     {
         return;
@@ -1278,6 +1326,10 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
             BoundaryPositions.Add(BoundaryCandidate);
         }
     }
+
+    // DEBUG: Log boundary positions found
+    UE_LOG(LogTemp, Warning, TEXT("Found %d boundary positions for %s seam"), 
+           BoundaryPositions.Num(), bHiddenSeam ? TEXT("HIDDEN") : TEXT("NATURAL"));
 
     // Rim thickness calculation function
     auto GetRimThickness = [&, CachedVoxelSize](const FVector& WorldPos) -> float
@@ -1361,6 +1413,9 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
     };
 
     // Process each boundary position to determine if it should be solid
+    int32 CreatedVoxels = 0;
+    int32 SkippedRimVoxels = 0;
+    
     for (const FIntVector& BoundaryPos : BoundaryPositions)
     {
         // Bounds check
@@ -1380,7 +1435,7 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
         float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
         const float RimThickness = GetRimThickness(WorldPos);
         
-        // Enhanced rim height consistency logic to prevent floating point issues
+        // Enhanced rim height consistency logic with seam type control
         const float VoxelCenterZ = WorldPos.Z;
         const float VoxelBottomZ = VoxelCenterZ - HalfVoxelSize;
         const float VoxelTopZ = VoxelCenterZ + HalfVoxelSize;
@@ -1391,18 +1446,31 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
         
         bool ShouldCreateVoxel = false;
         
-        // Layer 1: Base solid layer - always create if voxel intersects terrain surface
-        if (TerrainToVoxelBottom <= HalfVoxelSize) // Within half-voxel of terrain surface
+        // Layer 1: Base solid layer - adjust based on seam type
+        if (bHiddenSeam)
         {
-            ShouldCreateVoxel = true;
+            // HIDDEN SEAM: Only create if voxel is a full voxel below terrain (floor behavior)
+            if (TerrainToVoxelBottom <= -CachedVoxelSize) // Voxel bottom must be a full voxel below terrain
+            {
+                ShouldCreateVoxel = true;
+            }
         }
-        // Layer 2: Consistent rim layer - create if voxel center is within rim thickness
-        else if (TerrainToVoxelCenter <= (RimThickness * CachedVoxelSize) && 
-                 TerrainToVoxelBottom <= (CachedVoxelSize * 1.5f)) // Max 1.5 voxels above terrain
+        else
         {
-            // Enhanced connectivity check to prevent floating voxels in large holes
+            // NATURAL SEAM: Create if voxel intersects terrain surface (original behavior)
+            if (TerrainToVoxelBottom <= HalfVoxelSize)
+            {
+                ShouldCreateVoxel = true;
+            }
+        }
+        // Layer 2: Seam type determines rim behavior
+        if (!bHiddenSeam && // Only create raised rim for Natural seam
+                 TerrainToVoxelCenter <= (RimThickness * CachedVoxelSize) && 
+                 TerrainToVoxelBottom <= (CachedVoxelSize * 1.5f))
+        {
+            // NATURAL SEAM: Create raised rim with enhanced connectivity check
             int32 SolidConnections = 0;
-            int32 TerrainConnections = 0; // Track connections specifically to terrain
+            int32 TerrainConnections = 0;
             
             const TArray<FIntVector> FaceOffsets = {
                 FIntVector(1,0,0), FIntVector(-1,0,0),
@@ -1414,7 +1482,6 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
             {
                 const FIntVector ConnectionCoord = BoundaryPos + FaceOffset;
                 
-                // Check if connection is below terrain
                 const FVector ConnectionWorldPos = ChunkOrigin + FVector(
                     (ConnectionCoord.X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
                     (ConnectionCoord.Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
@@ -1424,14 +1491,12 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
                 float ConnectionTerrainHeight = DiggerManager->GetLandscapeHeightAt(ConnectionWorldPos);
                 const float ConnectionTerrainDistance = (ConnectionWorldPos.Z - HalfVoxelSize) - ConnectionTerrainHeight;
                 
-                // Count terrain connections with consistent thresholds
                 if (ConnectionTerrainDistance <= HalfVoxelSize)
                 {
                     SolidConnections++;
                     TerrainConnections++;
                 }
                 
-                // Check existing solid voxels
                 if (SparseVoxelGrid->VoxelData.Contains(ConnectionCoord))
                 {
                     const FVoxelData& ExistingData = SparseVoxelGrid->VoxelData[ConnectionCoord];
@@ -1440,19 +1505,67 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
                         SolidConnections++;
                     }
                 }
-                // Count boundary positions as potential connections (for cross-chunk continuity)
                 else if (BoundaryPositions.Contains(ConnectionCoord))
                 {
                     SolidConnections++;
                 }
             }
             
-            // Stricter connectivity requirements for rim voxels to prevent floating
-            // Require at least 2 solid connections AND at least 1 terrain connection
-            if (SolidConnections >= 2 && TerrainConnections >= 1)
+            // Stricter connectivity requirements for rim voxels to eliminate floating
+            bool HasStrongConnection = false;
+            
+            if (TerrainConnections >= 2)
+            {
+                HasStrongConnection = true;
+            }
+            else if (TerrainConnections >= 1 && SolidConnections >= 3)
+            {
+                HasStrongConnection = true;
+            }
+            else if (SolidConnections >= 4)
+            {
+                HasStrongConnection = true;
+            }
+            
+            // Additional vertical support check
+            bool HasVerticalSupport = false;
+            const FIntVector DownNeighbor = BoundaryPos + FIntVector(0, 0, -1);
+            
+            if (SparseVoxelGrid->VoxelData.Contains(DownNeighbor))
+            {
+                const FVoxelData& DownData = SparseVoxelGrid->VoxelData[DownNeighbor];
+                if (DownData.SDFValue <= FVoxelConversion::SDF_SOLID)
+                {
+                    HasVerticalSupport = true;
+                }
+            }
+            else if (BoundaryPositions.Contains(DownNeighbor))
+            {
+                HasVerticalSupport = true;
+            }
+            
+            const FVector DownWorldPos = ChunkOrigin + FVector(
+                (DownNeighbor.X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+                (DownNeighbor.Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
+                (DownNeighbor.Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
+            );
+            float DownTerrainHeight = DiggerManager->GetLandscapeHeightAt(DownWorldPos);
+            if ((DownWorldPos.Z - HalfVoxelSize) <= DownTerrainHeight + HalfVoxelSize)
+            {
+                HasVerticalSupport = true;
+            }
+            
+            if (HasStrongConnection && HasVerticalSupport)
             {
                 ShouldCreateVoxel = true;
             }
+        }
+        // HIDDEN SEAM: No raised rim - only create voxels at/below terrain
+        else if (bHiddenSeam && TerrainToVoxelBottom > HalfVoxelSize)
+        {
+            // Don't create this voxel - it's above terrain and we want hidden seam
+            ShouldCreateVoxel = false;
+            SkippedRimVoxels++;
         }
 
         if (ShouldCreateVoxel)
@@ -1469,10 +1582,16 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
             if (InMainChunk || InOverflowRegion)
             {
                 SparseVoxelGrid->SetVoxel(BoundaryPos, FVoxelConversion::SDF_SOLID, false);
+                CreatedVoxels++;
             }
         }
     }
+    
+    // DEBUG: Final summary
+    UE_LOG(LogTemp, Warning, TEXT("Shell creation complete: %s seam - Created %d voxels, Skipped %d rim voxels"), 
+           bHiddenSeam ? TEXT("HIDDEN") : TEXT("NATURAL"), CreatedVoxels, SkippedRimVoxels);
 }
+
 
 void UVoxelChunk::BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction,
 	const FString& String)

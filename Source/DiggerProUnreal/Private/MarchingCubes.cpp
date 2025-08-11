@@ -1189,6 +1189,37 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
                     CornerCoords.Z * VoxelSize
                 );
                 
+                // NEW: Check if this is a top corner (corners 4, 5, 6, 7 are typically the top ones)
+                // Assuming GetCornerOffset returns offsets where Z=1 for top corners
+                bool bIsTopCorner = (GetCornerOffset(i).Z == 1);
+                
+                // NEW: Apply landscape snapping for top corners
+                if (bIsTopCorner) {
+                    // Get the terrain height at this corner's XY position
+                    float CornerTerrainHeight = GetCachedHeight(CornerWSPositions[i]);
+                    
+                    // Check if this corner is below terrain and within snapping distance
+                    float DistanceToTerrain = CornerTerrainHeight - CornerWSPositions[i].Z;
+                    
+                    // If the corner is below terrain by less than one voxel unit, snap it
+                    if (DistanceToTerrain > 0 && DistanceToTerrain < VoxelSize) {
+                        CornerWSPositions[i].Z = CornerTerrainHeight;
+                        
+                        if (IsDebugging()) {
+                            // Visualize snapped corners
+                            DrawDebugSphere(
+                                DiggerManager->GetWorld(),
+                                CornerWSPositions[i],
+                                3.0f,
+                                12,
+                                FColor::Magenta,
+                                false,
+                                10.0f
+                            );
+                        }
+                    }
+                }
+                
                 // Handle voxel values
                 if (InVoxelGrid->VoxelData.Contains(CornerCoords))
                 {
@@ -1196,75 +1227,82 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
                     CornerSDFValues[i] = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
                 }
                 else
-{
-    // For uninitialized voxels, check if they're below terrain
-    FVector WorldPos = CornerWSPositions[i];
-    bool bCornerBelowTerrain = WorldPos.Z < TerrainHeight;
-    
-    if (bCornerBelowTerrain)
-    {
-        // Default to solid for unset voxels below terrain
-        CornerSDFValues[i] = -1.0f;
-        
-        // Check for nearby explicit air voxels that should create a surface
-        bool bFoundNearbyAir = false;
-        float MinDistanceToAir = FLT_MAX;
-        
-        // Search in a small radius around this corner
-        const int32 SearchRadius = 2;
-        const float MaxInfluenceDistance = SearchRadius * VoxelSize;
-        
-        for (int32 dx = -SearchRadius; dx <= SearchRadius; dx++)
-        for (int32 dy = -SearchRadius; dy <= SearchRadius; dy++)
-        for (int32 dz = -SearchRadius; dz <= SearchRadius; dz++)
-        {
-            if (dx == 0 && dy == 0 && dz == 0) continue;
-            
-            FIntVector SearchCoords = CornerCoords + FIntVector(dx, dy, dz);
-            
-            if (InVoxelGrid->VoxelData.Contains(SearchCoords))
-            {
-                float NearbySDFValue = InVoxelGrid->GetVoxel(SearchCoords.X, SearchCoords.Y, SearchCoords.Z);
-                
-                // If we find an explicit air voxel
-                if (NearbySDFValue > 0)
                 {
-                    FVector NearbyWorldPos = Origin + FVector(SearchCoords) * VoxelSize;
+                    // For uninitialized voxels, check if they're below terrain
+                    // Use the potentially snapped position for this check
+                    FVector WorldPos = CornerWSPositions[i];
                     
-                    // Check if this air voxel is also below terrain (creating a cavity)
-                    if (NearbyWorldPos.Z < TerrainHeight)
+                    // Get terrain height at this position for comparison
+                    float LocalTerrainHeight = GetCachedHeight(WorldPos);
+                    bool bCornerBelowTerrain = WorldPos.Z < LocalTerrainHeight;
+                    
+                    // NEW: If we snapped this corner to the terrain, treat it as being at the surface
+                    if (bIsTopCorner && FMath::IsNearlyEqual(WorldPos.Z, LocalTerrainHeight, 0.01f)) {
+                        // Set to a small positive value to create a surface at the terrain level
+                        CornerSDFValues[i] = 0.01f;
+                    }
+                    else if (bCornerBelowTerrain)
                     {
-                        float Distance = FVector(dx, dy, dz).Size() * VoxelSize;
-                        if (Distance < MinDistanceToAir)
+                        // Default to solid for unset voxels below terrain
+                        CornerSDFValues[i] = -1.0f;
+                        
+                        // Check for nearby explicit air voxels that should create a surface
+                        bool bFoundNearbyAir = false;
+                        float MinDistanceToAir = FLT_MAX;
+                        
+                        // Search in a small radius around this corner
+                        const int32 SearchRadius = 2;
+                        const float MaxInfluenceDistance = SearchRadius * VoxelSize;
+                        
+                        for (int32 dx = -SearchRadius; dx <= SearchRadius; dx++)
+                        for (int32 dy = -SearchRadius; dy <= SearchRadius; dy++)
+                        for (int32 dz = -SearchRadius; dz <= SearchRadius; dz++)
                         {
-                            MinDistanceToAir = Distance;
-                            bFoundNearbyAir = true;
+                            if (dx == 0 && dy == 0 && dz == 0) continue;
+                            
+                            FIntVector SearchCoords = CornerCoords + FIntVector(dx, dy, dz);
+                            
+                            if (InVoxelGrid->VoxelData.Contains(SearchCoords))
+                            {
+                                float NearbySDFValue = InVoxelGrid->GetVoxel(SearchCoords.X, SearchCoords.Y, SearchCoords.Z);
+                                
+                                // If we find an explicit air voxel
+                                if (NearbySDFValue > 0)
+                                {
+                                    FVector NearbyWorldPos = Origin + FVector(SearchCoords) * VoxelSize;
+                                    
+                                    // Check if this air voxel is also below terrain (creating a cavity)
+                                    float NearbyTerrainHeight = GetCachedHeight(NearbyWorldPos);
+                                    if (NearbyWorldPos.Z < NearbyTerrainHeight)
+                                    {
+                                        float Distance = FVector(dx, dy, dz).Size() * VoxelSize;
+                                        if (Distance < MinDistanceToAir)
+                                        {
+                                            MinDistanceToAir = Distance;
+                                            bFoundNearbyAir = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // If we found nearby air voxels, create a gradient towards them
+                        if (bFoundNearbyAir && MinDistanceToAir < MaxInfluenceDistance)
+                        {
+                            // Create a smooth transition from solid to air based on distance
+                            float InfluenceFactor = 1.0f - (MinDistanceToAir / MaxInfluenceDistance);
+                            
+                            // Interpolate from solid (-1) towards air based on influence
+                            // This creates the sign change needed for surface generation
+                            CornerSDFValues[i] = FMath::Lerp(-1.0f, 0.5f, InfluenceFactor);
                         }
                     }
+                    else
+                    {
+                        // Above terrain - default to air
+                        CornerSDFValues[i] = 1.0f;
+                    }
                 }
-            }
-        }
-        
-        // If we found nearby air voxels, create a gradient towards them
-        if (bFoundNearbyAir && MinDistanceToAir < MaxInfluenceDistance)
-        {
-            // Create a smooth transition from solid to air based on distance
-            float InfluenceFactor = 1.0f - (MinDistanceToAir / MaxInfluenceDistance);
-            
-            // Interpolate from solid (-1) towards air based on influence
-            // This creates the sign change needed for surface generation
-            CornerSDFValues[i] = FMath::Lerp(-1.0f, 0.5f, InfluenceFactor);
-            
-            // Alternative approach: Use a more aggressive transition
-            // CornerSDFValues[i] = (MinDistanceToAir < VoxelSize) ? 0.1f : -1.0f;
-        }
-    }
-    else
-    {
-        // Above terrain - default to air
-        CornerSDFValues[i] = 1.0f;
-    }
-}
             }
 
             if (IsDebugging()) {
@@ -1363,10 +1401,9 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
         OutVertices[i] += TotalOffset;
     }
 
-	/*TArray<int32> RimVertices;
-	FindRimVertices(OutVertices, OutTriangles, RimVertices);
-	AddSkirtMesh(RimVertices, OutVertices, OutTriangles, OutNormals);*/
-
+    /*TArray<int32> RimVertices;
+    FindRimVertices(OutVertices, OutTriangles, RimVertices);
+    AddSkirtMesh(RimVertices, OutVertices, OutTriangles, OutNormals);*/
 
     if (IsDebugging()) {
         UE_LOG(LogTemp, Log, TEXT("Mesh generated from grid: %d vertices, %d triangles."), OutVertices.Num(), OutTriangles.Num());

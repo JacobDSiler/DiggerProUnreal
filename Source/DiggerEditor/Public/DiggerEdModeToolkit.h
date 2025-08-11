@@ -281,6 +281,20 @@ private:
 
 
 private:
+	bool bHiddenSeam = false;
+
+public:
+	[[nodiscard]] bool GetHiddenSeam() const
+	{
+		return bHiddenSeam;
+	}
+
+	void SetHiddenSeam(bool inBHiddenSeam)
+	{
+		this->bHiddenSeam = inBHiddenSeam;
+	}
+
+private:
 	bool bShowOffset=false;
 	bool bRotateToSurfaceNormal = false;
 	bool bUseSurfaceNormalRotation = false;
@@ -344,6 +358,8 @@ private:
 	TSharedRef<SWidget> MakeRotationSection(float& RotX, float& RotY, float& RotZ);
 	TSharedRef<SWidget> MakeOperationSection();
 	TSharedRef<SWidget> MakeBrushShapeSection();
+	// Hidden Seam checkbox
+	TSharedPtr<SCheckBox> HiddenSeamCheckbox;
 	TSharedRef<SWidget> MakeOffsetSection(FVector& Offset);
 	TSharedRef<SWidget> MakeRotationRow(const FText& Label, double& Value);
 	TSharedRef<SWidget> MakeRotationRow(const FText& Label, float& Value);
@@ -379,6 +395,8 @@ private:
 		float* TargetForMirror = nullptr,
 		bool bIsAngle = false
 	);
+	ECheckBoxState GetHiddenSeamCheckState() const;
+	void OnHiddenSeamChanged(ECheckBoxState NewState);
 
 	// Multiplayer Menu (Always Available)
 	TSharedRef<SWidget> MakeLobbySection();

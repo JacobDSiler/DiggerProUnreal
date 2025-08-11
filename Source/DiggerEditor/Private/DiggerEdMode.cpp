@@ -185,9 +185,13 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
                 Digger->EditorBrushRotation = FinalRotation;
                 Digger->EditorBrushAngle = DiggerToolkit->GetBrushAngle();
                 Digger->EditorBrushHoleShape = GetHoleShapeForBrush(BrushType);
+                Digger->EditorBrushHiddenSeam = DiggerToolkit->GetHiddenSeam();
+                UE_LOG(LogTemp, Warning, TEXT("Seam Type set to: %s"), DiggerToolkit->GetHiddenSeam() ? TEXT("true") : TEXT("false"));
                 Digger->EditorBrushLightType = DiggerToolkit->GetCurrentLightType(); // ✅ Light Type
                 Digger->EditorBrushLightColor = DiggerToolkit->GetCurrentLightColor(); // ✅ Light Color
 
+
+                
                 if (DiggerDebug::Lights || DiggerDebug::Brush)
                 {
                     UE_LOG(LogTemp, Warning, TEXT("Toolkit is passing light type: %d"), (int32)Digger->EditorBrushLightType);
@@ -450,7 +454,8 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
         Digger->EditorBrushIsFilled = DiggerToolkit->GetBrushIsFilled();
         Digger->EditorBrushAngle = DiggerToolkit->GetBrushAngle();
         Digger->EditorBrushHoleShape = GetHoleShapeForBrush(BrushType);
-
+        Digger->EditorBrushHiddenSeam = DiggerToolkit->GetHiddenSeam();
+        UE_LOG(LogTemp, Warning, TEXT("Seam Type set to: %s"), DiggerToolkit->GetHiddenSeam() ? TEXT("true") : TEXT("false"));
         
         if(DiggerToolkit->IsUsingAdvancedCubeBrush())
         {

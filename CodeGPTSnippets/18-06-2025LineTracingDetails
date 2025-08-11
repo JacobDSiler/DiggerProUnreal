@@ -1,5 +1,0 @@
-I must alter this slightly:
-
-Cast through any number of HoleBPs, always ignoring previously hit ones, until you hit something that is not a HoleBP.
-If you hit a landscape _inside_ a HoleBP, jump forward a bit (perhaps 100 cms) ignoring all HoleBPs because we are subterrainean now and keep tracing until you hit something else.
-Return the first non-HoleBP, non-landscape hit after passing through holes, or nothing if no holes were hit withing a large distance — this is a terminal miss haha.

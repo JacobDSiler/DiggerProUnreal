@@ -184,6 +184,10 @@ class DIGGERPROUNREAL_API ADiggerManager : public AActor
 
 public:
     ADiggerManager();
+
+    // Single delegate to track voxels modification stats for ALL chunks
+    FOnVoxelsModified OnVoxelsModified;
+    
     void SpawnLight(const FBrushStroke& Stroke);
     void InitializeBrushShapes();
     UVoxelBrushShape* GetActiveBrushShape(EVoxelBrushType BrushType) const;
@@ -337,6 +341,9 @@ public:
 
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
     bool EditorBrushDig = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Editor Brush")
+    bool EditorBrushHiddenSeam = false;
     
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
     FRotator EditorBrushRotation;

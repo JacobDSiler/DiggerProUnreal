@@ -17,6 +17,41 @@ class USparseVoxelGrid;
 class UMarchingCubes;
 class UProceduralMeshComponent;
 
+
+// First, add this struct definition to your header file (e.g., in VoxelChunk.h or a separate types header)
+USTRUCT(BlueprintType)
+struct FVoxelModificationReport
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly)
+    int32 VoxelsDug = 0;  // Air voxels created
+
+    UPROPERTY(BlueprintReadOnly)
+    int32 VoxelsAdded = 0;  // Solid voxels created
+
+    UPROPERTY(BlueprintReadOnly)
+    FIntVector ChunkCoordinates;
+
+    UPROPERTY(BlueprintReadOnly)
+    FVector BrushPosition;
+
+    UPROPERTY(BlueprintReadOnly)
+    float BrushRadius = 0.0f;
+
+    // Constructor
+    FVoxelModificationReport(): ChunkCoordinates()
+    {
+    }
+};
+
+
+// Delegate to report stats about voxel operations (how many added and removed, type removed and added, etc.)
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnVoxelsModified, const FVoxelModificationReport&);
+
+
+
+
 UCLASS()
 class DIGGERPROUNREAL_API UVoxelChunk : public UObject
 {
@@ -36,6 +71,7 @@ public:
 
     UPROPERTY(EditAnywhere)
     UHoleShapeLibrary* HoleShapeLibrary;
+    int OnVoxelsModified;
 
     // In UVoxelChunk.h
     UFUNCTION()
@@ -150,7 +186,7 @@ private:
     FVector CalculateBrushBounds(const FBrushStroke& Stroke) const;
     
 
-    void CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxelsBelowTerrain);
+    void CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels, bool bHiddenSeam = false);
 
     void ApplySmoothBrush(const FVector& Center, float Radius, bool bDig, int NumIterations);
     float ComputeSDFValue(float NormalizedDist, bool bDig, float TransitionStart, float TransitionEnd);

@@ -1326,6 +1326,15 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeQuickSetButtons(
     return Box;
 }
 
+ECheckBoxState FDiggerEdModeToolkit::GetHiddenSeamCheckState() const
+{
+    return bHiddenSeam ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+}
+
+void FDiggerEdModeToolkit::OnHiddenSeamChanged(ECheckBoxState NewState)
+{
+    bHiddenSeam = (NewState == ECheckBoxState::Checked);
+}
 
 void FDiggerEdModeToolkit::SetBrushDigPreviewOverride(bool bInDig)
 {
@@ -3659,7 +3668,31 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOperationSection()
              SNew(STextBlock).Text(FText::FromString("Subtract (Dig)"))
          ]
      ]
-];
+]
+        // After Hole Shape section
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(0, 4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot()
+                .AutoWidth()
+                .VAlign(VAlign_Center)
+                [
+                    SAssignNew(HiddenSeamCheckbox, SCheckBox)
+                    .IsChecked(this, &FDiggerEdModeToolkit::GetHiddenSeamCheckState)
+                    .OnCheckStateChanged(this, &FDiggerEdModeToolkit::OnHiddenSeamChanged)
+                    .ToolTipText(LOCTEXT("HiddenSeamTooltip", "Hidden Seam: Creates flush cuts with no raised rim. Unchecked creates natural excavation with realistic disturbed earth."))
+                ]
+                + SHorizontalBox::Slot()
+                .Padding(8, 0, 0, 0)
+                .VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(LOCTEXT("HiddenSeam", "Hidden Seam"))
+                    .Font(IDetailLayoutBuilder::GetDetailFont())
+                ]
+            ];
 
 }
 
@@ -4302,10 +4335,34 @@ TSharedRef<SWidget> CreateComingSoonSection(const FString& FeatureName, const FS
 void FDiggerEdModeToolkit::ClearIslands()
 {
     if (DiggerDebug::Islands)
-    UE_LOG(LogTemp, Warning, TEXT("ClearIslands called on toolkit: %p"), this);
-    Islands.Empty();
+        UE_LOG(LogTemp, Warning, TEXT("ClearIslands called on toolkit: %p"), this);
+    
+    // Add safety checks before the crash line
+    if (!this)
+    {
+        UE_LOG(LogTemp, Error, TEXT("ClearIslands: Invalid 'this' pointer!"));
+        return;
+    }
+    
+    // Check if Islands is in a valid state
+    UE_LOG(LogTemp, Warning, TEXT("ClearIslands: About to empty Islands array (current size: %d)"), Islands.Num());
+    
+    try
+    {
+        Islands.Empty(); // Line 4306 - the crash line
+        UE_LOG(LogTemp, Warning, TEXT("ClearIslands: Islands.Empty() succeeded"));
+    }
+    catch (...)
+    {
+        UE_LOG(LogTemp, Error, TEXT("ClearIslands: Exception during Islands.Empty()"));
+        return;
+    }
+    
     SelectedIslandIndex = INDEX_NONE;
+    
+    UE_LOG(LogTemp, Warning, TEXT("ClearIslands: About to call RebuildIslandGrid"));
     RebuildIslandGrid();
+    UE_LOG(LogTemp, Warning, TEXT("ClearIslands: RebuildIslandGrid completed"));
 }
 
 

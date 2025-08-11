@@ -531,6 +531,8 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
     BrushStroke.BrushPosition = EditorBrushPosition + EditorBrushOffset;
     BrushStroke.BrushRadius = EditorBrushRadius;
     BrushStroke.BrushRotation = EditorBrushRotation;
+    BrushStroke.bHiddenSeam = EditorBrushHiddenSeam;
+    UE_LOG(LogTemp, Warning, TEXT("Seam Type Received in DiggerManager type: %s"), EditorBrushHiddenSeam ? TEXT("true") : TEXT("false"));
     BrushStroke.BrushType = EditorBrushType;
     BrushStroke.bDig = bDig;
     BrushStroke.BrushLength = EditorBrushLength;
@@ -4133,7 +4135,7 @@ bool ADiggerManager::DeleteChunkFile(const FIntVector& ChunkCoords)
         }
         
         // Invalidate cache after deletion
-        InvalidateSavedChunkCache(TEXT(""));
+        InvalidateSavedChunkCache(FilePath);
     }
     else
     {
@@ -4142,6 +4144,7 @@ bool ADiggerManager::DeleteChunkFile(const FIntVector& ChunkCoords)
             UE_LOG(LogTemp, Error, TEXT("Failed to delete chunk file for chunk %s"), *ChunkCoords.ToString());
         }
     }
+    
     
     return bDeleteSuccess;
 }
