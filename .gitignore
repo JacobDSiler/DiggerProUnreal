@@ -1,30 +1,86 @@
-# Unreal Engine GitIgnore
-/Saved/
-/Intermediate/
+# ===============================
+# Unreal Engine build/cache
+# ===============================
 /Binaries/
+/DerivedDataCache/
+/Intermediate/
+
+# Saved data we don't want in Git
+/Saved/Autosaves/
+/Saved/Backup-*/
+/Saved/Collections/
+/Saved/Cooked/
+/Saved/Crashes/
+/Saved/Logs/
+/Saved/StagedBuilds/
+/Saved/Swarm/
+/Saved/Temp/
+
+# Keep these Saved subfolders
+!/Saved/Config/
+!/Saved/Thumbnails/
+
+# Local voxel save data (to be removed from history later)
+VoxelData/
+
+# ===============================
+# IDE project/workspace files
+# ===============================
+.vs/
+.vscode/
 .idea/
 .vsconfig
-*.uproject
-*.sln
-*.suo
-*.user
-*.csproj
-*.vcxproj
-*.vcxproj.user
+*.iml
+
+# ===============================
+# Build outputs and intermediates
+# ===============================
+build/
 *.pdb
-*.log
-*.bin
+*.ipdb
+*.ipch
+*.obj
 *.exe
 *.dll
 *.pak
-*.umap
+*.bin
+*.lib
 *.tlog
+
+# ===============================
+# Unreal binary assets
+# (kept in Git as normal files)
+# ===============================
+*.umap
+*.uasset
+
+# ===============================
+# Logs and temp files
+# ===============================
+*.log
+*.tmp
+
+# ===============================
+# MSVC/Visual Studio project files
+# ===============================
+*.sln
+*.suo
+*.user
+*.vcxproj
+*.vcxproj.user
+*.csproj
+
+# Misc database/cache
 *.sdf
-*.ipdb
-*.ipdb-shm
-*.ipdb-wpr
+*.opendb
+*.VC.db
+*.VC.opendb
+
+# Source control bindings
 *.scc
-.vs/
-.vscode/
-build/
-Content/JasmineDiggerTestMap.fbx
+
+# ===============================
+# Local test assets
+# ===============================
+Content/Untracked/
+Backup/
