@@ -17,6 +17,41 @@ class USparseVoxelGrid;
 class UMarchingCubes;
 class UProceduralMeshComponent;
 
+
+// First, add this struct definition to your header file (e.g., in VoxelChunk.h or a separate types header)
+USTRUCT(BlueprintType)
+struct FVoxelModificationReport
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly)
+    int32 VoxelsDug = 0;  // Air voxels created
+
+    UPROPERTY(BlueprintReadOnly)
+    int32 VoxelsAdded = 0;  // Solid voxels created
+
+    UPROPERTY(BlueprintReadOnly)
+    FIntVector ChunkCoordinates;
+
+    UPROPERTY(BlueprintReadOnly)
+    FVector BrushPosition;
+
+    UPROPERTY(BlueprintReadOnly)
+    float BrushRadius = 0.0f;
+
+    // Constructor
+    FVoxelModificationReport(): ChunkCoordinates()
+    {
+    }
+};
+
+
+// Delegate to report stats about voxel operations (how many added and removed, type removed and added, etc.)
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnVoxelsModified, const FVoxelModificationReport&);
+
+
+
+
 UCLASS()
 class DIGGERPROUNREAL_API UVoxelChunk : public UObject
 {
@@ -24,7 +59,9 @@ class DIGGERPROUNREAL_API UVoxelChunk : public UObject
 
 public:
     UVoxelChunk();
-
+    
+    void Tick(float DeltaTime);
+    
     // Initialization
     void InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerManager* InDiggerManager);
     void InitializeMeshComponent(UProceduralMeshComponent* MeshComponent);
@@ -34,6 +71,7 @@ public:
 
     UPROPERTY(EditAnywhere)
     UHoleShapeLibrary* HoleShapeLibrary;
+    int OnVoxelsModified;
 
     // In UVoxelChunk.h
     UFUNCTION()
@@ -70,6 +108,9 @@ public:
     void UpdateIfDirty();
     UFUNCTION(BlueprintCallable, Category  =Custom)
     void ForceUpdate();
+    void RefreshSectionMesh();
+    void OnMeshReady(FIntVector Coord, int32 SectionIdx);
+    void ClearAndRebuildSection();
     bool SaveChunkData(const FString& FilePath);
     bool LoadChunkData(const FString& FilePath);
     bool LoadChunkData(const FString& FilePath, bool bOverwrite);
@@ -92,9 +133,11 @@ public:
 
     // Mesh generation
     void GenerateMesh() const;
+    void GenerateMeshSyncronous() const;
+    void GenerateMesh(bool bIsSyncronous) const;
 
     // Getters
-    FIntVector GetChunkPosition() const { return ChunkCoordinates; }
+    FIntVector GetChunkCoordinates() const { return ChunkCoordinates; }
     ADiggerManager* GetDiggerManager() const { return DiggerManager; }
     int32 GetSectionIndex() const { return SectionIndex; }
     UFUNCTION(BluePrintCallable)
@@ -143,7 +186,7 @@ private:
     FVector CalculateBrushBounds(const FBrushStroke& Stroke) const;
     
 
-    void CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels);
+    void CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels, bool bHiddenSeam = false);
 
     void ApplySmoothBrush(const FVector& Center, float Radius, bool bDig, int NumIterations);
     float ComputeSDFValue(float NormalizedDist, bool bDig, float TransitionStart, float TransitionEnd);

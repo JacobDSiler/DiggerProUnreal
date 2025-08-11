@@ -70,6 +70,8 @@
 
 // Brush Shapes
 #include "DynamicLightActor.h"
+#include "VoxelLogManager.h"
+#include "DiggerProUnreal/Utilities/FastDebugRenderer.h"
 #include "Voxel/BrushShapes/CapsuleBrushShape.h"
 #include "Voxel/BrushShapes/CylinderBrushShape.h"
 #include "Voxel/BrushShapes/IcosphereBrushShape.h"
@@ -94,6 +96,7 @@
 #include "Components/DirectionalLightComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SpotLightComponent.h"
+#include "HAL/FileManagerGeneric.h"
 
 class ADynamicLightActor;
 class Editor;
@@ -102,6 +105,419 @@ class FDiggerEdMode;
 class MeshDescriptors;
 class StaticMeshAttributes;
 
+
+//New Multi Save Files System
+// Updated ADiggerManager methods for multiple save file support
+
+FString ADiggerManager::GetSaveFileDirectory(const FString& SaveFileName) const
+{
+    // Create a subdirectory for each save file
+    return FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY / SaveFileName;
+}
+
+FString ADiggerManager::GetChunkFilePath(const FIntVector& ChunkCoords, const FString& SaveFileName) const
+{
+    FString FileName = FString::Printf(TEXT("Chunk_%d_%d_%d%s"), 
+        ChunkCoords.X, ChunkCoords.Y, ChunkCoords.Z, *CHUNK_FILE_EXTENSION);
+    
+    return GetSaveFileDirectory(SaveFileName) / FileName;
+}
+
+// Overload for backward compatibility - uses "Default" save file
+FString ADiggerManager::GetChunkFilePath(const FIntVector& ChunkCoords) const
+{
+    return GetChunkFilePath(ChunkCoords, TEXT("Default"));
+}
+
+bool ADiggerManager::DoesSaveFileExist(const FString& SaveFileName) const
+{
+    FString SaveDir = GetSaveFileDirectory(SaveFileName);
+    return FPaths::DirectoryExists(SaveDir);
+}
+
+bool ADiggerManager::DoesChunkFileExist(const FIntVector& ChunkCoords, const FString& SaveFileName) const
+{
+    FString FilePath = GetChunkFilePath(ChunkCoords, SaveFileName);
+    return FPaths::FileExists(FilePath);
+}
+
+// Overload for backward compatibility
+bool ADiggerManager::DoesChunkFileExist(const FIntVector& ChunkCoords) const
+{
+    return DoesChunkFileExist(ChunkCoords, TEXT("Default"));
+}
+
+void ADiggerManager::EnsureSaveFileDirectoryExists(const FString& SaveFileName) const
+{
+    FString SaveDir = GetSaveFileDirectory(SaveFileName);
+    
+    // Create the main voxel data directory first
+    FString MainDir = FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY;
+    if (!FPaths::DirectoryExists(MainDir))
+    {
+        FPlatformFileManager::Get().GetPlatformFile().CreateDirectoryTree(*MainDir);
+        UE_LOG(LogTemp, Log, TEXT("Created main voxel data directory: %s"), *MainDir);
+    }
+    
+    // Create the save file specific directory
+    if (!FPaths::DirectoryExists(SaveDir))
+    {
+        FPlatformFileManager::Get().GetPlatformFile().CreateDirectoryTree(*SaveDir);
+        UE_LOG(LogTemp, Log, TEXT("Created save file directory: %s"), *SaveDir);
+    }
+}
+
+bool ADiggerManager::SaveChunk(const FIntVector& ChunkCoords, const FString& SaveFileName)
+{
+    EnsureSaveFileDirectoryExists(SaveFileName);
+    
+    UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
+    if (!ChunkPtr || !*ChunkPtr)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Cannot save chunk at %s to save file '%s' - chunk not found in memory"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+        return false;
+    }
+    
+    UVoxelChunk* Chunk = *ChunkPtr;
+    FString FilePath = GetChunkFilePath(ChunkCoords, SaveFileName);
+    
+    bool bSaveSuccess = Chunk->SaveChunkData(FilePath);
+    
+    if (bSaveSuccess)
+    {
+        UE_LOG(LogTemp, Log, TEXT("Successfully saved chunk %s to save file '%s'"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+        
+        // Invalidate cache so it gets refreshed
+        InvalidateSavedChunkCache(SaveFileName);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to save chunk %s to save file '%s'"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+    }
+    
+    return bSaveSuccess;
+}
+
+// Overload for backward compatibility
+bool ADiggerManager::SaveChunk(const FIntVector& ChunkCoords)
+{
+    return SaveChunk(ChunkCoords, TEXT("Default"));
+}
+
+bool ADiggerManager::LoadChunk(const FIntVector& ChunkCoords, const FString& SaveFileName)
+{
+    FString FilePath = GetChunkFilePath(ChunkCoords, SaveFileName);
+    
+    if (!FPaths::FileExists(FilePath))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Cannot load chunk at %s from save file '%s' - file does not exist"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+        return false;
+    }
+    
+    // Get or create the chunk
+    UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords);
+    if (!Chunk)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to get or create chunk at %s for save file '%s'"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+        return false;
+    }
+    
+    // Load the chunk data
+    bool bLoadSuccess = Chunk->LoadChunkData(FilePath);
+    
+    if (bLoadSuccess)
+    {
+        UE_LOG(LogTemp, Log, TEXT("Successfully loaded chunk %s from save file '%s'"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+        
+        // IMPORTANT: Force mesh regeneration after loading
+        Chunk->ForceUpdate();
+        
+        UE_LOG(LogTemp, Log, TEXT("Triggered mesh regeneration for loaded chunk %s from save file '%s'"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to load chunk %s from save file '%s'"), 
+            *ChunkCoords.ToString(), *SaveFileName);
+    }
+    
+    return bLoadSuccess;
+}
+
+// Overload for backward compatibility
+bool ADiggerManager::LoadChunk(const FIntVector& ChunkCoords)
+{
+    return LoadChunk(ChunkCoords, TEXT("Default"));
+}
+
+bool ADiggerManager::SaveAllChunks(const FString& SaveFileName)
+{
+    EnsureSaveFileDirectoryExists(SaveFileName);
+    
+    if (ChunkMap.Num() == 0)
+    {
+        UE_LOG(LogTemp, Log, TEXT("No chunks to save to save file '%s' - ChunkMap is empty"), *SaveFileName);
+        return true;
+    }
+    
+    int32 SavedCount = 0;
+    int32 FailedCount = 0;
+    
+    UE_LOG(LogTemp, Log, TEXT("Starting to save %d chunks to save file '%s'..."), ChunkMap.Num(), *SaveFileName);
+    
+    for (const auto& ChunkPair : ChunkMap)
+    {
+        const FIntVector& ChunkCoords = ChunkPair.Key;
+        
+        if (SaveChunk(ChunkCoords, SaveFileName))
+        {
+            SavedCount++;
+        }
+        else
+        {
+            FailedCount++;
+        }
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Finished saving chunks to save file '%s': %d successful, %d failed"), 
+        *SaveFileName, SavedCount, FailedCount);
+    
+    // Invalidate cache after batch save
+    InvalidateSavedChunkCache(SaveFileName);
+    
+    return FailedCount == 0;
+}
+
+// Overload for backward compatibility
+bool ADiggerManager::SaveAllChunks()
+{
+    return SaveAllChunks(TEXT("Default"));
+}
+
+bool ADiggerManager::LoadAllChunks(const FString& SaveFileName)
+{
+    TArray<FIntVector> SavedChunkCoords = GetAllSavedChunkCoordinates(SaveFileName, true); // Force refresh
+    
+    if (SavedChunkCoords.Num() == 0)
+    {
+        UE_LOG(LogTemp, Log, TEXT("No saved chunks found to load from save file '%s'"), *SaveFileName);
+        return true;
+    }
+    
+    int32 LoadedCount = 0;
+    int32 FailedCount = 0;
+    
+    UE_LOG(LogTemp, Log, TEXT("Starting to load %d chunks from save file '%s'..."), SavedChunkCoords.Num(), *SaveFileName);
+    
+    for (const FIntVector& ChunkCoords : SavedChunkCoords)
+    {
+        if (LoadChunk(ChunkCoords, SaveFileName))
+        {
+            LoadedCount++;
+        }
+        else
+        {
+            FailedCount++;
+        }
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Finished loading chunks from save file '%s': %d successful, %d failed"), 
+        *SaveFileName, LoadedCount, FailedCount);
+    
+    return FailedCount == 0;
+}
+
+// Overload for backward compatibility
+bool ADiggerManager::LoadAllChunks()
+{
+    return LoadAllChunks(TEXT("Default"));
+}
+
+TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates(const FString& SaveFileName, bool bForceRefresh)
+{
+    // Use per-save-file caching
+    FString CacheKey = SaveFileName;
+    
+    if (!bForceRefresh && SavedChunkCache.Contains(CacheKey))
+    {
+        return SavedChunkCache[CacheKey];
+    }
+    
+    TArray<FIntVector> SavedChunks;
+    FString SaveDir = GetSaveFileDirectory(SaveFileName);
+    
+    if (!FPaths::DirectoryExists(SaveDir))
+    {
+        // Directory doesn't exist, so no saved chunks
+        SavedChunkCache.Add(CacheKey, SavedChunks);
+        return SavedChunks;
+    }
+    
+    TArray<FString> FoundFiles;
+    FString SearchPattern = SaveDir / FString::Printf(TEXT("*%s"), *CHUNK_FILE_EXTENSION);
+    FFileManagerGeneric::Get().FindFiles(FoundFiles, *SearchPattern, true, false);
+    
+    for (const FString& FileName : FoundFiles)
+    {
+        // Parse filename to extract coordinates
+        FString BaseName = FPaths::GetBaseFilename(FileName);
+        
+        // Expected format: Chunk_X_Y_Z
+        TArray<FString> Parts;
+        BaseName.ParseIntoArray(Parts, TEXT("_"), true);
+        
+        if (Parts.Num() >= 4 && Parts[0] == TEXT("Chunk"))
+        {
+            int32 X = FCString::Atoi(*Parts[1]);
+            int32 Y = FCString::Atoi(*Parts[2]);
+            int32 Z = FCString::Atoi(*Parts[3]);
+            
+            SavedChunks.Add(FIntVector(X, Y, Z));
+        }
+    }
+    
+    // Cache the results
+    SavedChunkCache.Add(CacheKey, SavedChunks);
+    
+    return SavedChunks;
+}
+
+// Overload for backward compatibility
+TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates(bool bForceRefresh)
+{
+    return GetAllSavedChunkCoordinates(TEXT("Default"), bForceRefresh);
+}
+
+TArray<FString> ADiggerManager::GetAllSaveFileNames() const
+{
+    TArray<FString> SaveFileNames;
+    FString MainDir = FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY;
+    
+    UE_LOG(LogTemp, Log, TEXT("GetAllSaveFileNames: Searching in directory: %s"), *MainDir);
+    
+    if (!FPaths::DirectoryExists(MainDir))
+    {
+        UE_LOG(LogTemp, Log, TEXT("GetAllSaveFileNames: Main directory does not exist"));
+        return SaveFileNames;
+    }
+    
+    // Get all entries in the main directory
+    TArray<FString> DirectoryContents;
+    IFileManager& FileManager = IFileManager::Get();
+    FileManager.FindFiles(DirectoryContents, *(MainDir / TEXT("*")), false, true);
+    
+    UE_LOG(LogTemp, Log, TEXT("Found %d potential directories"), DirectoryContents.Num());
+    
+    // Check each directory to see if it contains chunk files
+    for (const FString& DirName : DirectoryContents)
+    {
+        FString FullDirPath = MainDir / DirName;
+        
+        UE_LOG(LogTemp, Log, TEXT("Checking directory: %s"), *DirName);
+        
+        // Skip any hidden directories or files
+        if (DirName.StartsWith(TEXT(".")))
+        {
+            UE_LOG(LogTemp, Log, TEXT("Skipping hidden directory: %s"), *DirName);
+            continue;
+        }
+        
+        // Verify it's actually a directory
+        if (!FPaths::DirectoryExists(FullDirPath))
+        {
+            UE_LOG(LogTemp, Log, TEXT("Not a directory: %s"), *DirName);
+            continue;
+        }
+        
+        // Check if this directory contains chunk files
+        TArray<FString> ChunkFiles;
+        FString ChunkSearchPattern = FullDirPath / FString::Printf(TEXT("*%s"), *CHUNK_FILE_EXTENSION);
+        FileManager.FindFiles(ChunkFiles, *ChunkSearchPattern, true, false);
+        
+        UE_LOG(LogTemp, Log, TEXT("Directory '%s' contains %d chunk files"), *DirName, ChunkFiles.Num());
+        
+        if (ChunkFiles.Num() > 0)
+        {
+            SaveFileNames.Add(DirName);
+            UE_LOG(LogTemp, Log, TEXT("Added '%s' to save files list"), *DirName);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Log, TEXT("Skipping '%s' - no chunk files found"), *DirName);
+        }
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("GetAllSaveFileNames: Final result - %d save files: [%s]"), 
+        SaveFileNames.Num(), *FString::Join(SaveFileNames, TEXT(", ")));
+    
+    return SaveFileNames;
+}
+
+bool ADiggerManager::DeleteSaveFile(const FString& SaveFileName)
+{
+    FString SaveDir = GetSaveFileDirectory(SaveFileName);
+    
+    if (!FPaths::DirectoryExists(SaveDir))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Cannot delete save file '%s' - directory does not exist"), *SaveFileName);
+        return false;
+    }
+    
+    // Delete all files in the directory first
+    TArray<FString> FilesToDelete;
+    FFileManagerGeneric::Get().FindFilesRecursive(FilesToDelete, *SaveDir, TEXT("*"), true, false);
+    
+    bool bAllFilesDeleted = true;
+    for (const FString& FileToDelete : FilesToDelete)
+    {
+        if (!FPlatformFileManager::Get().GetPlatformFile().DeleteFile(*FileToDelete))
+        {
+            UE_LOG(LogTemp, Error, TEXT("Failed to delete file: %s"), *FileToDelete);
+            bAllFilesDeleted = false;
+        }
+    }
+    
+    // Delete the directory itself
+    bool bDirectoryDeleted = FPlatformFileManager::Get().GetPlatformFile().DeleteDirectory(*SaveDir);
+    
+    if (bDirectoryDeleted && bAllFilesDeleted)
+    {
+        UE_LOG(LogTemp, Log, TEXT("Successfully deleted save file '%s'"), *SaveFileName);
+        
+        // Remove from cache
+        InvalidateSavedChunkCache(SaveFileName);
+        
+        return true;
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to completely delete save file '%s'"), *SaveFileName);
+        return false;
+    }
+}
+
+void ADiggerManager::InvalidateSavedChunkCache(const FString& SaveFileName)
+{
+    if (SaveFileName.IsEmpty())
+    {
+        // Clear all cache entries
+        SavedChunkCache.Empty();
+    }
+    else
+    {
+        // Clear specific save file cache
+        SavedChunkCache.Remove(SaveFileName);
+    }
+}
+
+
+//End New Multi Save Files System.
 
 
 void ADiggerManager::ApplyBrushInEditor(bool bDig)
@@ -115,6 +531,8 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
     BrushStroke.BrushPosition = EditorBrushPosition + EditorBrushOffset;
     BrushStroke.BrushRadius = EditorBrushRadius;
     BrushStroke.BrushRotation = EditorBrushRotation;
+    BrushStroke.bHiddenSeam = EditorBrushHiddenSeam;
+    UE_LOG(LogTemp, Warning, TEXT("Seam Type Received in DiggerManager type: %s"), EditorBrushHiddenSeam ? TEXT("true") : TEXT("false"));
     BrushStroke.BrushType = EditorBrushType;
     BrushStroke.bDig = bDig;
     BrushStroke.BrushLength = EditorBrushLength;
@@ -135,9 +553,12 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
         BrushStroke.LightType = EditorBrushLightType;
         BrushStroke.LightColor = EditorBrushLightColor;
 
-        UE_LOG(LogTemp, Warning, TEXT("Light brush setup: LightType = %d, Color = %s"),
-            (int32)BrushStroke.LightType,
-            *BrushStroke.LightColor.ToString());
+        if (DiggerDebug::Lights || DiggerDebug::Brush)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Light brush setup: LightType = %d, Color = %s"),
+                (int32)BrushStroke.LightType,
+                *BrushStroke.LightColor.ToString());
+        }
 
         ApplyLightBrushInEditor(BrushStroke);
         return;
@@ -161,15 +582,21 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
                 {
                     BrushStroke.LightType = Toolkit->GetCurrentLightType();
                     BrushStroke.LightColor = Toolkit->GetCurrentLightColor(); // Add this line
-                    UE_LOG(LogTemp, Warning, TEXT("Light type from toolkit: %d, Color: %s"), 
-                           (int32)BrushStroke.LightType, 
-                           *BrushStroke.LightColor.ToString());
+
+                    if (DiggerDebug::Lights || DiggerDebug::Brush)
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Light type from toolkit: %d, Color: %s"), 
+                               (int32)BrushStroke.LightType, 
+                               *BrushStroke.LightColor.ToString());
+                    }
                 }
             }
         }
-        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushInEditor: this = %p"), this);
-        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushInEditor: EditorBrushType = %d"), (int32)EditorBrushType);
-
+        if (DiggerDebug::Lights || DiggerDebug::Brush)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("ApplyBrushInEditor: this = %p"), this);
+            UE_LOG(LogTemp, Warning, TEXT("ApplyBrushInEditor: EditorBrushType = %d"), (int32)EditorBrushType);
+        }
     
         // Route to light handler with the full brush stroke
         ApplyLightBrushInEditor(BrushStroke);
@@ -255,7 +682,7 @@ void ADiggerManager::RemoveIslandAtPosition(const FVector& IslandCenter, const F
 
 void ADiggerManager::ApplyLightBrushInEditor(const FBrushStroke& BrushStroke)
 {
-    if (DiggerDebug::Brush) {
+    if (DiggerDebug::Lights || DiggerDebug::Brush) {
         UE_LOG(LogTemp, Warning, TEXT("ApplyLightBrushInEditor called at position: %s"), *BrushStroke.BrushPosition.ToString());
         UE_LOG(LogTemp, Warning, TEXT("Light stroke - Type: %d, Radius: %f, Strength: %f, Rotation: %s"), 
                (int32)BrushStroke.LightType, 
@@ -364,6 +791,7 @@ void ADiggerManager::SpawnLight(const FBrushStroke& BrushStroke)
 {
     if (!GetWorld())
     {
+        if (DiggerDebug::Lights || DiggerDebug::Brush || DiggerDebug::Context)
         UE_LOG(LogTemp, Error, TEXT("SpawnLight: World is null"));
         return;
     }
@@ -379,11 +807,13 @@ void ADiggerManager::SpawnLight(const FBrushStroke& BrushStroke)
         Light->InitializeFromBrush(BrushStroke);
         SpawnedLights.Add(Light);
 
-        UE_LOG(LogTemp, Warning, TEXT("✅ Successfully spawned dynamic light actor of type %d"), (int32)BrushStroke.LightType);
+        if (DiggerDebug::Lights || DiggerDebug::Brush)
+        UE_LOG(LogTemp, Warning, TEXT("Successfully spawned dynamic light actor of type %d"), (int32)BrushStroke.LightType);
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("❌ Failed to spawn dynamic light actor"));
+        if (DiggerDebug::Lights || DiggerDebug::Brush)
+        UE_LOG(LogTemp, Error, TEXT("Failed to spawn dynamic light actor"));
     }
 }
 
@@ -618,7 +1048,7 @@ void ADiggerManager::SetVoxelAtWorldPosition(const FVector& WorldPos, float Valu
     // Try to get or create the chunk
     if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
     {
-        Chunk->GetSparseVoxelGrid()->SetVoxel(LocalVoxelIndex, Value, true);
+        //Chunk->GetSparseVoxelGrid()->SetVoxel(LocalVoxelIndex, Value, true);
 
         if (DiggerDebug::Space || DiggerDebug::Chunks)
         {
@@ -636,6 +1066,7 @@ void ADiggerManager::SetVoxelAtWorldPosition(const FVector& WorldPos, float Valu
 }
 
 
+// Updated ADiggerManager::DebugBrushPlacement()
 void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
 {
     if (!IsInGameThread())
@@ -670,7 +1101,6 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
     VoxelSize = TerrainGridSize / Subdivisions;
     float ChunkWorldSize = ChunkSize * TerrainGridSize;
 
-
     if (DiggerDebug::Space)
     {
         UE_LOG(LogTemp, Display, TEXT("ChunkSize=%d, Subdivisions=%d, VoxelSize=%.2f, ChunkWorldSize=%.2f"),
@@ -679,7 +1109,6 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
 
     // Compute chunk coordinates from world position
     FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(ClickPosition);
-
 
     if (DiggerDebug::Chunks || DiggerDebug::Space || DiggerDebug::Brush)
     {
@@ -690,11 +1119,8 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
     // Fetch or create the relevant chunk
     if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
     {
-        Chunk->GetSparseVoxelGrid()->SetVoxel(FVoxelConversion::WorldToLocalVoxel(ClickPosition), -1.0f, true);
-        SetVoxelAtWorldPosition(ClickPosition, -1.0f);
         Chunk->GetSparseVoxelGrid()->RenderVoxels();
         Chunk->GetSparseVoxelGrid()->LogVoxelData();
-        Chunk->DebugDrawChunk();
     }
     else
     {
@@ -710,10 +1136,7 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
     FVector ChunkExtent = FVector(ChunkWorldSize * 0.5f);
     FVector ChunkOrigin = ChunkCenter - ChunkExtent;
 
-
     FVector LocalInChunk = ClickPosition - ChunkOrigin;
-
-    // Convert to local voxel coordinates using VoxelSize
     FIntVector LocalVoxel = FVoxelConversion::WorldToLocalVoxel(ClickPosition);
     FVector LocalVoxelToWorld = FVoxelConversion::LocalVoxelToWorld(LocalVoxel);
 
@@ -724,82 +1147,87 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
     }
 
     // World-space center of the voxel
-    FVector VoxelCenter = ChunkOrigin +
-                          FVector(LocalVoxel) * VoxelSize +
-                          FVector(VoxelSize * 0.5f);
+    FVector VoxelCenter = ChunkOrigin + FVector(LocalVoxel) * VoxelSize + FVector(VoxelSize * 0.5f);
 
     if (DiggerDebug::Voxels)
     {
         UE_LOG(LogTemp, Display, TEXT("VoxelCenter: %s"), *VoxelCenter.ToString());
     }
     
-    
     try
     {
-        //const float ChunkWorldSize = ChunkSize * TerrainGridSize;
-        //const FVector ChunkExtent = FVector(ChunkWorldSize * 0.5f);
-        //const FVector ChunkCenter = FVector(ChunkCoords) * ChunkWorldSize;
-        //const FVector ChunkOrigin = ChunkCenter - ChunkExtent;
-
-        // Draw the chunk bounding box
-        DrawDebugBox(CurrentWorld, ChunkCenter, ChunkExtent, FColor::Red, false, 30.0f, 0, 2.0f);
-
-        // Label: Chunk coordinates
-        DrawDebugString(CurrentWorld, ChunkCenter + FVector(0, 0, ChunkExtent.Z + 50.0f),
-            FString::Printf(TEXT("Chunk: %s"), *ChunkCoords.ToString()),
-            nullptr, FColor::Yellow, 30.0f);
-
-        // Draw chunk center
-        DrawDebugSphere(CurrentWorld, ChunkCenter, 30.0f, 16, FColor::Yellow, false, 30.0f);
-        DrawDebugString(CurrentWorld, ChunkCenter + FVector(0, 0, 35.0f), TEXT("Chunk Center"), nullptr, FColor::Yellow, 30.0f);
-
-        // Draw chunk origin (minimum corner)
-        DrawDebugSphere(CurrentWorld, ChunkOrigin, 20.0f, 16, FColor::Orange, false, 30.0f);
-        DrawDebugString(CurrentWorld, ChunkOrigin + FVector(0, 0, 25.0f), TEXT("Chunk Origin"), nullptr, FColor::Orange, 30.0f);
-
-        const int32 ChunkVoxels = ChunkSize * Subdivisions;
-        FVector SelectedVoxelCenter = FVector::ZeroVector;
-
-        // Draw voxel grid (only outer shell + selected voxel)
-        for (int32 X = 0; X < ChunkVoxels; X++)
+        // Get the fast debug subsystem
+        if (auto* FastDebug = UFastDebugSubsystem::Get(this))
         {
-            for (int32 Y = 0; Y < ChunkVoxels; Y++)
+            // Draw the chunk bounding box (red)
+            FastDebug->DrawBox(ChunkCenter, ChunkExtent, FRotator::ZeroRotator, 
+                              FFastDebugConfig(FLinearColor::Red, 30.0f, 2.0f));
+
+            // Draw chunk center (yellow sphere)
+            FastDebug->DrawSphere(ChunkCenter, 30.0f, 
+                                 FFastDebugConfig(FLinearColor::Yellow, 30.0f, 2.0f));
+
+            // Draw chunk origin (orange sphere)
+            FastDebug->DrawSphere(ChunkOrigin, 20.0f, 
+                                 FFastDebugConfig(FLinearColor(1.0f, 0.5f, 0.0f), 30.0f, 2.0f));
+
+            const int32 ChunkVoxels = ChunkSize * Subdivisions;
+            FVector SelectedVoxelCenter = FVector::ZeroVector;
+
+            // Collect edge voxel positions for batch rendering
+            TArray<FVector> EdgeVoxelPositions;
+            EdgeVoxelPositions.Reserve(ChunkVoxels * ChunkVoxels * 6); // Rough estimate
+
+            for (int32 X = 0; X < ChunkVoxels; X++)
             {
-                for (int32 Z = 0; Z < ChunkVoxels; Z++)
+                for (int32 Y = 0; Y < ChunkVoxels; Y++)
                 {
-                    FIntVector VoxelCoord(X, Y, Z);
-                   // FVector VoxelCenter = ChunkOrigin + FVector(VoxelCoord) * VoxelSize + FVector(VoxelSize * 0.5f);
-
-                    // Highlight edge voxels
-                    if (X == 0 || X == ChunkVoxels - 1 ||
-                        Y == 0 || Y == ChunkVoxels - 1 ||
-                        Z == 0 || Z == ChunkVoxels - 1)
+                    for (int32 Z = 0; Z < ChunkVoxels; Z++)
                     {
-                        DrawDebugPoint(CurrentWorld, VoxelCenter, 5.0f, FColor::Cyan, false, 30.0f);
-                    }
+                        FIntVector VoxelCoord(X, Y, Z);
+                        FVector CurrentVoxelCenter = ChunkOrigin + FVector(VoxelCoord) * VoxelSize + FVector(VoxelSize * 0.5f);
 
-                    // Highlight the selected voxel
-                    if (VoxelCoord == LocalVoxel)
-                    {
-                        SelectedVoxelCenter = VoxelCenter;
+                        // Collect edge voxels
+                        if (X == 0 || X == ChunkVoxels - 1 ||
+                            Y == 0 || Y == ChunkVoxels - 1 ||
+                            Z == 0 || Z == ChunkVoxels - 1)
+                        {
+                            EdgeVoxelPositions.Add(CurrentVoxelCenter);
+                        }
 
-                        DrawDebugBox(CurrentWorld, SelectedVoxelCenter, FVector(VoxelSize * 0.5f),
-                            FColor::Magenta, false, 30.0f, 0, 2.0f);
-
-                        DrawDebugString(CurrentWorld, SelectedVoxelCenter + FVector(0, 0, 25.0f),
-                            TEXT("Selected Voxel"), nullptr, FColor::Magenta, 30.0f);
+                        // Track the selected voxel
+                        if (VoxelCoord == LocalVoxel)
+                        {
+                            SelectedVoxelCenter = CurrentVoxelCenter;
+                        }
                     }
                 }
             }
+
+            // Batch draw edge voxels as points (cyan)
+            if (EdgeVoxelPositions.Num() > 0)
+            {
+                FastDebug->DrawPoints(EdgeVoxelPositions, 5.0f, 
+                                     FFastDebugConfig(FColor::Cyan, 30.0f, 2.0f));
+            }
+
+            // Draw the selected voxel (magenta box)
+            if (SelectedVoxelCenter != FVector::ZeroVector)
+            {
+                FastDebug->DrawBox(SelectedVoxelCenter, FVector(VoxelSize * 0.5f), FRotator::ZeroRotator,
+                                  FFastDebugConfig(FLinearColor(1.0f, 0.0f, 1.0f), 30.0f, 2.0f));
+            }
+
+            // Draw interaction line
+            FastDebug->DrawLine(ClickPosition, SelectedVoxelCenter, 
+                               FFastDebugConfig(FLinearColor::Green, 30.0f, 3.0f));
+
+            // Draw interaction points
+            FastDebug->DrawSphere(ClickPosition, 20.0f, 
+                                 FFastDebugConfig(FLinearColor::Blue, 30.0f, 2.0f));
+            FastDebug->DrawSphere(SelectedVoxelCenter, 20.0f, 
+                                 FFastDebugConfig(FLinearColor(1.0f, 0.0f, 1.0f), 30.0f, 2.0f));
         }
-
-        // Draw interaction line and key points
-        DrawDebugLine(CurrentWorld, ClickPosition, SelectedVoxelCenter, FColor::Green, false, 30.0f, 0, 3.0f);
-        DrawDebugSphere(CurrentWorld, ClickPosition, 20.0f, 16, FColor::Blue, false, 30.0f);
-        DrawDebugString(CurrentWorld, ClickPosition + FVector(0, 0, 25.0f), TEXT("Click"), nullptr, FColor::White, 30.0f);
-
-        DrawDebugSphere(CurrentWorld, SelectedVoxelCenter, 20.0f, 16, FColor::Magenta, false, 30.0f);
-        DrawDebugString(CurrentWorld, SelectedVoxelCenter + FVector(0, 0, 25.0f), TEXT("Voxel"), nullptr, FColor::White, 30.0f);
 
         if (DiggerDebug::Brush)
         {
@@ -812,17 +1240,17 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
     }
 
     // Diagonal marker boxes
-    DrawDiagonalDebugVoxels(ChunkCoords);
-    //Individual voxels right nearest the click position.
-    DebugDrawVoxelAtWorldPosition(ClickPosition, FColor::White, 25/*= 5.0f*/, 2.f);
+    DrawDiagonalDebugVoxelsFast(ChunkCoords);
+    // Individual voxels right nearest the click position
+    DebugDrawVoxelAtWorldPositionFast(ClickPosition, FLinearColor::White, 25.0f, 2.0f);
 
     if (DiggerDebug::Brush)
     {
         UE_LOG(LogTemp, Warning, TEXT("DebugBrushPlacement: completed"));
     }
 }
-
-void ADiggerManager::DebugDrawVoxelAtWorldPosition(const FVector& WorldPosition, FColor BoxColor, float Duration /*= 5.0f*/, float Thickness /*= 2.0f*/)
+// Updated ADiggerManager::DebugDrawVoxelAtWorldPosition()
+void ADiggerManager::DebugDrawVoxelAtWorldPositionFast(const FVector& WorldPosition, const FLinearColor& BoxColor, float Duration, float Thickness)
 {
     FIntVector ChunkCoords;
     FIntVector VoxelIndex;
@@ -838,25 +1266,27 @@ void ADiggerManager::DebugDrawVoxelAtWorldPosition(const FVector& WorldPosition,
     // Get the voxel center in world space
     FVector VoxelCenter = FVoxelConversion::MinCornerVoxelToWorld(ChunkCoords, VoxelIndex);
 
-    // Draw a debug box to represent the voxel
-    DrawDebugBox(
-        World,
-        VoxelCenter,
-        FVector(FVoxelConversion::LocalVoxelSize * 0.5f), // Half extents
-        FQuat::Identity,
-        BoxColor,
-        false,
-        Duration,
-        0,
-        Thickness
-    );
+    // Draw using fast debug system
+    if (auto* FastDebug = UFastDebugSubsystem::Get(this))
+    {
+        FastDebug->DrawBox(VoxelCenter, FVector(FVoxelConversion::LocalVoxelSize * 0.5f), FRotator::ZeroRotator,
+                          FFastDebugConfig(BoxColor, Duration, Thickness));
+    }
+
     if (DiggerDebug::Chunks || DiggerDebug::Voxels)
-    UE_LOG(LogTemp, Log, TEXT("Drew voxel at world position %s: Chunk %s, VoxelIndex %s, Center %s"),
-        *WorldPosition.ToString(), *ChunkCoords.ToString(), *VoxelIndex.ToString(), *VoxelCenter.ToString());
+    {
+        UE_LOG(LogTemp, Log, TEXT("Drew voxel at world position %s: Chunk %s, VoxelIndex %s, Center %s"),
+            *WorldPosition.ToString(), *ChunkCoords.ToString(), *VoxelIndex.ToString(), *VoxelCenter.ToString());
+    }
 }
 
-void ADiggerManager::DrawDiagonalDebugVoxels(FIntVector ChunkCoords)
+// Updated ADiggerManager::DrawDiagonalDebugVoxels()
+void ADiggerManager::DrawDiagonalDebugVoxelsFast(FIntVector ChunkCoords)
 {
+    // Get the fast debug subsystem
+    auto* FastDebug = UFastDebugSubsystem::Get(this);
+    if (!FastDebug) return;
+
     // Calculate chunk dimensions
     const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
     const float DebugDuration = 30.0f;
@@ -868,175 +1298,102 @@ void ADiggerManager::DrawDiagonalDebugVoxels(FIntVector ChunkCoords)
     // Calculate the minimum corner based on the center and extent
     FVector ChunkMinCorner = ChunkCenter - ChunkExtent;
     
-    UE_LOG(LogTemp, Warning, TEXT("DrawDiagonalDebugVoxels - ChunkCoords: %s"), *ChunkCoords.ToString());
+    UE_LOG(LogTemp, Warning, TEXT("DrawDiagonalDebugVoxelsFast - ChunkCoords: %s"), *ChunkCoords.ToString());
     UE_LOG(LogTemp, Warning, TEXT("ChunkCenter: %s, ChunkMinCorner: %s"), 
            *ChunkCenter.ToString(), *ChunkMinCorner.ToString());
     UE_LOG(LogTemp, Warning, TEXT("VoxelsPerChunk: %d, LocalVoxelSize: %f"),
            VoxelsPerChunk, FVoxelConversion::LocalVoxelSize);
     
-    // Draw diagonal voxels from minimum corner to maximum corner
+    // Collect diagonal voxel positions for batch rendering
+    TArray<FVector> DiagonalVoxelPositions;
+    DiagonalVoxelPositions.Reserve(VoxelsPerChunk);
+    
+    // Collect diagonal voxels from minimum corner to maximum corner
     for (int32 i = 0; i < VoxelsPerChunk; i++)
     {
-        // Calculate world position for the voxel at position (i, i, i) from the minimum corner
         FVector VoxelCenter = ChunkMinCorner + 
                              FVector(i + 0.5f, i + 0.5f, i + 0.5f) * FVoxelConversion::LocalVoxelSize;
-        
-        // Draw debug box at the voxel center
-        DrawDebugBox(
-            World, 
-            VoxelCenter, 
-            FVector(FVoxelConversion::LocalVoxelSize * 0.45f), // Slightly smaller for visibility
-            FColor::Green, 
-            false, 
-            DebugDuration, 
-            0, 
-            1.5f
-        );
+        DiagonalVoxelPositions.Add(VoxelCenter);
     }
     
-    // Draw overflow voxels in the negative direction (1 voxel outside the chunk boundary)
-    FVector overflowPositions[] = {
+    // Batch draw diagonal voxels (green)
+    if (DiagonalVoxelPositions.Num() > 0)
+    {
+        FastDebug->DrawBoxes(DiagonalVoxelPositions, 
+                           FVector(FVoxelConversion::LocalVoxelSize * 0.45f),
+                           FFastDebugConfig(FLinearColor::Green, DebugDuration, 1.5f));
+    }
+    
+    // Collect overflow voxel positions
+    TArray<FVector> OverflowVoxelPositions;
+    FVector overflowOffsets[] = {
         FVector(-1, -1, -1),  // Corner overflow
         FVector(-1, 0, 0),    // X-axis overflow
         FVector(0, -1, 0),    // Y-axis overflow
         FVector(0, 0, -1)     // Z-axis overflow
     };
     
-    for (const FVector& offset : overflowPositions)
+    for (const FVector& offset : overflowOffsets)
     {
-        // Calculate world position for overflow voxel - these are just outside the minimum corner
         FVector VoxelCenter = ChunkMinCorner + 
                              (offset + FVector(0.5f)) * FVoxelConversion::LocalVoxelSize;
-        
-        // Draw debug box at the overflow voxel center in purple
-        DrawDebugBox(
-            World, 
-            VoxelCenter, 
-            FVector(FVoxelConversion::LocalVoxelSize * 0.45f),
-            FColor::Purple, // Different color for overflow voxels
-            false, 
-            DebugDuration, 
-            0, 
-            2.0f  // Thicker lines for overflow voxels
-        );
+        OverflowVoxelPositions.Add(VoxelCenter);
         
         UE_LOG(LogTemp, Warning, TEXT("Overflow voxel at local position %s, world position %s"),
                *offset.ToString(), *VoxelCenter.ToString());
     }
     
-    // Draw red box for chunk bounds
-    DrawDebugBox(
-        World, 
-        ChunkCenter, 
-        ChunkExtent, 
-        FColor::Red, 
-        false, 
-        DebugDuration, 
-        0, 
-        2.5f
-    );
+    // Batch draw overflow voxels (purple)
+    if (OverflowVoxelPositions.Num() > 0)
+    {
+        FastDebug->DrawBoxes(OverflowVoxelPositions, 
+                           FVector(FVoxelConversion::LocalVoxelSize * 0.45f),
+                           FFastDebugConfig(FLinearColor(0.5f, 0.0f, 1.0f), DebugDuration, 2.0f));
+    }
     
-    // Draw yellow box at the chunk minimum corner for reference
-    DrawDebugBox(
-        World,
-        ChunkMinCorner,
-        FVector(FVoxelConversion::LocalVoxelSize * 0.75f),
-        FColor::Yellow,
-        false,
-        DebugDuration,
-        0,
-        3.0f
-    );
+    // Draw reference boxes
+    FastDebug->DrawBox(ChunkCenter, ChunkExtent, FRotator::ZeroRotator,
+                      FFastDebugConfig(FLinearColor::Red, DebugDuration, 2.5f));
     
-    // Draw blue box at the chunk maximum corner for reference
+    FastDebug->DrawBox(ChunkMinCorner, FVector(FVoxelConversion::LocalVoxelSize * 0.75f), FRotator::ZeroRotator,
+                      FFastDebugConfig(FLinearColor::Yellow, DebugDuration, 3.0f));
+    
     FVector ChunkMaxCorner = ChunkCenter + ChunkExtent;
-    DrawDebugBox(
-        World,
-        ChunkMaxCorner,
-        FVector(FVoxelConversion::LocalVoxelSize * 0.75f),
-        FColor::Blue,
-        false,
-        DebugDuration,
-        0,
-        3.0f
-    );
+    FastDebug->DrawBox(ChunkMaxCorner, FVector(FVoxelConversion::LocalVoxelSize * 0.75f), FRotator::ZeroRotator,
+                      FFastDebugConfig(FLinearColor::Blue, DebugDuration, 3.0f));
     
-    // Draw a magenta box at the world origin for reference
-    DrawDebugBox(
-        World,
-        FVector::ZeroVector,
-        FVector(FVoxelConversion::LocalVoxelSize * 1.5f),
-        FColor::Magenta,
-        false,
-        DebugDuration,
-        0,
-        3.0f
-    );
+    FastDebug->DrawBox(FVector::ZeroVector, FVector(FVoxelConversion::LocalVoxelSize * 1.5f), FRotator::ZeroRotator,
+                      FFastDebugConfig(FLinearColor(1.0f, 0.0f, 1.0f), DebugDuration, 3.0f));
     
     // Draw overflow regions on the minimum sides
+    const float ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::TerrainGridSize;
     
-    // 1. X-axis overflow region (full face)
-    {
-        FVector OverflowCenter = ChunkMinCorner + FVector(- FVoxelConversion::LocalVoxelSize * 0.5f, FVoxelConversion::ChunkWorldSize  * 0.5f,FVoxelConversion::ChunkWorldSize  * 0.5f);
-        FVector OverflowExtent = FVector(
-            FVoxelConversion::LocalVoxelSize * 0.5f,
-            ChunkExtent.Y,
-            ChunkExtent.Z
-        );
-        
-        DrawDebugBox(
-            World,
-            OverflowCenter,
-            OverflowExtent,
-            FColor(255, 128, 255, 64), // Light purple with transparency
-            false,
-            DebugDuration,
-            0,
-            1.0f
-        );
-    }
+    // X-axis overflow region
+    FVector XOverflowCenter = ChunkMinCorner + FVector(-FVoxelConversion::LocalVoxelSize * 0.5f, 
+                                                       ChunkWorldSize * 0.5f, 
+                                                       ChunkWorldSize * 0.5f);
+    FVector XOverflowExtent = FVector(FVoxelConversion::LocalVoxelSize * 0.5f, ChunkExtent.Y, ChunkExtent.Z);
     
-    // 2. Y-axis overflow region (full face)
-    {
-        FVector OverflowCenter = ChunkMinCorner + FVector(FVoxelConversion::ChunkWorldSize  * 0.5f, - FVoxelConversion::LocalVoxelSize * 0.5f, FVoxelConversion::ChunkWorldSize  * 0.5f      );
-        FVector OverflowExtent = FVector(
-            ChunkExtent.X,
-            FVoxelConversion::LocalVoxelSize * 0.5f,
-            ChunkExtent.Z
-        );
-        
-        DrawDebugBox(
-            World,
-            OverflowCenter,
-            OverflowExtent,
-            FColor(255, 128, 255, 64), // Light purple with transparency
-            false,
-            DebugDuration,
-            0,
-            1.0f
-        );
-    }
+    FastDebug->DrawBox(XOverflowCenter, XOverflowExtent, FRotator::ZeroRotator,
+                      FFastDebugConfig(FLinearColor(1.0f, 0.5f, 1.0f, 0.25f), DebugDuration, 1.0f));
     
-    // 3. Z-axis overflow region (full face)
-    {
-        FVector OverflowCenter = ChunkMinCorner + FVector( FVoxelConversion::ChunkWorldSize  * 0.5f, FVoxelConversion::ChunkWorldSize  * 0.5f,- FVoxelConversion::LocalVoxelSize  * 0.5f);
-        FVector OverflowExtent = FVector(
-            ChunkExtent.X,
-            ChunkExtent.Y,
-            FVoxelConversion::LocalVoxelSize * 0.5f
-        );
-        
-        DrawDebugBox(
-            World,
-            OverflowCenter,
-            OverflowExtent,
-            FColor(255, 128, 255, 64), // Light purple with transparency
-            false,
-            DebugDuration,
-            0,
-            1.0f
-        );
-    }
+    // Y-axis overflow region
+    FVector YOverflowCenter = ChunkMinCorner + FVector(ChunkWorldSize * 0.5f, 
+                                                       -FVoxelConversion::LocalVoxelSize * 0.5f, 
+                                                       ChunkWorldSize * 0.5f);
+    FVector YOverflowExtent = FVector(ChunkExtent.X, FVoxelConversion::LocalVoxelSize * 0.5f, ChunkExtent.Z);
+    
+    FastDebug->DrawBox(YOverflowCenter, YOverflowExtent, FRotator::ZeroRotator,
+                      FFastDebugConfig(FLinearColor(1.0f, 0.5f, 1.0f, 0.25f), DebugDuration, 1.0f));
+    
+    // Z-axis overflow region  
+    FVector ZOverflowCenter = ChunkMinCorner + FVector(ChunkWorldSize * 0.5f, 
+                                                       ChunkWorldSize * 0.5f, 
+                                                       -FVoxelConversion::LocalVoxelSize * 0.5f);
+    FVector ZOverflowExtent = FVector(ChunkExtent.X, ChunkExtent.Y, FVoxelConversion::LocalVoxelSize * 0.5f);
+    
+    FastDebug->DrawBox(ZOverflowCenter, ZOverflowExtent, FRotator::ZeroRotator,
+                      FFastDebugConfig(FLinearColor(1.0f, 0.5f, 1.0f, 0.25f), DebugDuration, 1.0f));
 }
 
 
@@ -1112,6 +1469,27 @@ UStaticMesh* ADiggerManager::ConvertIslandToStaticMesh(const FIslandData& Island
     return NewStaticMesh;
 }
 
+void ADiggerManager::UpdateAllDirtyChunks()
+{
+    if (DiggerDebug::Islands)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Running ADM::UpdateAllDirtyChunks..."));
+    }
+
+    for (const auto& ChunkPair : ChunkMap)
+    {
+        UVoxelChunk* Chunk = ChunkPair.Value;
+        if (Chunk)
+        {
+            Chunk->UpdateIfDirty(); // Only updates if marked dirty
+        }
+    }
+
+    if (DiggerDebug::Islands)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Finished updating dirty chunks."));
+    }
+}
 
 
 FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMesh(const FVector& IslandCenter)
@@ -1128,7 +1506,7 @@ FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMesh(const FVector& Isla
         return Result;
     }
 
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(Chunk->GetChunkPosition());
+    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(Chunk->GetChunkCoordinates());
     FVector LocalPosition = IslandCenter - ChunkOrigin;
 
     FIntVector VoxelCoords = FIntVector(
@@ -1137,7 +1515,7 @@ FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMesh(const FVector& Isla
         FMath::FloorToInt(LocalPosition.Z / VoxelSize)
     );
 
-    FVector VoxelWorldCenter = ChunkOrigin + FVector(VoxelCoords) * VoxelSize + FVector(VoxelSize * 0.5f);
+    FVector VoxelWorldCenter = ChunkOrigin + FVector(VoxelCoords) * VoxelSize + FVector(FVoxelConversion::LocalVoxelSize * 0.5f);
 
     UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Chunk Origin: %s | LocalPosition: %s | VoxelCoords: %s | VoxelWorldCenter: %s"),
         *ChunkOrigin.ToString(),
@@ -1304,32 +1682,90 @@ FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMesh(const FVector& Isla
     return Result;
 }
 
+// In ADiggerManager.cpp
 void ADiggerManager::RemoveIslandVoxels(const FIslandData& Island)
 {
-    int32 Removed = 0;
-
-    for (const FIntVector& GlobalVoxel : Island.Voxels)
+    if (DiggerDebug::Islands)
     {
-        FIntVector ChunkCoords;
-        FIntVector LocalVoxel;
+        UE_LOG(LogTemp, Warning, TEXT("Running ADM::RemoveIslandVoxels!"));
+    }
 
-        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, ChunkCoords, LocalVoxel);
+    struct FChunkModification
+    {
+        TWeakObjectPtr<UVoxelChunk> Chunk;
+        TArray<FIntVector> LocalVoxels;
+    };
 
-        UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
-        if (!ChunkPtr || !*ChunkPtr) continue;
+    TMap<FIntVector, FChunkModification> AffectedChunks;
+    TSet<FIntVector> DeletedGlobalVoxels;
 
-        USparseVoxelGrid* Grid = (*ChunkPtr)->GetSparseVoxelGrid();
-        if (!Grid) continue;
+    {
+        FScopeLock Lock(&IslandRemovalMutex);
 
-        if (Grid->RemoveVoxel(LocalVoxel))
+        for (const FIntVector& GlobalVoxel : Island.Voxels)
         {
-            Removed++;
-            (*ChunkPtr)->ForceUpdate();
+            FIntVector ChunkCoords, LocalVoxel;
+            FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, ChunkCoords, LocalVoxel);
+
+            UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
+            if (!ChunkPtr || !*ChunkPtr) continue;
+
+            USparseVoxelGrid* Grid = (*ChunkPtr)->GetSparseVoxelGrid();
+            if (!Grid) continue;
+
+            if (Grid->RemoveVoxel(LocalVoxel))
+            {
+                AffectedChunks.FindOrAdd(ChunkCoords).Chunk = *ChunkPtr;
+                AffectedChunks[ChunkCoords].LocalVoxels.Add(LocalVoxel);
+                DeletedGlobalVoxels.Add(GlobalVoxel);
+            }
         }
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Removed %d voxels from island"), Removed);
+    auto RefreshChunks = [DeletedGlobalVoxels, AffectedChunks, this]()
+    {
+        int32 TotalRemoved = DeletedGlobalVoxels.Num();
+
+        for (const auto& Pair : AffectedChunks)
+        {
+            const TWeakObjectPtr<UVoxelChunk>& ChunkPtr = Pair.Value.Chunk;
+            if (!ChunkPtr.IsValid()) continue;
+
+            USparseVoxelGrid* Grid = ChunkPtr->GetSparseVoxelGrid();
+            if (!Grid) continue;
+
+            // Access one of the deleted voxels to trigger mesh rebuild
+            for (const FIntVector& LocalVoxel : Pair.Value.LocalVoxels)
+            {
+                FVoxelData Dummy;
+                Grid->GetVoxel(LocalVoxel); // Ghost ping for mesh invalidation
+                break; // Only need one
+            }
+            ChunkPtr->RefreshSectionMesh();
+            ChunkPtr->MarkDirty();
+            ChunkPtr->ForceUpdate(); // Single rebuild per chunk
+        }
+
+        if (DiggerDebug::Islands)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Island cleanup: Removed %d voxels across %d chunks"),
+                   TotalRemoved, AffectedChunks.Num());
+        }
+        UpdateAllDirtyChunks();
+    };
+
+    if (!IsInGameThread())
+    {
+        AsyncTask(ENamedThreads::GameThread, MoveTemp(RefreshChunks));
+        UpdateAllDirtyChunks();
+    }
+    else
+    {
+        RefreshChunks();
+        UpdateAllDirtyChunks();
+    }
 }
+
 
 
 void ADiggerManager::SaveIslandData(AIslandActor* IslandActor, const FIslandMeshData& MeshData)
@@ -1406,7 +1842,7 @@ void ADiggerManager::ConvertIslandAtPositionToActor(const FVector& IslandCenter,
 {
     UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] ConvertIslandAtPositionToActor called at %s"), *IslandCenter.ToString());
 
-    // Debug: Visualize the search position
+    // Debug visualization
     DrawDebugSphere(GetSafeWorld(), IslandCenter, 50.0f, 16, FColor::Red, false, 10.0f, 0, 2.0f);
     DrawDebugString(GetSafeWorld(), IslandCenter + FVector(0, 0, 60.0f), TEXT("Island Search Point"), nullptr, FColor::White, 10.0f);
 
@@ -1418,7 +1854,6 @@ void ADiggerManager::ConvertIslandAtPositionToActor(const FVector& IslandCenter,
         FIntVector ChunkCoords, LocalVoxel;
         FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(ReferenceVoxel, ChunkCoords, LocalVoxel);
 
-
         // Find the chunk containing this voxel
         UVoxelChunk* Chunk = ChunkMap.FindRef(ChunkCoords);
         if (!Chunk)
@@ -1427,31 +1862,48 @@ void ADiggerManager::ConvertIslandAtPositionToActor(const FVector& IslandCenter,
             return;
         }
 
-        // Extract and generate mesh from this voxel
-        FIslandMeshData MeshData = ExtractAndGenerateIslandMeshFromVoxel(Chunk, LocalVoxel);
+        // Verify the voxel exists in the grid before extraction
+        USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
+        if (!Grid || !Grid->IsVoxelSolid(LocalVoxel))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Reference voxel not found or not solid at local coords: %s"), *LocalVoxel.ToString());
+            
+            // Fallback to center-based extraction
+            FIslandMeshData MeshData = ExtractIslandByCenter(IslandCenter, false, bEnablePhysics);
+            if (MeshData.bValid)
+            {
+                AIslandActor* IslandActor = SpawnIslandActorWithMeshData(IslandCenter, MeshData, bEnablePhysics);
+                if (IslandActor)
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Successfully created island actor using center-based extraction"));
+                }
+            }
+            return;
+        }
+
+        // Assuming you have an FIslandData from your island detection system
+        FIslandData MyIsland; // populated elsewhere
+        FIslandMeshData MeshData = ExtractAndGenerateIslandMeshFromData(Chunk, MyIsland);
+
         if (MeshData.bValid)
         {
-            AIslandActor* IslandActor = SpawnIslandActorWithMeshData(MeshData.MeshOrigin, MeshData, bEnablePhysics);
-            if (IslandActor)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Successfully created island actor at %s"), 
-                       *MeshData.MeshOrigin.ToString());
-            }
-            else
-            {
-                UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Failed to create island actor at %s"), 
-                       *MeshData.MeshOrigin.ToString());
-            }
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Failed to generate valid mesh data from reference voxel"));
+            // Use the generated mesh data
+            UE_LOG(LogTemp, Log, TEXT("Successfully generated mesh for island at %s"), 
+                   *MyIsland.Location.ToString());
         }
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] No reference voxel provided; fallback mode not yet implemented."));
-        // Optional: implement ExtractAndGenerateIslandMesh(IslandCenter) fallback logic here
+        // Fallback to center-based extraction
+        FIslandMeshData MeshData = ExtractIslandByCenter(IslandCenter, false, bEnablePhysics);
+        if (MeshData.bValid)
+        {
+            AIslandActor* IslandActor = SpawnIslandActorWithMeshData(IslandCenter, MeshData, bEnablePhysics);
+            if (IslandActor)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Successfully created island actor using center-based extraction"));
+            }
+        }
     }
 }
 
@@ -1533,7 +1985,7 @@ FIslandMeshData ADiggerManager::ExtractIslandByCenter(const FVector& IslandCente
 }
 
 // New function to extract island mesh from a specific voxel
-FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMeshFromVoxel(UVoxelChunk* Chunk, const FIntVector& StartVoxel)
+FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMeshFromData(UVoxelChunk* Chunk, const FIslandData& IslandData)
 {
     FIslandMeshData Result;
     
@@ -1550,78 +2002,104 @@ FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMeshFromVoxel(UVoxelChun
         return Result;
     }
     
-    // Check if the start voxel exists
-    if (!VoxelGrid->VoxelData.Contains(StartVoxel))
+    if (IslandData.Voxels.Num() == 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Start voxel %s not found in grid."), *StartVoxel.ToString());
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Island data contains no voxels."));
         return Result;
     }
     
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(Chunk->GetChunkPosition());
-    FVector StartVoxelWorldPos = FVoxelConversion::ChunkVoxelToWorld(Chunk->GetChunkPosition(), StartVoxel);
-    
-    // Make a backup of the original grid before extraction
-    USparseVoxelGrid* OriginalGridBackup = nullptr;
-   /* if (bMakeBackupBeforeExtraction)
+    // Validate that VoxelCount matches actual array size
+    if (IslandData.VoxelCount != IslandData.Voxels.Num())
     {
-        OriginalGridBackup = DuplicateObject<USparseVoxelGrid>(VoxelGrid, this);
-    }*/
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Island VoxelCount (%d) doesn't match Voxels array size (%d)"), 
+               IslandData.VoxelCount, IslandData.Voxels.Num());
+    }
     
-    // Extract the island
-    USparseVoxelGrid* ExtractedGrid = nullptr;
-    TArray<FIntVector> IslandVoxels;
+    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(Chunk->GetChunkCoordinates());
     
-    bool bExtractionSuccess = VoxelGrid->ExtractIslandAtPosition(
-        StartVoxelWorldPos, 
-        ExtractedGrid, 
-        IslandVoxels
-    );
+    // Create a temporary grid for the island
+    USparseVoxelGrid* ExtractedGrid = NewObject<USparseVoxelGrid>();
     
-    if (!bExtractionSuccess || !ExtractedGrid || IslandVoxels.Num() == 0)
+    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Extracting island at location %s with %d voxels (reference: %s)"), 
+           *IslandData.Location.ToString(), 
+           IslandData.Voxels.Num(),
+           *IslandData.ReferenceVoxel.ToString());
+    
+    // Copy voxel data directly from the island data
+    TMap<FIntVector, FVoxelData> ExtractedVoxelData;
+    int32 ValidVoxels = 0;
+    
+    for (const FIntVector& Pos : IslandData.Voxels)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Failed to extract island or ExtractedGrid is null."));
-        
-        // Restore from backup if needed
-/*        if (bMakeBackupBeforeExtraction && OriginalGridBackup)
+        FVoxelData* Data = VoxelGrid->GetVoxelData(Pos);
+        if (Data)
         {
-            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Restoring grid from backup."));
-            Chunk->SetSparseVoxelGrid(OriginalGridBackup);
-        }*/
-        
+            ExtractedVoxelData.Add(Pos, *Data);
+            ValidVoxels++;
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Island voxel at %s not found in grid"), *Pos.ToString());
+        }
+    }
+    
+    if (ValidVoxels == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] No valid voxel data found for island."));
         return Result;
     }
     
-    // Ensure the extracted grid has the necessary references
-    /*ExtractedGrid->ParentChunk = nullptr; // Don't want to affect the original chunk
-    ExtractedGrid->DiggerManager = this;*/
+    // Convert Voxels array to set for faster lookups when checking boundaries
+    TSet<FIntVector> IslandVoxelSet(IslandData.Voxels);
+    
+    // Add boundary voxels for proper mesh generation
+    TSet<FIntVector> BoundaryVoxels;
+    for (const FIntVector& SolidVoxel : IslandData.Voxels)
+    {
+        for (int32 i = 0; i < 6; i++)
+        {
+            FIntVector Neighbor = SolidVoxel + FVoxelConversion::GetDirectionVector(i);
+            
+            // Only add boundary if it's not part of the island and not already added
+            if (!IslandVoxelSet.Contains(Neighbor) && !BoundaryVoxels.Contains(Neighbor))
+            {
+                BoundaryVoxels.Add(Neighbor);
+                
+                // Check if this neighbor exists in the original grid
+                FVoxelData* NeighborData = VoxelGrid->GetVoxelData(Neighbor);
+                if (NeighborData)
+                {
+                    ExtractedVoxelData.Add(Neighbor, *NeighborData);
+                }
+                // Missing neighbors are implicitly AIR in sparse grid
+            }
+        }
+    }
+    
+    // Set all the voxel data at once
+    ExtractedGrid->SetVoxelData(ExtractedVoxelData);
     ExtractedGrid->Initialize(nullptr);
     
-    // Generate mesh
-    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Starting mesh generation using Marching Cubes."));
+    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Extracted grid contains %d voxels (%d solid + %d boundary)"), 
+           ExtractedVoxelData.Num(), ValidVoxels, BoundaryVoxels.Num());
     
+    // Generate mesh using marching cubes
     MarchingCubes->GenerateMeshFromGrid(
         ExtractedGrid, ChunkOrigin, VoxelSize,
         Result.Vertices, Result.Triangles, Result.Normals
     );
     
-    // Finalize result
     Result.MeshOrigin = ChunkOrigin;
     Result.bValid = (Result.Vertices.Num() > 0 && Result.Triangles.Num() > 0);
     
-    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Mesh generation complete. Valid: %s, Vertices: %d, Triangles: %d"),
-        Result.bValid ? TEXT("true") : TEXT("false"),
+    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Island mesh generation complete. Valid Voxels: %d, Vertices: %d, Triangles: %d"),
+        ValidVoxels,
         Result.Vertices.Num(),
         Result.Triangles.Num() / 3
     );
     
-    // Mark the chunk as dirty to trigger a rebuild
-    Chunk->MarkDirty();
-    
     return Result;
 }
-
-
-
 
 void ADiggerManager::ClearAllIslandActors()
 {
@@ -1735,6 +2213,8 @@ void ADiggerManager::BeginPlay()
 
     UE_LOG(LogTemp, Warning, TEXT("=== PIE STARTED - CHUNK STATUS ==="));
     UE_LOG(LogTemp, Warning, TEXT("ChunkMap contains %d chunks"), ChunkMap.Num());
+
+    QuickDebugTest();
     
     int ChunkCount = 0;
     for (auto& ChunkPair : ChunkMap)
@@ -2078,7 +2558,7 @@ void ADiggerManager::InitializeSingleChunk(UVoxelChunk* Chunk)
         return;
     }
 
-    FIntVector Coordinates = Chunk->GetChunkPosition();
+    FIntVector Coordinates = Chunk->GetChunkCoordinates();
     UProceduralMeshComponent* NewMeshComponent = NewObject<UProceduralMeshComponent>(this);
     if (NewMeshComponent)
     {
@@ -2331,24 +2811,34 @@ TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Landscap
 }
 
 
-
+/* //Deprecated diggerManager height cach version of SampleLandscapeHeight
 TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos)
 {
+    // Null check for Landscape
+    if (!Landscape || !IsValid(Landscape))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SampleLandscapeHeight: Invalid Landscape pointer"));
+        return TOptional<float>();
+    }
+
     // Check if we have a valid cache for the landscape height
     if (LandscapeHeightCaches.Contains(Landscape))
     {
-        const FVector LandscapeLocal = Landscape->GetTransform().InverseTransformPosition(WorldPos);
-        int32 X = FMath::FloorToInt(LandscapeLocal.X / VoxelSize);
-        int32 Y = FMath::FloorToInt(LandscapeLocal.Y / VoxelSize);
-
-        // Get the cached height for the corresponding grid location
-        TMap<FIntPoint, float>& CachedHeights = *LandscapeHeightCaches[Landscape];
-        FIntPoint Key(X, Y);
-
-        if (CachedHeights.Contains(Key))
+        // SAFE ACCESS: Get the pointer first and null check it
+        TSharedPtr<TMap<FIntPoint, float>>* CachePtr = LandscapeHeightCaches.Find(Landscape);
+        if (CachePtr && CachePtr->IsValid())
         {
-            // Return cached height if present
-            return CachedHeights[Key];
+            const FVector LandscapeLocal = Landscape->GetTransform().InverseTransformPosition(WorldPos);
+            int32 X = FMath::FloorToInt(LandscapeLocal.X / VoxelSize);
+            int32 Y = FMath::FloorToInt(LandscapeLocal.Y / VoxelSize);
+
+            TMap<FIntPoint, float>& CachedHeights = **CachePtr;
+            FIntPoint Key(X, Y);
+
+            if (CachedHeights.Contains(Key))
+            {
+                return CachedHeights[Key];
+            }
         }
     }
 
@@ -2360,13 +2850,17 @@ TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Landscap
         // If sampled height is valid, cache it and return
         if (LandscapeHeightCaches.Contains(Landscape))
         {
-            FVector LandscapeLocal = Landscape->GetTransform().InverseTransformPosition(WorldPos);
-            int32 X = FMath::FloorToInt(LandscapeLocal.X / VoxelSize);
-            int32 Y = FMath::FloorToInt(LandscapeLocal.Y / VoxelSize);
+            TSharedPtr<TMap<FIntPoint, float>>* CachePtr = LandscapeHeightCaches.Find(Landscape);
+            if (CachePtr && CachePtr->IsValid())
+            {
+                FVector LandscapeLocal = Landscape->GetTransform().InverseTransformPosition(WorldPos);
+                int32 X = FMath::FloorToInt(LandscapeLocal.X / VoxelSize);
+                int32 Y = FMath::FloorToInt(LandscapeLocal.Y / VoxelSize);
 
-            TMap<FIntPoint, float>& CachedHeights = *LandscapeHeightCaches[Landscape];
-            FIntPoint Key(X, Y);
-            CachedHeights.Add(Key, SampledHeight.GetValue());
+                TMap<FIntPoint, float>& CachedHeights = **CachePtr;
+                FIntPoint Key(X, Y);
+                CachedHeights.Add(Key, SampledHeight.GetValue());
+            }
         }
 
         return SampledHeight;
@@ -2374,9 +2868,53 @@ TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Landscap
 
     // If sampling from the terrain fails, return a fallback value
     UE_LOG(LogTemp, Warning, TEXT("Failed to sample terrain height at %s"), *WorldPos.ToString());
-    return TOptional<float>();  // Can return a fallback value here if needed
+    return TOptional<float>();
+}
+*/
+// Currently used precise Height Sampling Method
+TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos)
+{
+    // Null check for Landscape
+    if (!Landscape || !IsValid(Landscape))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SampleLandscapeHeight: Invalid Landscape pointer"));
+        return TOptional<float>();
+    }
+
+    // Always use direct sampling - bypass cache completely
+    TOptional<float> SampledHeight = Landscape->GetHeightAtLocation(WorldPos);
+    
+    if (SampledHeight.IsSet())
+    {
+        return SampledHeight;
+    }
+
+    // If sampling from the terrain fails, return a fallback value
+    UE_LOG(LogTemp, Warning, TEXT("Failed to sample terrain height at %s"), *WorldPos.ToString());
+    return TOptional<float>();
 }
 
+// Delete this please after it works well!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+// In DiggerManager.cpp  
+void ADiggerManager::QuickDebugTest()
+{
+    UE_LOG(LogTemp, Warning, TEXT("Testing Fast Debug Renderer..."));
+    
+    // Test single shapes
+    FAST_DEBUG_BOX(FVector(0, 0, 200), FVector(100), FLinearColor::Red);
+    FAST_DEBUG_SPHERE(FVector(300, 0, 200), 75.0f, FLinearColor::Green);
+    
+    // Test batch rendering (the real performance boost)
+    TArray<FVector> TestLocations;
+    for (int32 i = 0; i < 100; i++)
+    {
+        TestLocations.Add(FVector(i * 50, 0, 100));
+    }
+    
+    FAST_DEBUG_BOXES_BATCH(TestLocations, FVector(25), FLinearColor::Blue);
+    
+    UE_LOG(LogTemp, Warning, TEXT("Fast Debug Test Complete - Should see red box, green sphere, and 100 blue boxes"));
+}
 
 
 float ADiggerManager::GetSmartLandscapeHeightAt(const FVector& WorldPos)
@@ -2490,6 +3028,8 @@ UWorld* ADiggerManager::GetSafeWorld() const
     {
         return GEditor->GetEditorWorldContext().World();
     }
+#else
+    return GetWorld();
 #endif
     return GetWorld();
 }
@@ -2697,14 +3237,16 @@ void ADiggerManager::DebugVoxels()
 
 void ADiggerManager::ProcessDirtyChunks()
 {
-    for (auto& Elem : ChunkMap)
-    {
-        UVoxelChunk* Chunk = Elem.Value;
-        if (Chunk)
-        {
-            Chunk->ForceUpdate();
-        }
-    }
+    // for (auto& Elem : ChunkMap)
+    // {
+    //     UVoxelChunk* Chunk = Elem.Value;
+    //     if (Chunk)
+    //     {
+    //         Chunk->ForceUpdate();
+    //     }
+    // }
+
+    UpdateAllDirtyChunks();
 
     /*if (World)
     {
@@ -2787,7 +3329,7 @@ void ADiggerManager::DebugDrawChunkSectionIDs()
         if (Chunk)
         {
             Chunk->GetSparseVoxelGrid()->RenderVoxels();
-            const FVector ChunkPosition = FVoxelConversion::ChunkToWorld(Chunk->GetChunkPosition());
+            const FVector ChunkPosition = FVoxelConversion::ChunkToWorld(Chunk->GetChunkCoordinates());
             const FString SectionIDText = FString::Printf(TEXT("ID: %d"), Chunk->GetSectionIndex());
             DrawDebugString(GetSafeWorld(), ChunkPosition, SectionIDText, nullptr, FColor::Green, 5.0f, true);
         }
@@ -2839,7 +3381,7 @@ UVoxelChunk* ADiggerManager::FindOrCreateNearestChunk(const FVector& Position)
         UVoxelChunk* Chunk = Entry.Value;
         if (!Chunk) continue;
 
-        FVector WorldPos = FVoxelConversion::ChunkToWorld(Chunk->GetChunkPosition());
+        FVector WorldPos = FVoxelConversion::ChunkToWorld(Chunk->GetChunkCoordinates());
         float Distance = FVector::Dist(Position, WorldPos);
 
         if (Distance < MinDistance)
@@ -2884,7 +3426,7 @@ UVoxelChunk* ADiggerManager::FindNearestChunk(const FVector& Position)
     float MinDistance = FLT_MAX;
     for (auto& Entry : ChunkMap)
     {
-        FVector WorldPos = FVoxelConversion::ChunkToWorld(Entry.Value->GetChunkPosition());
+        FVector WorldPos = FVoxelConversion::ChunkToWorld(Entry.Value->GetChunkCoordinates());
         float Distance = FVector::Dist(Position, WorldPos);
         if (Distance < MinDistance)
         {
@@ -2924,6 +3466,132 @@ void ADiggerManager::MarkNearbyChunksDirty(const FVector& CenterPosition, float 
             }
         }
     }
+}
+
+TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
+{
+    // Step 1: Build NON-DEDUPLICATED voxel map with ALL physical instances
+    TMap<FIntVector, FVoxelData> UnifiedVoxelData; // This will be deduplicated for island detection
+    TArray<FVoxelInstance> AllPhysicalVoxelInstances; // This preserves ALL instances including overflow
+    
+    for (const auto& Pair : ChunkMap)
+    {
+        UVoxelChunk* Chunk = Pair.Value;
+        if (!Chunk || !Chunk->IsValidLowLevel()) continue;
+
+        USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
+        if (!Grid || !Grid->IsValidLowLevel()) continue;
+
+        FIntVector ChunkCoords = Chunk->GetChunkCoordinates();
+
+        for (const auto& VoxelPair : Grid->GetAllVoxels())
+        {
+            const FIntVector& LocalIndex = VoxelPair.Key;
+            const FVoxelData& Data = VoxelPair.Value;
+
+            FIntVector GlobalIndex = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(ChunkCoords, LocalIndex);
+            
+            // Store for deduplicated island detection
+            UnifiedVoxelData.Add(GlobalIndex, Data);
+            
+            // Store ALL physical instances (including overflow duplicates)
+            FVoxelInstance Instance(GlobalIndex, ChunkCoords, LocalIndex);
+            AllPhysicalVoxelInstances.Add(Instance);
+            
+            // Special logging for negative overflow voxels
+            if (LocalIndex.X == -1 || LocalIndex.Y == -1 || LocalIndex.Z == -1)
+            {
+                if (DiggerDebug::Islands)
+                UE_LOG(LogTemp, Warning, 
+                    TEXT("[DiggerPro] NEGATIVE OVERFLOW DETECTED: Global %s -> Chunk %s -> Local %s"),
+                    *GlobalIndex.ToString(), *ChunkCoords.ToString(), *LocalIndex.ToString());
+            }
+        }
+    }
+
+    if (DiggerDebug::Islands)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Total physical voxel instances collected: %d"), AllPhysicalVoxelInstances.Num());
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Deduplicated voxels for island detection: %d"), UnifiedVoxelData.Num());
+    }
+    
+    // Step 2: Create temporary sparse voxel grid for island detection (using deduplicated data)
+    USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
+    TempGrid->SetVoxelData(UnifiedVoxelData);
+
+    // Step 3: Detect islands globally (this gives us deduplicated island boundaries)
+    TArray<FIslandData> DeduplicatedIslands = TempGrid->DetectIslands(0.0f);
+
+    // Step 4: For each deduplicated island, collect ALL physical instances that belong to it
+    TArray<FIslandData> FinalIslands;
+    
+    for (const FIslandData& DeduplicatedIsland : DeduplicatedIslands)
+    {
+        FIslandData EnhancedIsland;
+        
+        // Copy the deduplicated island info for UI reporting
+        EnhancedIsland.Location = DeduplicatedIsland.Location;
+        EnhancedIsland.VoxelCount = DeduplicatedIsland.VoxelCount; // This is the deduplicated count for UI
+        EnhancedIsland.Voxels = DeduplicatedIsland.Voxels; // Deduplicated global voxels for UI
+        EnhancedIsland.ReferenceVoxel = DeduplicatedIsland.ReferenceVoxel;
+        
+        // Now find ALL physical instances that belong to this island
+        TSet<FIntVector> IslandGlobalVoxels(DeduplicatedIsland.Voxels);
+        
+        for (const FVoxelInstance& Instance : AllPhysicalVoxelInstances)
+        {
+            // If this physical instance belongs to the current island, include it
+            if (IslandGlobalVoxels.Contains(Instance.GlobalVoxel))
+            {
+                EnhancedIsland.VoxelInstances.Add(Instance);
+                
+                // Special logging for negative overflow voxels being added to islands
+                if (Instance.LocalVoxel.X == -1 || Instance.LocalVoxel.Y == -1 || Instance.LocalVoxel.Z == -1)
+                {
+                    if (DiggerDebug::Islands)
+                    UE_LOG(LogTemp, Warning, 
+                        TEXT("[DiggerPro] NEGATIVE OVERFLOW ADDED TO ISLAND: Global %s -> Chunk %s -> Local %s"),
+                        *Instance.GlobalVoxel.ToString(), *Instance.ChunkCoords.ToString(), *Instance.LocalVoxel.ToString());
+                }
+            }
+            else if (Instance.LocalVoxel.X == -1 || Instance.LocalVoxel.Y == -1 || Instance.LocalVoxel.Z == -1)
+            {
+                // Log negative overflow voxels that DON'T belong to any island
+                if (DiggerDebug::Islands)
+                UE_LOG(LogTemp, Error, 
+                    TEXT("[DiggerPro] ORPHANED NEGATIVE OVERFLOW: Global %s -> Chunk %s -> Local %s (not in any island)"),
+                    *Instance.GlobalVoxel.ToString(), *Instance.ChunkCoords.ToString(), *Instance.LocalVoxel.ToString());
+            }
+        }
+        
+        FinalIslands.Add(EnhancedIsland);
+
+        if (DiggerDebug::Islands)
+        UE_LOG(LogTemp, Warning, 
+            TEXT("[DiggerPro] Island complete: %d unique voxels (UI) -> %d total physical instances (removal)"),
+            EnhancedIsland.VoxelCount, EnhancedIsland.VoxelInstances.Num());
+    }
+
+    // Step 5: Broadcast ONLY the deduplicated islands to UI (clean reporting)
+    OnIslandsDetectionStarted.Broadcast();
+
+    for (const FIslandData& Island : FinalIslands)
+    {
+        // Create a clean version for broadcasting (no VoxelInstances array)
+        FIslandData BroadcastIsland;
+        BroadcastIsland.Location = Island.Location;
+        BroadcastIsland.VoxelCount = Island.VoxelCount; // Deduplicated count
+        BroadcastIsland.Voxels = Island.Voxels; // Deduplicated voxels
+        BroadcastIsland.ReferenceVoxel = Island.ReferenceVoxel;
+        
+        OnIslandDetected.Broadcast(BroadcastIsland);
+        if (DiggerDebug::Islands)
+        UE_LOG(LogTemp, Warning, TEXT("Unified Island Broadcast at %s with %d voxels"),
+            *BroadcastIsland.Location.ToString(), BroadcastIsland.VoxelCount);
+    }
+
+    // Step 6: Return enhanced islands with ALL physical instances for removal
+    return FinalIslands;
 }
 
 
@@ -2974,172 +3642,284 @@ UVoxelChunk* ADiggerManager::GetOrCreateChunkAtWorld(const FVector& WorldPositio
     return GetOrCreateChunkAtChunk(ChunkCoords);
 }
 
-TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
-{
-    // Step 1: Build global voxel map from all chunks
-    TMap<FIntVector, FVoxelData> UnifiedVoxelData;
-
-    for (const auto& Pair : ChunkMap)
-    {
-        UVoxelChunk* Chunk = Pair.Value;
-        if (!Chunk || !Chunk->IsValidLowLevel()) continue;
-
-        USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
-        if (!Grid || !Grid->IsValidLowLevel()) continue;
-
-        FIntVector ChunkCoords = Chunk->GetChunkPosition();
-
-        for (const auto& VoxelPair : Grid->GetAllVoxels())
-        {
-            const FIntVector& LocalIndex = VoxelPair.Key;
-            const FVoxelData& Data = VoxelPair.Value;
-
-            FIntVector GlobalIndex = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(ChunkCoords, LocalIndex);
-            UnifiedVoxelData.Add(GlobalIndex, Data);
-        }
-    }
-
-    // Step 2: Create temporary sparse voxel grid
-    USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
-    TempGrid->SetVoxelData(UnifiedVoxelData);
-
-    // Step 3: Detect islands globally
-    TArray<FIslandData> Islands = TempGrid->DetectIslands(0.0f);
-
-    // Step 4: Broadcast to toolkit
-    OnIslandsDetectionStarted.Broadcast();
-
-    for (const FIslandData& Island : Islands)
-    {
-        OnIslandDetected.Broadcast(Island);
-        UE_LOG(LogTemp, Warning, TEXT("Unified Island Broadcast at %s with %d voxels"),
-            *Island.Location.ToString(), Island.VoxelCount);
-    }
-
-    return Islands;
-}
 
 void ADiggerManager::RemoveUnifiedIslandVoxels(const FIslandData& Island)
 {
-    TMap<FIntVector, TArray<FIntVector>> ChunkBuckets;
+    int32 TotalRemoved = 0;
+    TSet<UVoxelChunk*> ChunksToUpdate;
 
-    // Step 1: Convert to chunk-local buckets
-    for (const FIntVector& GlobalVoxel : Island.Voxels)
+    if (DiggerDebug::Islands || DiggerDebug::Voxels || DiggerDebug::Chunks)
+    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Starting unified island removal with %d pre-computed voxel instances"), Island.VoxelInstances.Num());
+    
+    // Group voxel instances by their storage chunks for efficient batch removal
+    TMap<UVoxelChunk*, TArray<FIntVector>> VoxelsByChunk;
+    
+    // Simply iterate through the pre-computed voxel instances
+    for (const FVoxelInstance& Instance : Island.VoxelInstances)
     {
-        FIntVector ChunkCoords, LocalVoxel;
-        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, ChunkCoords, LocalVoxel);
-        ChunkBuckets.FindOrAdd(ChunkCoords).Add(LocalVoxel);
-    }
-
-    // Step 2: Prepare affected chunks in parallel
-    TArray<FIntVector> ChunkKeys;
-    ChunkBuckets.GetKeys(ChunkKeys);
-
-    TArray<UVoxelChunk*> ChunksToUpdate;
-
-    ParallelFor(ChunkKeys.Num(), [this, &ChunkBuckets, &ChunkKeys, &ChunksToUpdate](int32 Index)
-    {
-        const FIntVector& ChunkCoords = ChunkKeys[Index];
-
-        UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
-        if (!ChunkPtr || !*ChunkPtr) return;
-
-        // Preload chunk for update
-        FScopeLock Lock(&UpdateChunksCriticalSection); // Protect array
-        ChunksToUpdate.Add(*ChunkPtr);
-    });
-
-    // Step 3: Run deletions AFTER parallel prep
-    TArray<FIntVector> DeletedGlobalVoxels;
-
-    for (const FIntVector& GlobalVoxel : Island.Voxels)
-    {
-        FIntVector ChunkCoords, LocalVoxel;
-        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, ChunkCoords, LocalVoxel);
-
-        UVoxelChunk* Chunk = ChunkMap.FindRef(ChunkCoords);
-        if (!Chunk || !Chunk->IsValidLowLevel()) continue;
-
-        USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
-        if (!Grid || !Grid->IsValidLowLevel()) continue;
-
-        if (Grid->RemoveVoxel(LocalVoxel))
+        UVoxelChunk* Chunk = ChunkMap.FindRef(Instance.ChunkCoords);
+        if (!Chunk || !Chunk->IsValidLowLevel()) 
         {
-            DeletedGlobalVoxels.Add(GlobalVoxel); // Cache for diagnostics or wake logic
+            if (DiggerDebug::Chunks || DiggerDebug::Error)
+            UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Chunk %s not found or invalid"), *Instance.ChunkCoords.ToString());
+            continue;
+        }
+        
+        USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
+        if (!Grid || !Grid->IsValidLowLevel()) 
+        {
+            if (DiggerDebug::Islands || DiggerDebug::Voxels || DiggerDebug::Chunks)
+            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Grid for chunk %s not found or invalid"), *Instance.ChunkCoords.ToString());
+            continue;
+        }
+        
+        // Verify the voxel still exists before adding to removal list
+        if (Grid->HasVoxelAt(Instance.LocalVoxel))
+        {
+            VoxelsByChunk.FindOrAdd(Chunk).Add(Instance.LocalVoxel);
+            ChunksToUpdate.Add(Chunk);
+            
+            // Special logging for negative overflow voxels being queued for removal
+            if (Instance.LocalVoxel.X == -1 || Instance.LocalVoxel.Y == -1 || Instance.LocalVoxel.Z == -1)
+            {
+                if (DiggerDebug::Islands || DiggerDebug::Voxels || DiggerDebug::Chunks)
+                UE_LOG(LogTemp, Warning, 
+                    TEXT("[DiggerPro] NEGATIVE OVERFLOW QUEUED FOR REMOVAL: Global %s -> Chunk %s -> Local %s"),
+                    *Instance.GlobalVoxel.ToString(), *Instance.ChunkCoords.ToString(), *Instance.LocalVoxel.ToString());
+            }
+        }
+        else
+        {
+            if (DiggerDebug::Islands || DiggerDebug::Voxels || DiggerDebug::Chunks)
+            UE_LOG(LogTemp, Warning, 
+                TEXT("[DiggerPro] Voxel not found at Local %s in chunk %s (Global %s)"),
+                *Instance.LocalVoxel.ToString(), *Instance.ChunkCoords.ToString(), *Instance.GlobalVoxel.ToString());
         }
     }
-
-    // Step 4: Mesh updates
-    for (UVoxelChunk* Chunk : ChunksToUpdate)
+    
+    // Perform batch removal on each affected chunk
+    for (auto& ChunkVoxelPair : VoxelsByChunk)
     {
+        UVoxelChunk* Chunk = ChunkVoxelPair.Key;
+        TArray<FIntVector>& LocalVoxels = ChunkVoxelPair.Value;
+        TArray<FIntVector>& NonOverflowVoxels = ChunkVoxelPair.Value;
+        
         if (Chunk && Chunk->IsValidLowLevel())
         {
-            Chunk->GetSparseVoxelGrid()->SetVoxel(FIntVector(0),Chunk->GetSparseVoxelGrid()->GetVoxel(FIntVector(0)),true);
-            Chunk->ForceUpdate();
-        }
-    }
-
-    // Step 5: Debug info
-    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Unified island removal: %d voxels deleted, %d chunks updated"), 
-           DeletedGlobalVoxels.Num(), ChunksToUpdate.Num());
-}
-
-
-
-// In ADiggerManager.cpp
-/*
-TArray<FIslandData> ADiggerManager::GetAllIslands() const
-{
-    // Create a local array to collect islands before broadcasting
-    TArray<FIslandData> AllIslands;
-    TMap<FIntVector, FIslandData> UniqueIslands;
-    
-    // First collect all islands without broadcasting
-    for (const auto& ChunkPair : ChunkMap)
-    {
-        UVoxelChunk* Chunk = ChunkPair.Value;
-        if (!Chunk || !Chunk->IsValidLowLevel())
-            continue;
-            
-        USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
-        if (!Grid || !Grid->IsValidLowLevel())
-            continue;
-            
-        TArray<FIslandData> ChunkIslands = Grid->DetectIslands(0.0f);
-        for (const FIslandData& Island : ChunkIslands)
-        {
-            FIntVector Center = FIntVector(
-                FMath::RoundToInt(Island.Location.X),
-                FMath::RoundToInt(Island.Location.Y),
-                FMath::RoundToInt(Island.Location.Z)
-            );
-            if (!UniqueIslands.Contains(Center))
+            USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
+            if (Grid && Grid->IsValidLowLevel())
             {
-                UniqueIslands.Add(Center, Island);
+                if (DiggerDebug::Islands || DiggerDebug::Voxels || DiggerDebug::Chunks)
+                UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Removing %d voxel instances from chunk at %s"), 
+                    LocalVoxels.Num(), *Chunk->GetChunkCoordinates().ToString());
+                
+                // Count negative overflow voxels being removed
+                int32 NegativeOverflowCount = 0;
+                for (const FIntVector& LocalVoxel : LocalVoxels)
+                {
+                    if (LocalVoxel.X == -1 || LocalVoxel.Y == -1 || LocalVoxel.Z == -1)
+                    {
+                        NegativeOverflowCount++;
+                        if (DiggerDebug::Islands || DiggerDebug::Voxels || DiggerDebug::Chunks)
+                        UE_LOG(LogTemp, Warning, 
+                            TEXT("[DiggerPro] REMOVING NEGATIVE OVERFLOW: Local %s from chunk %s"),
+                            *LocalVoxel.ToString(), *Chunk->GetChunkCoordinates().ToString());
+                    }
+                }
+                
+                if (NegativeOverflowCount > 0)
+                {
+                    if (DiggerDebug::Islands || DiggerDebug::Voxels || DiggerDebug::Chunks)
+                    UE_LOG(LogTemp, Warning, 
+                        TEXT("[DiggerPro] About to remove %d negative overflow voxels from chunk %s"),
+                        NegativeOverflowCount, *Chunk->GetChunkCoordinates().ToString());
+                }
+                    
+                Grid->RemoveSpecifiedVoxels(LocalVoxels);
+                TotalRemoved += LocalVoxels.Num();
+                if (DiggerDebug::Islands || DiggerDebug::Voxels || DiggerDebug::Chunks)
+                UE_LOG(LogTemp, Warning, 
+                    TEXT("[DiggerPro] Successfully removed %d voxels from chunk %s"),
+                    LocalVoxels.Num(), *Chunk->GetChunkCoordinates().ToString());
             }
         }
     }
     
-    // Generate the final array
-    UniqueIslands.GenerateValueArray(AllIslands);
-    
-    // Now it's safe to broadcast
-#if WITH_EDITOR
-    // First notify listeners to clear existing islands
-    OnIslandsDetectionStarted.Broadcast();
-    
-    // Then broadcast each island
-    for (const FIslandData& Island : AllIslands)
+    // Update all affected chunks to regenerate meshes
+    for (UVoxelChunk* Chunk : ChunksToUpdate)
     {
-        OnIslandDetected.Broadcast(Island);
-        if (DiggerDebug::Islands)
-            {UE_LOG(LogTemp, Error, TEXT("Island Broadcast Sent!"));}
+        if (Chunk && Chunk->IsValidLowLevel())
+        {
+            Chunk->ForceUpdate();
+        }
     }
-#endif
-
-    return AllIslands;
+    if (DiggerDebug::Islands || DiggerDebug::Chunks || DiggerDebug::Voxels)
+    UE_LOG(LogTemp, Warning,
+        TEXT("[DiggerPro] Unified island removal complete: %d voxel instances removed across %d chunks"),
+        TotalRemoved, ChunksToUpdate.Num());
 }
-*/
+
+// New helper method to perform flood fill across chunk boundaries
+TSet<FIntVector> ADiggerManager::PerformCrossChunkFloodFill(const FIntVector& StartGlobalVoxel)
+{
+    TSet<FIntVector> VisitedVoxels;
+    TQueue<FIntVector> VoxelsToCheck;
+    
+    // Start the flood fill
+    VoxelsToCheck.Enqueue(StartGlobalVoxel);
+    
+    while (!VoxelsToCheck.IsEmpty())
+    {
+        FIntVector CurrentGlobal;
+        VoxelsToCheck.Dequeue(CurrentGlobal);
+        
+        if (VisitedVoxels.Contains(CurrentGlobal))
+            continue;
+            
+        // Check if this global voxel is solid in any storage chunk
+        bool bFoundSolidVoxel = false;
+        TArray<FIntVector> StorageChunkCoords = GetAllPhysicalStorageChunks(CurrentGlobal);
+        
+        for (const FIntVector& ChunkCoord : StorageChunkCoords)
+        {
+            UVoxelChunk* Chunk = ChunkMap.FindRef(ChunkCoord);
+            if (!Chunk || !Chunk->IsValidLowLevel()) continue;
+            
+            USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
+            if (!Grid || !Grid->IsValidLowLevel()) continue;
+            
+            // Convert global to local coordinates for this candidate chunk
+            FIntVector LocalVoxel, OutChunkCoord;
+            FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(
+                CurrentGlobal,
+                OutChunkCoord,
+                LocalVoxel
+            );
+            
+            if (Grid->HasVoxelAt(LocalVoxel) && Grid->IsVoxelSolid(LocalVoxel))
+            {
+                bFoundSolidVoxel = true;
+                break;
+            }
+        }
+        
+        if (!bFoundSolidVoxel)
+            continue;
+            
+        // Mark as visited and add neighbors
+        VisitedVoxels.Add(CurrentGlobal);
+        
+        // Check all 6 neighboring voxels
+        static const FIntVector Neighbors[6] = {
+            FIntVector(1, 0, 0), FIntVector(-1, 0, 0),
+            FIntVector(0, 1, 0), FIntVector(0, -1, 0),
+            FIntVector(0, 0, 1), FIntVector(0, 0, -1)
+        };
+        
+        for (const FIntVector& Offset : Neighbors)
+        {
+            FIntVector NeighborGlobal = CurrentGlobal + Offset;
+            if (!VisitedVoxels.Contains(NeighborGlobal))
+            {
+                VoxelsToCheck.Enqueue(NeighborGlobal);
+            }
+        }
+    }
+    
+    return VisitedVoxels;
+}
+
+// Helper method to find ALL chunks that actually contain this voxel
+// This includes the canonical owner AND adjacent chunks with overflow slabs
+TArray<FIntVector> ADiggerManager::GetAllPhysicalStorageChunks(const FIntVector& GlobalVoxel)
+{
+    TArray<FIntVector> StorageChunks;
+    
+    // Start with the canonical owning chunk
+    FIntVector CanonicalChunk, LocalVoxelOut;
+    FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, CanonicalChunk, LocalVoxelOut);
+    
+    // Check all 27 possible chunks (canonical + 26 neighbors) to see which ones actually store this voxel
+    for (int32 dx = -1; dx <= 1; dx++)
+    {
+        for (int32 dy = -1; dy <= 1; dy++)
+        {
+            for (int32 dz = -1; dz <= 1; dz++)
+            {
+                FIntVector CandidateChunk = CanonicalChunk + FIntVector(dx, dy, dz);
+                
+                // Check if this chunk exists and actually contains the voxel
+                UVoxelChunk* Chunk = ChunkMap.FindRef(CandidateChunk);
+                if (!Chunk || !Chunk->IsValidLowLevel()) continue;
+                
+                USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
+                if (!Grid || !Grid->IsValidLowLevel()) continue;
+                
+                // Convert global to local coordinates for this candidate chunk
+                FIntVector LocalVoxel;
+                FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(
+                    GlobalVoxel,
+                    CandidateChunk,
+                    LocalVoxel
+                );
+                
+                // If this chunk actually has the voxel, add it to storage list
+                if (Grid->HasVoxelAt(LocalVoxel))
+                {
+                    StorageChunks.AddUnique(CandidateChunk);
+
+                    if (DiggerDebug::Chunks || DiggerDebug::Voxels)
+                    UE_LOG(LogTemp, Warning, 
+                        TEXT("[DiggerPro] Global voxel %s found in chunk %s at local %s"),
+                        *GlobalVoxel.ToString(), *CandidateChunk.ToString(), *LocalVoxel.ToString());
+                }
+                else
+                {
+                    if (DiggerDebug::Chunks || DiggerDebug::Voxels)
+                    // Debug: Log when we don't find expected voxels
+                    UE_LOG(LogTemp, VeryVerbose, 
+                        TEXT("[DiggerPro] Global voxel %s NOT found in chunk %s (would be local %s)"),
+                        *GlobalVoxel.ToString(), *CandidateChunk.ToString(), *LocalVoxel.ToString());
+                }
+            }
+        }
+    }
+    
+    // If we didn't find the voxel anywhere, this is a problem!
+    if (StorageChunks.Num() == 0)
+    {
+        if (DiggerDebug::Chunks || DiggerDebug::Voxels)
+        UE_LOG(LogTemp, Error, 
+            TEXT("[DiggerPro] CRITICAL: Global voxel %s was not found in any chunk! Canonical chunk: %s"),
+            *GlobalVoxel.ToString(), *CanonicalChunk.ToString());
+    }
+    
+    return StorageChunks;
+}
+
+TArray<FIntVector> ADiggerManager::GetPossibleOwningChunks(const FIntVector& GlobalIndex)
+{
+    TArray<FIntVector> PossibleChunks;
+
+    // Scan all 8 neighboring chunks where this voxel might overflow into
+    for (int32 dx = 0; dx <= 1; dx++)
+        for (int32 dy = 0; dy <= 1; dy++)
+            for (int32 dz = 0; dz <= 1; dz++)
+            {
+                FIntVector Offset(dx, dy, dz);
+                FIntVector AdjustedGlobal = GlobalIndex - Offset;
+
+                FIntVector CandidateChunkCoords, LocalVoxel;
+                FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(AdjustedGlobal, CandidateChunkCoords, LocalVoxel);
+
+                if (ChunkMap.Contains(CandidateChunkCoords))
+                {
+                    PossibleChunks.Add(CandidateChunkCoords);
+                }
+            }
+
+    return PossibleChunks;
+}
 
 
 #if WITH_EDITOR
@@ -3205,10 +3985,12 @@ void ADiggerManager::EnsureVoxelDataDirectoryExists() const
     {
         if (PlatformFile.CreateDirectoryTree(*VoxelDataPath))
         {
+            if (DiggerDebug::IO)
             UE_LOG(LogTemp, Log, TEXT("Created VoxelData directory at: %s"), *VoxelDataPath);
         }
         else
         {
+            if (DiggerDebug::IO)
             UE_LOG(LogTemp, Error, TEXT("Failed to create VoxelData directory at: %s"), *VoxelDataPath);
         }
     }
@@ -3234,99 +4016,8 @@ void ADiggerManager::Tick(float DeltaTime)
     // Your existing tick code...
 }
 
-FString ADiggerManager::GetChunkFilePath(const FIntVector& ChunkCoords) const
-{
-    FString FileName = FString::Printf(TEXT("Chunk_%d_%d_%d%s"), 
-        ChunkCoords.X, ChunkCoords.Y, ChunkCoords.Z, *CHUNK_FILE_EXTENSION);
-    
-    return FPaths::ProjectContentDir() / VOXEL_DATA_DIRECTORY / FileName;
-}
 
-bool ADiggerManager::DoesChunkFileExist(const FIntVector& ChunkCoords) const
-{
-    FString FilePath = GetChunkFilePath(ChunkCoords);
-    return FPaths::FileExists(FilePath);
-}
 
-bool ADiggerManager::SaveChunk(const FIntVector& ChunkCoords)
-{
-    EnsureVoxelDataDirectoryExists();
-    
-    UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
-    if (!ChunkPtr || !*ChunkPtr)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Cannot save chunk at %s - chunk not found in memory"), 
-            *ChunkCoords.ToString());
-        return false;
-    }
-    
-    UVoxelChunk* Chunk = *ChunkPtr;
-    FString FilePath = GetChunkFilePath(ChunkCoords);
-    
-    bool bSaveSuccess = Chunk->SaveChunkData(FilePath);
-    
-    if (bSaveSuccess)
-    {
-        UE_LOG(LogTemp, Log, TEXT("Successfully saved chunk %s"), *ChunkCoords.ToString());
-        
-        // Invalidate cache so it gets refreshed
-        InvalidateSavedChunkCache();
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("Failed to save chunk %s"), *ChunkCoords.ToString());
-    }
-    
-    return bSaveSuccess;
-}
-
-bool ADiggerManager::LoadChunk(const FIntVector& ChunkCoords)
-{
-    FString FilePath = GetChunkFilePath(ChunkCoords);
-    
-    if (!FPaths::FileExists(FilePath))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Cannot load chunk at %s - file does not exist"), 
-            *ChunkCoords.ToString());
-        return false;
-    }
-    
-    // Get or create the chunk
-    UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords);
-    if (!Chunk)
-    {
-        UE_LOG(LogTemp, Error, TEXT("Failed to get or create chunk at %s"), 
-            *ChunkCoords.ToString());
-        return false;
-    }
-    
-    // Load the chunk data
-    bool bLoadSuccess = Chunk->LoadChunkData(FilePath);
-    
-    if (bLoadSuccess)
-    {
-        UE_LOG(LogTemp, Log, TEXT("Successfully loaded chunk %s"), *ChunkCoords.ToString());
-        
-        // IMPORTANT: Force mesh regeneration after loading
-        Chunk->ForceUpdate();
-        
-        // Alternative: If you have a specific mesh update method, use that instead
-        // For example:
-        // if (USparseVoxelGrid* VoxelGrid = Chunk->GetSparseVoxelGrid())
-        // {
-        //     VoxelGrid->UpdateMesh();
-        // }
-        
-        UE_LOG(LogTemp, Log, TEXT("Triggered mesh regeneration for loaded chunk %s"), 
-            *ChunkCoords.ToString());
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("Failed to load chunk %s"), *ChunkCoords.ToString());
-    }
-    
-    return bLoadSuccess;
-}
 
 void ADiggerManager::CreateHoleAt(FVector WorldPosition, FRotator Rotation, FVector Scale, TSubclassOf<AActor> HoleBPClass)
 {
@@ -3348,77 +4039,6 @@ bool ADiggerManager::RemoveHoleNear(FVector WorldPosition, float MaxDistance)
     return false;
 }
 
-
-bool ADiggerManager::SaveAllChunks()
-{
-    EnsureVoxelDataDirectoryExists();
-    
-    if (ChunkMap.Num() == 0)
-    {
-        UE_LOG(LogTemp, Log, TEXT("No chunks to save - ChunkMap is empty"));
-        return true;
-    }
-    
-    int32 SavedCount = 0;
-    int32 FailedCount = 0;
-    
-    UE_LOG(LogTemp, Log, TEXT("Starting to save %d chunks..."), ChunkMap.Num());
-    
-    for (const auto& ChunkPair : ChunkMap)
-    {
-        const FIntVector& ChunkCoords = ChunkPair.Key;
-        
-        if (SaveChunk(ChunkCoords))
-        {
-            SavedCount++;
-        }
-        else
-        {
-            FailedCount++;
-        }
-    }
-    
-    UE_LOG(LogTemp, Log, TEXT("Finished saving chunks: %d successful, %d failed"), 
-        SavedCount, FailedCount);
-    
-    // Invalidate cache after batch save
-    InvalidateSavedChunkCache();
-    
-    return FailedCount == 0;
-}
-
-bool ADiggerManager::LoadAllChunks()
-{
-    TArray<FIntVector> SavedChunkCoords = GetAllSavedChunkCoordinates(true); // Force refresh
-    
-    if (SavedChunkCoords.Num() == 0)
-    {
-        UE_LOG(LogTemp, Log, TEXT("No saved chunks found to load"));
-        return true;
-    }
-    
-    int32 LoadedCount = 0;
-    int32 FailedCount = 0;
-    
-    UE_LOG(LogTemp, Log, TEXT("Starting to load %d chunks..."), SavedChunkCoords.Num());
-    
-    for (const FIntVector& ChunkCoords : SavedChunkCoords)
-    {
-        if (LoadChunk(ChunkCoords))
-        {
-            LoadedCount++;
-        }
-        else
-        {
-            FailedCount++;
-        }
-    }
-    
-    UE_LOG(LogTemp, Log, TEXT("Finished loading chunks: %d successful, %d failed"), 
-        LoadedCount, FailedCount);
-    
-    return FailedCount == 0;
-}
 
 
 TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates(bool bForceRefresh) const
@@ -3490,10 +4110,6 @@ void ADiggerManager::RefreshSavedChunkCache()
     }
 }
 
-void ADiggerManager::InvalidateSavedChunkCache()
-{
-    bSavedChunkCacheValid = false;
-}
 
 bool ADiggerManager::DeleteChunkFile(const FIntVector& ChunkCoords)
 {
@@ -3519,7 +4135,7 @@ bool ADiggerManager::DeleteChunkFile(const FIntVector& ChunkCoords)
         }
         
         // Invalidate cache after deletion
-        InvalidateSavedChunkCache();
+        InvalidateSavedChunkCache(FilePath);
     }
     else
     {
@@ -3528,6 +4144,7 @@ bool ADiggerManager::DeleteChunkFile(const FIntVector& ChunkCoords)
             UE_LOG(LogTemp, Error, TEXT("Failed to delete chunk file for chunk %s"), *ChunkCoords.ToString());
         }
     }
+    
     
     return bDeleteSuccess;
 }

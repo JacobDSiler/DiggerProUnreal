@@ -140,6 +140,58 @@ static FIntVector WorldToGlobalVoxel_CenterAligned(const FVector& WorldPos)
         OutLocalVoxel = GlobalVoxelCoords - ChunkOriginGlobalVoxel;
     }
 
+    // In FVoxelConversion class (likely in a header file)
+    static FIntVector GetDirectionVector(int32 Index)
+    {
+        // 6-directional connectivity (face neighbors only)
+        static const FIntVector Directions[6] = {
+            FIntVector(1, 0, 0),   // +X (Right)
+            FIntVector(-1, 0, 0),  // -X (Left)
+            FIntVector(0, 1, 0),   // +Y (Forward)
+            FIntVector(0, -1, 0),  // -Y (Backward)
+            FIntVector(0, 0, 1),   // +Z (Up)
+            FIntVector(0, 0, -1)   // -Z (Down)
+        };
+    
+        if (Index >= 0 && Index < 6)
+        {
+            return Directions[Index];
+        }
+    
+        return FIntVector::ZeroValue;
+    }
+
+    // Alternative 26-directional connectivity (if you need all neighbors including corners)
+    static FIntVector GetDirectionVector26(int32 Index)
+    {
+        static const FIntVector Directions[26] = {
+            // Face neighbors (6)
+            FIntVector(1, 0, 0), FIntVector(-1, 0, 0),
+            FIntVector(0, 1, 0), FIntVector(0, -1, 0),
+            FIntVector(0, 0, 1), FIntVector(0, 0, -1),
+        
+            // Edge neighbors (12)
+            FIntVector(1, 1, 0), FIntVector(1, -1, 0),
+            FIntVector(-1, 1, 0), FIntVector(-1, -1, 0),
+            FIntVector(1, 0, 1), FIntVector(1, 0, -1),
+            FIntVector(-1, 0, 1), FIntVector(-1, 0, -1),
+            FIntVector(0, 1, 1), FIntVector(0, 1, -1),
+            FIntVector(0, -1, 1), FIntVector(0, -1, -1),
+        
+            // Corner neighbors (8)
+            FIntVector(1, 1, 1), FIntVector(1, 1, -1),
+            FIntVector(1, -1, 1), FIntVector(1, -1, -1),
+            FIntVector(-1, 1, 1), FIntVector(-1, 1, -1),
+            FIntVector(-1, -1, 1), FIntVector(-1, -1, -1)
+        };
+    
+        if (Index >= 0 && Index < 26)
+        {
+            return Directions[Index];
+        }
+    
+        return FIntVector::ZeroValue;
+    }
 
 /**
  * FIXED: Convert chunk coords and center-aligned local voxel to global voxel

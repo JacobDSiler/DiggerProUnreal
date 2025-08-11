@@ -29,7 +29,11 @@ public class DiggerEditor : ModuleRules
 			"ProceduralMeshComponent",
 			"SocketIOClient",
 			"GeometryCore",          // For mesh tools
-			"ContentBrowser"         // For asset thumbnails
+			"ContentBrowser",         // For asset thumbnails
+			"DesktopPlatform",
+			"EditorStyle",
+			"ToolMenus",
+			"EditorWidgets",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {
@@ -56,9 +60,14 @@ public class DiggerEditor : ModuleRules
 		});
 
 		// For SComboBox, SEditableTextBox etc.
-		PrivateIncludePathModuleNames.AddRange(new string[] {
+		PrivateDependencyModuleNames.AddRange(new string[] {
+			"EditorStyle",
+			"EditorWidgets", 
+			"UnrealEd",
+			"ToolMenus",
 			"Slate",
-			"SlateCore"
+			"SlateCore",
+			"PropertyEditor"
 		});
 	}
 }

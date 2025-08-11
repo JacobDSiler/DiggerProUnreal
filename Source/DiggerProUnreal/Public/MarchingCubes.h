@@ -23,10 +23,12 @@ public:
 	// Constructors
 	UMarchingCubes();
 	UMarchingCubes(const FObjectInitializer& ObjectInitializer, const UVoxelChunk* VoxelChunk);
+	void ClearSectionAndRebuild(int32 SectionIndex, FIntVector ChunkCoord);
 	void Initialize(ADiggerManager* InDiggerManager);
 
 	// Generate the mesh based on the voxel grid
 	void GenerateMesh(const UVoxelChunk* ChunkPtr);
+	void GenerateMeshSyncronous(const UVoxelChunk* VoxelChunk);
 
 	// Add these members to your MarchingCubes class
 private:
@@ -65,6 +67,15 @@ public:
 		TArray<int32>& OutTriangles,
 		TArray<FVector>& OutNormals
 		// Add TArray<FVector2D>& OutUVs, TArray<FColor>& OutColors, TArray<FProcMeshTangent>& OutTangents if needed
+	);
+
+	void GenerateMeshFromGridSyncronous(
+	USparseVoxelGrid* InVoxelGrid,
+	const FVector& Origin,
+	float VoxelSize,
+	TArray<FVector>& OutVertices,
+	TArray<int32>& OutTriangles,
+	TArray<FVector>& OutNormals
 	);
 	
 	
@@ -108,6 +119,7 @@ public:
 	) const;
 
 	void GenerateMeshForIsland(USparseVoxelGrid* IslandGrid, const FVector& Origin, float VoxelSize, int32 IslandId);
+	void ClearSectionAndRebuildMesh(int32 SectionIndex, FIntVector ChunkCoord);
 
 	void CreateIslandProceduralMesh(
 		const TArray<FVector>& Vertices,

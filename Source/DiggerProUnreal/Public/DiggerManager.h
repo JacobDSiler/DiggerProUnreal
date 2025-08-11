@@ -70,10 +70,69 @@ struct FIslandSaveData
 };
 
 
+USTRUCT(BlueprintType)
+struct FDebugBrushSettings
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    bool bDrawChunkBounds = true;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    bool bDrawEdgeVoxels = false;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    bool bDrawSelectedVoxel = true;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    bool bDrawClickPoint = true;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    bool bLogPlacementDetails = false;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    float DebugDuration = 30.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    float EdgeVoxelSize = 5.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Debug Brush Settings")
+    float SelectionMarkerSize = 20.0f;
+};
+
+
 #if WITH_EDITOR
 class FDiggerEdModeToolkit;
 #endif
 
+
+// New struct to track voxel storage location
+USTRUCT(BlueprintType)
+struct FVoxelInstance
+{
+    GENERATED_BODY()
+
+    FVoxelInstance()
+        : GlobalVoxel(FIntVector::ZeroValue)
+        , ChunkCoords(FIntVector::ZeroValue)
+        , LocalVoxel(FIntVector::ZeroValue)
+    {}
+
+    FVoxelInstance(const FIntVector& InGlobal, const FIntVector& InChunk, const FIntVector& InLocal)
+        : GlobalVoxel(InGlobal)
+        , ChunkCoords(InChunk)
+        , LocalVoxel(InLocal)
+    {}
+
+    UPROPERTY(BlueprintReadWrite)
+    FIntVector GlobalVoxel;
+    
+    UPROPERTY(BlueprintReadWrite)
+    FIntVector ChunkCoords;
+    
+    UPROPERTY(BlueprintReadWrite)
+    FIntVector LocalVoxel;
+};
 
 USTRUCT(BlueprintType)
 struct FIslandData
@@ -84,6 +143,7 @@ struct FIslandData
         : Location(FVector::ZeroVector)
         , VoxelCount(0)
         , Voxels()
+        , VoxelInstances()
         , ReferenceVoxel(FIntVector::ZeroValue)
     {}
 
@@ -93,8 +153,13 @@ struct FIslandData
     UPROPERTY(BlueprintReadWrite)
     int32 VoxelCount;
 
+    // Keep this for backward compatibility with UI/broadcasting (deduplicated global voxels)
     UPROPERTY(BlueprintReadWrite)
     TArray<FIntVector> Voxels;
+    
+    // NEW: Store all physical voxel instances including overflow slabs
+    UPROPERTY(BlueprintReadWrite)
+    TArray<FVoxelInstance> VoxelInstances;
     
     // Store a reference voxel for this island
     UPROPERTY()
@@ -119,6 +184,10 @@ class DIGGERPROUNREAL_API ADiggerManager : public AActor
 
 public:
     ADiggerManager();
+
+    // Single delegate to track voxels modification stats for ALL chunks
+    FOnVoxelsModified OnVoxelsModified;
+    
     void SpawnLight(const FBrushStroke& Stroke);
     void InitializeBrushShapes();
     UVoxelBrushShape* GetActiveBrushShape(EVoxelBrushType BrushType) const;
@@ -136,15 +205,20 @@ public:
                                         FCustomSDFBrush& OutBrush);
 
     TArray<FIslandData> DetectUnifiedIslands();
+    FIntVector GetWorldMinChunkCoords() const;
     void RemoveUnifiedIslandVoxels(const FIslandData& Island);
 
     FCriticalSection UpdateChunksCriticalSection;
 
     void DebugBrushPlacement(const FVector& ClickPosition);
+    void DebugDrawVoxelAtWorldPositionFast(const FVector& WorldPosition, const FLinearColor& BoxColor, float Duration,
+                                           float Thickness);
     void DebugDrawVoxelAtWorldPosition(const FVector& WorldPosition, FColor BoxColor, float Duration, float Thickness);
 
     void DrawDiagonalDebugVoxels(FIntVector ChunkCoords);
+    void DrawDiagonalDebugVoxelsFast(FIntVector ChunkCoords);
     UStaticMesh* ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName);
+    void UpdateAllDirtyChunks();
     AIslandActor* SpawnIslandActorFromIslandAtPosition(const FVector& IslandCenter, bool bEnablePhysics);
 
     FIntVector FindNearestSurfaceVoxel(USparseVoxelGrid* VoxelGrid, FIntVector IntVector, int SurfaceSearchRadius);
@@ -156,7 +230,7 @@ public:
     void ConvertIslandAtPositionToStaticMesh(const FVector& Vector);
     void ConvertIslandAtPositionToActor(const FVector& IslandCenter, bool bEnablePhysics, FIntVector ReferenceVoxel);
     FIslandMeshData ExtractIslandByCenter(const FVector& IslandCenter, bool bRemoveAfter, bool bEnablePhysics);
-    FIslandMeshData ExtractAndGenerateIslandMeshFromVoxel(UVoxelChunk* Chunk, const FIntVector& StartVoxel);
+    FIslandMeshData ExtractAndGenerateIslandMeshFromData(UVoxelChunk* Chunk, const FIslandData& IslandData);
     void RemoveIslandVoxels(const FIslandData& Island);
     void ClearAllIslandActors();
     void DestroyIslandActor(AIslandActor* IslandActor);
@@ -267,6 +341,9 @@ public:
 
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
     bool EditorBrushDig = true;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Editor Brush")
+    bool EditorBrushHiddenSeam = false;
     
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")
     FRotator EditorBrushRotation;
@@ -370,6 +447,7 @@ public:
 
 
 
+
 #endif
 
 public:
@@ -386,6 +464,10 @@ public:
     int Subdivisions = 4;  // Number of subdivisions per grid size
 
     int VoxelSize=TerrainGridSize/Subdivisions;
+
+    // Debug Brush Settings
+    UPROPERTY(EditAnywhere, Category = "Debug Brush")
+    FDebugBrushSettings DebugBrushSettings;
 
     // The active brush shape
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel System")
@@ -469,6 +551,10 @@ public:
 
 private:
     std::mutex ChunkProcessingMutex;
+    // The mutex for Island Removal.
+    FCriticalSection IslandRemovalMutex;
+
+    TArray<FIntVector> GetPossibleOwningChunks(const FIntVector& GlobalIndex);
     // Reference to the sparse voxel grid and marching cubes
     UPROPERTY()
     USparseVoxelGrid* SparseVoxelGrid;
@@ -487,6 +573,9 @@ private:
 
     UPROPERTY()
     TArray<UProceduralMeshComponent*> ProceduralMeshComponents;
+
+    // Update the cache to support multiple save files
+    TMap<FString, TArray<FIntVector>> SavedChunkCache;
 
 public:
     // Single chunk serialization methods
@@ -518,6 +607,31 @@ public:
     void EnsureVoxelDataDirectoryExists() const;
     void Tick(float DeltaTime);
 
+    // New methods for multiple save file support
+    FString GetSaveFileDirectory(const FString& SaveFileName) const;
+    FString GetChunkFilePath(const FIntVector& ChunkCoords, const FString& SaveFileName) const;
+    
+    bool DoesSaveFileExist(const FString& SaveFileName) const;
+    bool DoesChunkFileExist(const FIntVector& ChunkCoords, const FString& SaveFileName) const;
+    
+    void EnsureSaveFileDirectoryExists(const FString& SaveFileName) const;
+    
+    bool SaveChunk(const FIntVector& ChunkCoords, const FString& SaveFileName);
+    bool LoadChunk(const FIntVector& ChunkCoords, const FString& SaveFileName);
+    
+    bool SaveAllChunks(const FString& SaveFileName);
+    bool LoadAllChunks(const FString& SaveFileName);
+
+    // Default Save
+    TArray<FIntVector> GetAllSavedChunkCoordinates(bool bForceRefresh);
+    // Named Save
+    TArray<FIntVector> GetAllSavedChunkCoordinates(const FString& SaveFileName, bool bForceRefresh = false);
+    TArray<FString> GetAllSaveFileNames() const;
+    
+    bool DeleteSaveFile(const FString& SaveFileName);
+    void InvalidateSavedChunkCache(const FString& SaveFileName = TEXT(""));
+    void InvalidateSavedChunkCache();
+
 private:
     // Cache for saved chunk coordinates to avoid constant filesystem scanning
     UPROPERTY()
@@ -538,8 +652,12 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
     void RefreshSavedChunkCache();
     
-    UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
-    void InvalidateSavedChunkCache();
+
+    // In ADiggerManager.h
+    TArray<FIntVector> GetAllPhysicalStorageChunks(const FIntVector& GlobalVoxel);
+
+    // In ADiggerManager.h
+    TSet<FIntVector> PerformCrossChunkFloodFill(const FIntVector& StartGlobalVoxel);
 
 private:
     // Constants for file management
@@ -590,6 +708,11 @@ public:
     ALandscapeProxy* GetLandscapeProxyAt(const FVector& WorldPos);
     TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos, bool bForcePrecise);
     TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos);
+    // Delete this after it works!!!11!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // In DiggerManager.h
+    UFUNCTION(CallInEditor, BlueprintCallable, Category = "Debug")
+    void QuickDebugTest();
+    
     float GetSmartLandscapeHeightAt(const FVector& WorldPos);
     float GetSmartLandscapeHeightAt(const FVector& WorldPos, bool bForcePrecise);
     //bool IsNearLandscapeEdge(const FVector& WorldPos, float Threshold);

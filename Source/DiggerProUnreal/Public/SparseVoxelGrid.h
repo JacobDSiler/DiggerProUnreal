@@ -37,6 +37,8 @@ public:
 
 	// The mutex for voxel data operations.
 	FCriticalSection VoxelDataMutex;
+	
+public:
 
 	void Initialize(UVoxelChunk* ParentChunkReference);
 	void InitializeDiggerManager();
@@ -52,6 +54,7 @@ public:
 	void RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove);
 	
 	float GetVoxel(FIntVector Vector);
+	bool IsVoxelSolid(const FIntVector& VoxelIndex) const;
 	const FVoxelData* GetVoxelData(const FIntVector& Voxel) const;
 	FVoxelData* GetVoxelData(const FIntVector& Voxel);
 
@@ -85,7 +88,14 @@ public:
 	
 	// Logs the current voxels and their SDF values
 	void LogVoxelData() const;
+	// Existing RenderVoxels method - called frequently
 	void RenderVoxels();
+    
+	// New persistent rendering method - call this for long-lasting debug visualization
+	void RenderVoxelsOnce();
+    
+	// Clear method for when voxel data changes
+	void ClearVoxelDebugRender();
 
 	bool CollectIslandAtPosition(const FVector& Center, TArray<FIntVector>& OutVoxels);
 
@@ -93,7 +103,8 @@ public:
 	const FVector& Center,
 	USparseVoxelGrid*& OutTempGrid,
 	TArray<FIntVector>& OutVoxels);
-	
+	FIslandData DetectIsland(float SDFThreshold, const FIntVector& StartPosition);
+
 
 	void SetParentChunkCoordinates(FIntVector& NewParentChunkPosition)
 	{

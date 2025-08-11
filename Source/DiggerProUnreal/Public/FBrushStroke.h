@@ -94,6 +94,9 @@ struct FBrushStroke
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Brush")
     FVector BrushOffset;
 
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Brush Settings")
+    bool bHiddenSeam = false; // false = Natural seam (raised rim), true = Hidden seam (flush)
+
     // In your FBrushStroke struct definition:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Light")
     FLinearColor LightColor = FLinearColor::White;

@@ -19,7 +19,7 @@ USocketIOClientComponent::USocketIOClientComponent(const FObjectInitializer &ini
 	bShouldVerifyTLSCertificate = false;	//Until verification feature is implemented, this should default to false
 	bShouldAutoConnect = true;
 	NativeClient = nullptr;
-	bLimitConnectionToGameWorld = true;
+	bLimitConnectionToGameWorld = false;
 	SessionId = TEXT("Invalid");
 	
 	//Plugin scoped utilities
@@ -82,6 +82,8 @@ void USocketIOClientComponent::InitializeNative()
 void USocketIOClientComponent::BeginPlay()
 {
 	Super::BeginPlay();
+
+	EnsureNativeClientInitialized();
 
 	//Auto-connect to default address if supported and not already connected
 	if (bShouldAutoConnect && !bIsConnected)
@@ -427,6 +429,35 @@ void USocketIOClientComponent::Connect(const FString& InAddressAndPort, const FS
 
 	ConnectWithParams(URLParams);
 }
+
+void USocketIOClientComponent::EnsureNativeClientInitialized()
+{
+	if (!NativeClient.IsValid())
+	{
+		NativeClient = MakeShared<FSocketIONative>();
+		UE_LOG(SocketIO, Log, TEXT("Native client initialized"));
+        
+		// Configure default settings
+		NativeClient->MaxReconnectionAttempts = MaxReconnectionAttempts;
+		NativeClient->ReconnectionDelay = ReconnectionDelayInMs;
+		NativeClient->VerboseLog = bVerboseConnectionLog;
+		NativeClient->bUnbindEventsOnDisconnect = bUnbindEventsOnDisconnect;
+		NativeClient->bForceTLSUse = bForceTLS;
+	}
+}
+
+void USocketIOClientComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	Super::EndPlay(EndPlayReason);
+
+	if (NativeClient.IsValid())
+	{
+		UE_LOG(SocketIO, Log, TEXT("Cleaning up native client"));
+		NativeClient->SyncDisconnect();
+		NativeClient.Reset();
+	}
+}
+
 
 void USocketIOClientComponent::ConnectWithParams(const FSIOConnectParams& InURLParams)
 {
