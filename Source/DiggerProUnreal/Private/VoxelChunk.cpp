@@ -5,6 +5,7 @@
 #include "Editor.h"
 #include "EngineUtils.h"
 #include "HLSLTypeAliases.h"
+#include "HoleBPHelpers.h"
 #include "MarchingCubes.h"
 #include "SparseVoxelGrid.h"
 #include "DiggerProUnreal/Public/Voxel/VoxelBrushHelpers.h" // or wherever you put SetDigShellVoxels
@@ -172,78 +173,68 @@ void UVoxelChunk::OnMarchingMeshComplete() const
 // In UVoxelChunk.cpp
 void UVoxelChunk::SpawnHoleFromData(const FSpawnedHoleData& HoleData)
 {
-	
 	if (!HoleShapeLibrary)
 	{
-		UE_LOG(LogTemp, Error, TEXT("HoleShapeLibrary is not set in SpawnHoleFromData"));
+		DiggerManager->EnsureHoleShapeLibrary();
+		if (!HoleShapeLibrary)
+		{
+			UE_LOG(LogTemp, Error, TEXT("HoleShapeLibrary is not set in SpawnHoleFromData"));
+			return;
+		}
+	}
+
+	if (!HoleBP)
+	{
+		EnsureDefaultHoleBP(); // works now
+		if (!HoleBP)
+		{
+			UE_LOG(LogTemp, Error, TEXT("HoleBP is not set in SpawnHoleFromData"));
+			return;
+		}
+	}
+
+	if (!GetWorld())
+	{
+		UE_LOG(LogTemp, Error, TEXT("GetWorld() returned null in SpawnHoleFromData"));
 		return;
 	}
-	
-    if (!HoleBP)
-    {
-        UE_LOG(LogTemp, Error, TEXT("HoleBP is not set in SpawnHoleFromData"));
-    }
-    if (!GetWorld())
-    {
-        UE_LOG(LogTemp, Error, TEXT("GetWorld() returned null in SpawnHoleFromData"));
-    }
 
-    if (!HoleBP || !GetWorld())
-    {
-    	if (DiggerDebug::Chunks || DiggerDebug::Holes)
-        UE_LOG(LogTemp, Error, TEXT("Missing dependencies in SpawnHoleFromData"));
-        return;
-    }
+	AActor* SpawnedHole = SpawnTransientActor(GetWorld(), HoleBP, HoleData.Location, HoleData.Rotation, HoleData.Scale);
+	if (!SpawnedHole)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to spawn hole actor"));
+		return;
+	}
 
-    AActor* SpawnedHole = SpawnTransientActor(GetWorld(), HoleBP, HoleData.Location, HoleData.Rotation, HoleData.Scale);
-    if (!SpawnedHole)
-    {
-    	if (DiggerDebug::Holes)
-        UE_LOG(LogTemp, Error, TEXT("Failed to spawn hole actor"));
-        return;
-    }
+	SpawnedHoleInstances.Add(SpawnedHole);
 
-    // Add the spawned actor to the tracking list
-    SpawnedHoleInstances.Add(SpawnedHole);
-
-    // Get the corresponding mesh for the hole shape
-    UStaticMesh* HoleMesh = HoleShapeLibrary->GetMeshForShape(HoleData.Shape.ShapeType);
-    if (HoleMesh)
-    {
-        // Call the InitializeHoleMesh function on the BP actor
-        if (UFunction* InitFunc = SpawnedHole->FindFunction(FName("InitializeHoleMesh")))
-        {
-            struct FInitHoleParams
-            {
-                UStaticMesh* Mesh;
-            };
-
-        	if (DiggerDebug::Holes)
-            UE_LOG(LogTemp, Warning, TEXT("Spawned a hole!"));
-
-            FInitHoleParams Params{ HoleMesh };
-            SpawnedHole->ProcessEvent(InitFunc, &Params);
-        }
-        else
-        {
-        	if (DiggerDebug::Holes)
-            UE_LOG(LogTemp, Warning, TEXT("InitializeHoleMesh not found on spawned hole actor"));
-        }
-    }
-    else
-    {
-    	if (DiggerDebug::Holes)
-        UE_LOG(LogTemp, Warning, TEXT("No mesh found for shape %s"), *UEnum::GetValueAsString(HoleData.Shape.ShapeType));
-    }
+	UStaticMesh* HoleMesh = HoleShapeLibrary->GetMeshForShape(HoleData.Shape.ShapeType);
+	if (HoleMesh)
+	{
+		if (UFunction* InitFunc = SpawnedHole->FindFunction(FName("InitializeHoleMesh")))
+		{
+			struct FInitHoleParams { UStaticMesh* Mesh; } Params{ HoleMesh };
+			SpawnedHole->ProcessEvent(InitFunc, &Params);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("InitializeHoleMesh not found on spawned hole actor"));
+		}
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("No mesh found for shape %s"), *UEnum::GetValueAsString(HoleData.Shape.ShapeType));
+	}
 
 #if WITH_EDITOR
-    if (GIsEditor)
-    {
-        FString NewLabel = FString::Printf(TEXT("HoleBP_%s"), *UEnum::GetValueAsString(HoleData.Shape.ShapeType));
-        SpawnedHole->SetActorLabel(NewLabel);
-    }
+	if (GIsEditor)
+	{
+		FString NewLabel = FString::Printf(TEXT("HoleBP_%s"), *UEnum::GetValueAsString(HoleData.Shape.ShapeType));
+		SpawnedHole->SetActorLabel(NewLabel);
+	}
 #endif
 }
+
 
 
 // In UVoxelChunk.cpp
@@ -645,78 +636,99 @@ AActor* UVoxelChunk::SpawnTransientActor(UWorld* InWorld, TSubclassOf<AActor> Ac
 	return Spawned;
 }
 
+#if WITH_EDITOR
+void UVoxelChunk::EnsureDefaultHoleBP()
+{
+	if (!HoleBP)
+	{
+		FSoftObjectPath AssetPath(GDefaultHoleBPPath);
+		UObject* LoadedObj = AssetPath.TryLoad();
+
+		if (UClass* LoadedClass = Cast<UClass>(LoadedObj))
+		{
+			HoleBP = LoadedClass;
+			UE_LOG(LogTemp, Log, TEXT("Loaded Default HoleBP from %s"), GDefaultHoleBPPath);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Failed to load HoleBP from %s"), GDefaultHoleBPPath);
+		}
+	}
+}
+#endif
+
+
 void UVoxelChunk::SpawnHole(TSubclassOf<AActor> HoleBPClass, FVector Location, FRotator Rotation, FVector Scale, EHoleShapeType ShapeType)
 {
-	if (!HoleBPClass)
-	{
-		if (DiggerDebug::Holes)
-		{
-			UE_LOG(LogTemp, Error, TEXT("SpawnHole: Invalid HoleBPClass"));
-		}
-		return;
-	}
+#if WITH_EDITOR
+    // Ensure HoleBP is set, even if not passed in
+    if (!HoleBPClass)
+    {
+        EnsureDefaultHoleBP(); // Sets HoleBP internally if missing
+        HoleBPClass = HoleBP;
+    }
 
-	HoleBP = HoleBPClass;
+    // Ensure the Hole Shape Library is valid
+    DiggerManager->EnsureHoleShapeLibrary(); // Your method to create/load & seed if missing
+#endif
 
-	if (!World)
-	{
-		if (DiggerDebug::Holes || DiggerDebug::Context)
-		{
-			UE_LOG(LogTemp, Error, TEXT("SpawnHole: Invalid World"));
-		}
-		return;
-	}
+    if (!HoleBPClass)
+    {
+        UE_LOG(LogTemp, Error, TEXT("SpawnHole: No valid HoleBPClass after ensure"));
+        return;
+    }
 
-	AActor* SpawnedHole = nullptr;
+    HoleBP = HoleBPClass;
+
+    if (!World)
+    {
+        UE_LOG(LogTemp, Error, TEXT("SpawnHole: Invalid World"));
+        return;
+    }
+
+    AActor* SpawnedHole = nullptr;
 
 #if WITH_EDITOR
-	if (GIsEditor && !GWorld->HasBegunPlay())
-	{
-		if (GEditor && GEditor->GetEditorWorldContext().World())
-		{
-			UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
-			SpawnedHole = SpawnTransientActor(EditorWorld, HoleBPClass, Location, Rotation, Scale);
+    if (GIsEditor && !GWorld->HasBegunPlay())
+    {
+        if (GEditor && GEditor->GetEditorWorldContext().World())
+        {
+            UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+            SpawnedHole = SpawnTransientActor(EditorWorld, HoleBPClass, Location, Rotation, Scale);
 
-			if (SpawnedHole)
-			{
-				FString NewLabel = FString::Printf(TEXT("HoleBP_%d"), FMath::RandRange(0, 999999));
-				SpawnedHole->SetActorLabel(NewLabel);
-				SpawnedHole->Modify();
-			}
-		}
-	}
-	else
+            if (SpawnedHole)
+            {
+                FString NewLabel = FString::Printf(TEXT("HoleBP_%d"), FMath::RandRange(0, 999999));
+                SpawnedHole->SetActorLabel(NewLabel);
+                SpawnedHole->Modify();
+            }
+        }
+    }
+    else
 #endif
-	{
-		SpawnedHole = SpawnTransientActor(World, HoleBPClass, Location, Rotation, Scale);
-	}
+    {
+        SpawnedHole = SpawnTransientActor(World, HoleBPClass, Location, Rotation, Scale);
+    }
 
-	if (SpawnedHole)
-	{
-		// ✅ Construct HoleShape and assign it to HoleData
-		FHoleShape Shape;
-		Shape.ShapeType = ShapeType;
+    if (SpawnedHole)
+    {
+        // Construct HoleShape and assign it
+        FHoleShape Shape;
+        Shape.ShapeType = ShapeType;
 
-		FSpawnedHoleData HoleData{ Location, Rotation, Scale };
-		HoleData.Shape = Shape;
+        FSpawnedHoleData HoleData{ Location, Rotation, Scale };
+        HoleData.Shape = Shape;
 
-		HoleDataArray.Add(HoleData);
+        HoleDataArray.Add(HoleData);
 
-
-		if (DiggerDebug::Holes || DiggerDebug::Chunks)
-		{
-			UE_LOG(LogTemp, Log, TEXT("Spawned HoleBP in Chunk at %s with shape %s"),
-				*Location.ToString(),
-				*UEnum::GetValueAsString(ShapeType));
-		}
-	}
-	else
-	{
-		if (DiggerDebug::Holes || DiggerDebug::Chunks)
-		{
-			UE_LOG(LogTemp, Error, TEXT("Failed to spawn HoleBP in Chunk at %s"), *Location.ToString());
-		}
-	}
+        UE_LOG(LogTemp, Log, TEXT("Spawned HoleBP at %s with shape %s"),
+               *Location.ToString(),
+               *UEnum::GetValueAsString(ShapeType));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to spawn HoleBP at %s"), *Location.ToString());
+    }
 }
 
 
@@ -1170,8 +1182,8 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
                 
                 if (VerticalDistanceFromBrush <= MaxDepthBelowBrush)
                 {
-                    SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, true); // true = EXPLICIT AIR
-                    VoxelsDugCounter.Increment();
+                    bool Removed = SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, true); // true = EXPLICIT AIR
+                    Removed? VoxelsDugCounter.Increment() : false; // Handle it if nothing was Removed.
                     
                     // Track air voxels below terrain for solid shell creation
                     if (!bAboveTerrain)
@@ -1187,8 +1199,8 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
             // Create solid where SDF indicates
             if (SDF < -0.1f) // Only use SDF threshold, no distance override
             {
-                SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, false); // false = solid
-                VoxelsAddedCounter.Increment();
+                bool Added = SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, false); // false = solid
+                Added ? VoxelsAddedCounter.Increment() : false; // Handle it right if nothing was added
             }
         }
     });
@@ -1353,7 +1365,7 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
 
         if (!TerrainHeightOptional.IsSet())
         {
-            return 2.0f;
+            return 1.0f;
         }
 
         float TerrainHeight = TerrainHeightOptional.GetValue();
@@ -1400,16 +1412,16 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
 
         if (ValidSamples == 0)
         {
-            return 2.0f;
+            return 1.0f;
         }
 
         if (MaxSlope > 0.1f)
         {
-            float RimThickness = FMath::Clamp(MaxSlope * MaxSlope * 4.0f + 2.0f, 3.0f, 12.0f);
+            float RimThickness = FMath::Clamp(MaxSlope * MaxSlope * 4.0f + 1.0f, 3.0f, 11.0f);
             return RimThickness;
         }
         
-        return 2.0f;
+        return 1.0f;
     };
 
     // Process each boundary position to determine if it should be solid
@@ -1581,8 +1593,8 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
             
             if (InMainChunk || InOverflowRegion)
             {
-                SparseVoxelGrid->SetVoxel(BoundaryPos, FVoxelConversion::SDF_SOLID, false);
-                CreatedVoxels++;
+                bool Added = SparseVoxelGrid->SetVoxel(BoundaryPos, FVoxelConversion::SDF_SOLID, false);
+				Added? CreatedVoxels++ : false; /*nothing was added.*/
             }
         }
     }

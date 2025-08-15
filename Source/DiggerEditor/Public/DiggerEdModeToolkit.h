@@ -33,6 +33,7 @@ enum class EIslandOriginMode : uint8
 
 
 
+
 // Simple struct for holding lobby information
 struct FLobbyInfo
 {
@@ -91,11 +92,44 @@ struct DIGGEREDITOR_API FDiggerUIFeatureFlags
 };
 
 
+// DiggerEdModeToolkit.h
+
+UENUM()
+enum class EDiggerConnectTier : uint8
+{
+	Free    UMETA(DisplayName="Free (Non-Commercial)"),
+	Indie   UMETA(DisplayName="Indie (Perpetual)"),
+	Enterprise UMETA(DisplayName="Enterprise (Perpetual)"),
+	IndieSub   UMETA(DisplayName="Indie (Subscription)"),
+	EnterpriseSub UMETA(DisplayName="Enterprise (Subscription)")
+};
+
 class FDiggerEdModeToolkit : public FModeToolkit
 {
 public:
 	// Declare this so you can define it in the .cpp
 	FDiggerEdModeToolkit();
+private:
+	// Licensing UI state
+	EDiggerConnectTier CurrentTier = EDiggerConnectTier::Free;
+	int32 ConcurrentUsersCap = 2;          // Free default
+	int32 CurrentActiveUsers = 0;          // From runtime check if you have one
+	FString LicenseEmail;
+	FString LicenseKey;
+
+	// UI builders/handlers
+	TSharedRef<SWidget> MakeDiggerConnectLicensingPanel();
+	FReply OnValidateLicenseClicked();
+	FReply OnUpgradeTierClicked(EDiggerConnectTier TargetTier);
+	FText  GetTierDisplayText() const;
+	FText  GetConcurrentText() const;
+	bool   IsUpgradeVisible(EDiggerConnectTier TargetTier) const;
+
+	void LoadLicenseFromConfig();
+	void SaveLicenseToConfig() const;
+	void ApplyTierCapsFromLicense();
+
+public:
 	
 	void SetUseAdvancedCubeBrush(bool bInUse)
 	{
@@ -122,6 +156,7 @@ public:
 	
 	void AddIsland(const FIslandData& Island);
 	void BindIslandDelegates();
+
 	virtual void Init(const TSharedPtr<IToolkitHost>& InitToolkitHost) override;
 	bool CanPaintWithCustomBrush() const;
 	void ScanCustomBrushFolder();
@@ -348,7 +383,7 @@ private:
 
 	//Helpers
 	ADiggerManager* GetDiggerManager();
-
+//SubSubSections
 	TSharedRef<SWidget> MakeIslandGridWidget();
 	TSharedRef<SWidget> MakeDebugCheckbox(const FString& Label, bool* FlagPtr);
 	TSharedRef<SWidget> MakeAngleButton(float Angle, float& Target, const FString& Label);
@@ -357,7 +392,6 @@ private:
 	TSharedRef<SWidget> MakeMirrorButton(double& Target, const FString& Label);
 	TSharedRef<SWidget> MakeRotationSection(float& RotX, float& RotY, float& RotZ);
 	TSharedRef<SWidget> MakeOperationSection();
-	TSharedRef<SWidget> MakeBrushShapeSection();
 	// Hidden Seam checkbox
 	TSharedPtr<SCheckBox> HiddenSeamCheckbox;
 	TSharedRef<SWidget> MakeOffsetSection(FVector& Offset);
@@ -373,8 +407,8 @@ private:
 												   const TArray<FVector>& Exits);
 	
 	void OnConvertToPhysicsActorClicked();
+	void OnConvertToSceneActorClicked();
 	void OnRemoveIslandClicked();
-	TSharedRef<SWidget> MakeIslandsSection();
 
 	TSharedRef<SWidget> MakeLabeledSliderRow(
 		const FText& Label,
@@ -398,10 +432,17 @@ private:
 	ECheckBoxState GetHiddenSeamCheckState() const;
 	void OnHiddenSeamChanged(ECheckBoxState NewState);
 
+	TSharedRef<SWidget> MakeBrushShapeSection();
+	TSharedRef<SWidget> MakeBuildExportSection();
+	TSharedRef<SWidget> MakeSaveLoadSection();
+	TSharedRef<SWidget> MakeCustomBrushSection();
+	
 	// Multiplayer Menu (Always Available)
 	TSharedRef<SWidget> MakeLobbySection();
 	TSharedRef<SWidget> MakeNetworkingWidget();
+	TSharedRef<SWidget> MakeIslandsSection();
 	TSharedRef<SWidget> MakeNetworkingHelpWidget();
+
 	void CreateLobbyManager(UWorld* WorldContext);
 	TSharedPtr<IWebSocket> WebSocket;
 	TSharedPtr<SEditableTextBox> TemporaryPasswordBox;
@@ -482,6 +523,8 @@ public:
 	void SetBrushLength(float NewLength) { BrushLength = NewLength; }
 	EVoxelBrushType GetCurrentBrushType() const {return CurrentBrushType;}
 	
+	void SetCurrentBrushType(EVoxelBrushType NewBrushType)
+	{ CurrentBrushType = NewBrushType; }
 
 	const TArray<FIslandData>& GetIslands() const
 	{
@@ -502,6 +545,7 @@ private:
 	// Method to update preview position in real-time
 	void UpdatePreviewPosition();
 
+	TSharedPtr<SVerticalBox> CustomBrushGridContainer;
 	TSharedPtr<SUniformGridPanel> CustomBrushGrid;
 	TArray<FCustomBrushEntry> CustomBrushEntries;
 	int32 SelectedBrushIndex = -1;
@@ -561,8 +605,17 @@ private:
 	void HandleWorldScaleClick(const FVector& ClickLocation);
 
 	
+	// Collapsible Menu Bools
 
+	
+	bool bShowBrushShapeSection = false; // Add to FDiggerEdModeToolkit
 	bool bShowProcgenArcanaImporter = false;
+	bool bShowSaveLoadSection = false;
+	bool bShowLobbySection = false;
+	bool bShowCustomBrushSection = false;
+	bool bShowIslandsSection = false; // Start collapsed by default, or true if you want it expanded
+	
+	
 	FString SelectedSVGFilePath;
 	float SimplificationLevel = 0.5f;
 	int32 HeightMode = 0;
@@ -596,10 +649,11 @@ private:
 	TSharedPtr<SBox> IslandGridContainer; // Add this!
 	TSharedPtr<SUniformGridPanel> IslandGrid;
 	TSharedPtr<FAssetThumbnailPool> AssetThumbnailPool;
-	TSharedRef<SWidget> MakeSaveLoadSection();
 	bool IsSocketIOPluginAvailable() const;
 	ECheckBoxState IsBrushDebugEnabled();
 	void OnBrushDebugCheckChanged(ECheckBoxState NewState);
 	bool bBrushDig = false;
 	void RebuildCustomBrushGrid();
+	void DeleteCustomBrush(int32 Index);
+	FString GetBrushDisplayName(const FCustomBrushEntry& Entry) const;
 };

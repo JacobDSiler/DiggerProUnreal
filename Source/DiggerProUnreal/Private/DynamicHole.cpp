@@ -30,29 +30,46 @@ void ADynamicHole::BeginPlay()
 
 // ADynamicHole.cpp
 
-void ADynamicHole::OnConstruction(const FTransform& Transform)
+void ADynamicHole::OnConstruction(const FTransform& Xform)
 {
-	Super::OnConstruction(Transform);
+	Super::OnConstruction(Xform);
 
-	// Check if the hole has moved
+	// 📌 Assign World Outliner folder (Editor only)
+#if WITH_EDITOR
+	const FName NewFolderPath = FName(TEXT("Digger/DynamicHoles"));
+#if ENGINE_MAJOR_VERSION >= 5
+	if (GetClass()->FindFunctionByName(TEXT("SetFolderPath_Recursively")))
+	{
+		SetFolderPath_Recursively(NewFolderPath);
+	}
+	else
+	{
+		SetFolderPath(NewFolderPath);
+	}
+#else
+	SetFolderPath(FolderPath);
+#endif
+#endif // WITH_EDITOR
+
+	// 📍 Track hole movement and update chunk registration
 	FVector HoleLocation = GetActorLocation();
 	CurrentChunkCoords = FVoxelConversion::WorldToChunk(HoleLocation);
 
 	if (OwningChunk && PreviousChunkCoords != CurrentChunkCoords)
 	{
-		// Hole has moved, unregister from the previous chunk and register in the new one
+		// Hole has moved — update chunk registration
+		OwningChunk->RemoveHoleFromChunk(this);
+
+		OwningChunk = FindOwningChunk(CurrentChunkCoords);
 		if (OwningChunk)
 		{
-			OwningChunk->RemoveHoleFromChunk(this);
+			OwningChunk->AddHoleToChunk(this);
 		}
-        
-		// Update the chunk reference
-		OwningChunk = FindOwningChunk(CurrentChunkCoords);
-		OwningChunk->AddHoleToChunk(this);
 
 		PreviousChunkCoords = CurrentChunkCoords;
 	}
 }
+
 
 void ADynamicHole::SetOwningChunk(UVoxelChunk* NewChunk)
 {

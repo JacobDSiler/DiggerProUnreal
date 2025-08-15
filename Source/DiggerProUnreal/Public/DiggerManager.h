@@ -176,6 +176,17 @@ struct FIslandMeshData
     bool bValid = false;
 };
 
+// Brush batching
+struct FBrushSample
+{
+    FVector WorldPos;
+    float   Radius;
+    float   Strength;
+    float   Hardness;
+    uint8   Shape;     // 0 sphere, 1 box, 2 capsule...
+    uint8   Op;        // 0 add/union, 1 subtract/diff, 2 smin...
+};
+
 
 UCLASS(Blueprintable)
 class DIGGERPROUNREAL_API ADiggerManager : public AActor
@@ -247,6 +258,7 @@ public:
             return OutArray;
         }
 
+    void ApplyPendingBrushSamples();
     UFUNCTION(BlueprintCallable)
     void CreateHoleAt(FVector WorldPosition, FRotator Rotation, FVector Scale, TSubclassOf<AActor> HoleBPClass);
 
@@ -501,6 +513,7 @@ public:
     UVoxelChunk* GetOrCreateChunkAtCoordinates(const float& ProposedChunkX, const float& ProposedChunkY,
                                     const float& ProposedChunkZ);
     UVoxelChunk* GetOrCreateChunkAtChunk(const FIntVector& ChunkCoords);
+    bool IsGameWorld() const;
 
     // Global debug flag
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Debug")
@@ -551,6 +564,11 @@ public:
 
 private:
     std::mutex ChunkProcessingMutex;
+    TArray<FBrushSample> PendingStroke;    // cleared each frame after apply
+    float BrushResampleSpacing = 0.f;      // set to Radius*0.5f when brush changes
+    FVector LastSamplePos = FVector::ZeroVector;
+    bool bHasLastSample = false;
+    
     // The mutex for Island Removal.
     FCriticalSection IslandRemovalMutex;
 
@@ -606,6 +624,8 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
     void EnsureVoxelDataDirectoryExists() const;
     void Tick(float DeltaTime);
+    void QueueBrushPoint(const FVector& HitPointWS, float Radius, float Strength, float Hardness, uint8 Shape,
+                         uint8 Op);
 
     // New methods for multiple save file support
     FString GetSaveFileDirectory(const FString& SaveFileName) const;
@@ -643,8 +663,25 @@ private:
     // Timer to refresh cache periodically instead of every frame
     float SavedChunkCacheRefreshTimer = 0.0f;
     static constexpr float CACHE_REFRESH_INTERVAL = 2.0f; // Refresh every 2 seconds
+    
+    bool bEditorInitDone = false;   // prevents repeat init in editor
+    bool bRuntimeInitDone = false;  // prevents repeat init at runtime
 
+    bool IsRuntimeLike() const
+    {
+        UWorld* W = GetWorld();
+        if (!W) return false;
+        return (W->WorldType == EWorldType::Game) || (W->WorldType == EWorldType::PIE);
+    }
+
+    // “tiny” editor preview init vs full init
+    void InitEditorLightweight();   // very cheap
+    void InitRuntimeHeavy();        // full system init
+    void EditorDeferredInit();      // called when the actor is dropped (not while dragging)
 public:
+    // Hole-shape library bootstrap
+    void EnsureHoleShapeLibrary();  // load project default else create transient fallback
+
     // Modified method signatures
     UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
     TArray<FIntVector> GetAllSavedChunkCoordinates(bool bForceRefresh = false) const;
@@ -719,6 +756,7 @@ public:
     bool GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector& Location, float& OutHeight);
     FVector GetLandscapeNormalAt(const FVector& WorldPosition);
     UWorld* GetSafeWorld() const;
+    void EnsureDefaultHoleBP();
 
     UFUNCTION(BlueprintCallable, Category="Holes")
     void HandleHoleSpawn(const FBrushStroke& Stroke);

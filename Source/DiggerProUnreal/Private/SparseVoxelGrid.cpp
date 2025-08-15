@@ -124,10 +124,9 @@ float USparseVoxelGrid::GetLandscapeHeightAtPoint(FVector Position)
 }
 
 
-
-void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue, bool bDig)
+bool USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue, bool bDig)
 {
-    SetVoxel(Position.X, Position.Y, Position.Z, SDFValue, bDig);
+    return SetVoxel(Position.X, Position.Y, Position.Z, SDFValue, bDig);
 }
 
 
@@ -137,15 +136,13 @@ void USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue, bool bDig)
 // USparseVoxelGrid.cpp
 
 // In USparseVoxelGrid.cpp
-void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig)
+bool USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig)
 {
-    // Lock the method in the VoxelData Mutex for threadsafe operation.
     FScopeLock Lock(&VoxelDataMutex);
     constexpr float SDF_THRESHOLD = 0.001f;
 
-    // Ignore negligible changes
     if (FMath::IsNearlyZero(NewSDFValue, SDF_THRESHOLD))
-        return;
+        return false;
 
     FIntVector VoxelKey(X, Y, Z);
     FVoxelData* ExistingVoxel = VoxelData.Find(VoxelKey);
@@ -153,34 +150,23 @@ void USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
     if (ExistingVoxel)
     {
         float CurrentValue = ExistingVoxel->SDFValue;
-        float BlendedValue;
-
-        if (bDig)
-        {
-            // When digging, use the maximum value (more air-like)
-            BlendedValue = FMath::Max(CurrentValue, NewSDFValue);
-        }
-        else
-        {
-            // When adding, use the minimum value (more solid-like)
-            BlendedValue = FMath::Min(CurrentValue, NewSDFValue);
-        }
+        float BlendedValue = bDig ? FMath::Max(CurrentValue, NewSDFValue)
+                                  : FMath::Min(CurrentValue, NewSDFValue);
+        if (FMath::IsNearlyEqual(CurrentValue, BlendedValue, SDF_THRESHOLD))
+            return false; // No change
 
         ExistingVoxel->SDFValue = BlendedValue;
     }
     else
     {
-        // For new voxels, just use the new value directly
         VoxelData.Add(VoxelKey, FVoxelData(NewSDFValue));
     }
 
     if (ParentChunk)
-    {
         ParentChunk->MarkDirty();
-    }
+
+    return true; // Something actually changed
 }
-
-
 
 
 

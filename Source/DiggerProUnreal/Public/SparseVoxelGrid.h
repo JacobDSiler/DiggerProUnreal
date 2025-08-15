@@ -67,9 +67,8 @@ public:
 	const TMap<FIntVector, FVoxelData>& GetVoxel() const { return VoxelData; }
 	
 	// Adds a voxel at the given coordinates with the provided SDF value
-	void SetVoxel(FIntVector Position, float SDFValue, bool bDig);
-	void SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig);
-	void SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig) const;
+	bool SetVoxel(FIntVector Position, float SDFValue, bool bDig);
+	bool SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig);
 
 	bool SerializeToArchive(FArchive& Ar);
 	bool SerializeFromArchive(FArchive& Ar);
@@ -90,12 +89,6 @@ public:
 	void LogVoxelData() const;
 	// Existing RenderVoxels method - called frequently
 	void RenderVoxels();
-    
-	// New persistent rendering method - call this for long-lasting debug visualization
-	void RenderVoxelsOnce();
-    
-	// Clear method for when voxel data changes
-	void ClearVoxelDebugRender();
 
 	bool CollectIslandAtPosition(const FVector& Center, TArray<FIntVector>& OutVoxels);
 

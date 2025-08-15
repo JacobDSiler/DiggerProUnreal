@@ -74,6 +74,30 @@ private:
         bool bIsValid = false;
     } ContinuousSettings;
 
+    // Cached brush data for continuous strokes
+    struct FBrushCache
+    {
+        float Radius = 0.f;
+        bool bFinalBrushDig = false;
+        FRotator Rotation = FRotator::ZeroRotator;
+        bool bIsFilled = false;
+        float Angle = 0.f;
+        EVoxelBrushType BrushType = EVoxelBrushType::Sphere;
+        bool bHiddenSeam = false;
+        bool bUseAdvancedCube = false;
+        float CubeHalfExtentX = 0.f;
+        float CubeHalfExtentY = 0.f;
+        float CubeHalfExtentZ = 0.f;
+        FVector Offset = FVector::ZeroVector;
+    } BrushCache;
+
+    FVector LastStrokeHitLocation = FVector::ZeroVector;
+    float StrokeSpacing = 0.f; // min move before next stamp
+    bool bIsDragging;
+
+    // Internal helper
+    void ApplyBrushWithSettings(ADiggerManager* Digger, const FVector& HitLocation, const FHitResult& Hit, const FBrushCache& Settings);
+
     TSharedPtr<FModeToolkit> Toolkit;
 
     // Static state

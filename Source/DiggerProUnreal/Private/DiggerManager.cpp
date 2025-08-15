@@ -36,6 +36,7 @@
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "HoleShapeLibrary.h" // <-- use the actual path to your class
 
 // File & Path Management
 #include "HAL/PlatformFilemanager.h"
@@ -79,6 +80,11 @@
 #include "Voxel/BrushShapes/SmoothBrushShape.h"
 #include "Voxel/BrushShapes/TorusBrushShape.h"
 
+// Hole Shape Library Requirements
+#include "HoleBPHelpers.h"
+#include "Engine/StaticMesh.h"
+#include "UObject/SoftObjectPath.h"
+
 // Editor Tool Specific Includes
 #if WITH_EDITOR
 #include "DiggerEdModeToolkit.h"
@@ -97,6 +103,7 @@
 #include "Components/PointLightComponent.h"
 #include "Components/SpotLightComponent.h"
 #include "HAL/FileManagerGeneric.h"
+#endif
 
 class ADynamicLightActor;
 class Editor;
@@ -104,6 +111,37 @@ class FDiggerEdModeToolkit;
 class FDiggerEdMode;
 class MeshDescriptors;
 class StaticMeshAttributes;
+
+
+
+
+static UHoleShapeLibrary* LoadDefaultHoleLibrary()
+{
+    if (!GDefaultHoleLibraryPath || !*GDefaultHoleLibraryPath) return nullptr;
+    UObject* Obj = StaticLoadObject(UHoleShapeLibrary::StaticClass(), nullptr, GDefaultHoleLibraryPath);
+    return Cast<UHoleShapeLibrary>(Obj);
+}
+
+static TSubclassOf<AActor> LoadDefaultHoleBPClass()
+{
+    UClass* Cls = StaticLoadClass(AActor::StaticClass(), nullptr, GDefaultHoleBPPath);
+    return Cls;
+}
+
+static UHoleShapeLibrary* CreateTransientHoleLibrary()
+{
+    // Create a transient instance so editor mode never crashes when no asset exists.
+    UHoleShapeLibrary* Lib = NewObject<UHoleShapeLibrary>(GetTransientPackage(), UHoleShapeLibrary::StaticClass(), FName(TEXT("TransientHoleShapeLibrary")));
+    if (Lib)
+    {
+        // Optionally seed defaults if your code expects entries:
+        // Lib->AddDefaultSphere();
+        // Lib->AddDefaultCube();
+    }
+    return Lib;
+}
+
+
 
 
 //New Multi Save Files System
@@ -711,27 +749,31 @@ void ADiggerManager::ApplyLightBrushInEditor(const FBrushStroke& BrushStroke)
 
 
 
-#endif
 void ADiggerManager::OnConstruction(const FTransform& Transform)
 {
-    Super::OnConstruction(Transform);
+        Super::OnConstruction(Transform);
+#if WITH_EDITOR
+        this->SetFolderPath(FName(TEXT("Digger"))); // top-level folder for the manager
+#endif
 
-    // Initialize the Hole Shape Library
-    InitHoleShapeLibrary();
+    // Always ensure we have a library pointer (cheap)
+    EnsureHoleShapeLibrary();
 
-    // Populate Landscape Height Cache.
-    for (TActorIterator<ALandscapeProxy> It(GetWorld()); It; ++It)
+#if WITH_EDITOR
+    if (!IsRuntimeLike())
     {
-        ALandscapeProxy* Landscape = *It;
-        if (Landscape)
-        {
-            HeightCacheLoadingSet.Add(Landscape);
-            PopulateLandscapeHeightCache(Landscape);
-        }
+        InitEditorLightweight(); // cheap preview only
+        return;
     }
-    
-    FVoxelConversion::InitFromConfig(ChunkSize,Subdivisions, TerrainGridSize, GetActorLocation());
+#endif
+
+    if (!bRuntimeInitDone)
+    {
+        InitRuntimeHeavy();
+        bRuntimeInitDone = true;
+    }
 }
+
 
 
 void ADiggerManager::InitHoleShapeLibrary()
@@ -769,8 +811,9 @@ ADiggerManager::ADiggerManager()
     // Initialize the voxel grid and marching cubes
     SparseVoxelGrid = CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid"));
     MarchingCubes = CreateDefaultSubobject<UMarchingCubes>(TEXT("MarchingCubes"));
-    
-    
+
+    if (!HoleBP)
+    { HoleBP = LoadDefaultHoleBPClass(); }
 
     // Load the material in the constructor
     static ConstructorHelpers::FObjectFinder<UMaterial> Material(TEXT("/Game/Materials/M_VoxelMat.M_VoxelMat"));
@@ -801,6 +844,9 @@ void ADiggerManager::SpawnLight(const FBrushStroke& BrushStroke)
 
     ADynamicLightActor* Light = GetWorld()->SpawnActor<ADynamicLightActor>(
         ADynamicLightActor::StaticClass(), FinalPosition, Rotation);
+    Light->InitLight(BrushStroke.LightType); // BrushType is your ELightBrushType
+    UE_LOG(LogTemp, Warning, TEXT("Light Type Passed to InitLight: %s"), *GetLightTypeName(BrushStroke.LightType));
+    Light->SetFolderPath(FName("Digger/DynamicLights"));
 
     if (Light)
     {
@@ -2215,6 +2261,12 @@ void ADiggerManager::BeginPlay()
     UE_LOG(LogTemp, Warning, TEXT("ChunkMap contains %d chunks"), ChunkMap.Num());
 
     QuickDebugTest();
+
+    if (!bRuntimeInitDone)
+    {
+        InitRuntimeHeavy();
+        bRuntimeInitDone = true;
+    }
     
     int ChunkCount = 0;
     for (auto& ChunkPair : ChunkMap)
@@ -2279,6 +2331,83 @@ void ADiggerManager::StartHeightCaching()
 {
     // Call your async height caching method here
     PopulateAllCachedLandscapeHeights();
+}
+
+void ADiggerManager::InitEditorLightweight()
+{
+    // Keep this near zero cost. No voxel allocation, no terrain scan.
+    // e.g., set default preview radius/type so the EdMode can draw gizmos.
+    // EditorBrushRadius = FMath::Max(EditorBrushRadius, 50.f);
+}
+
+void ADiggerManager::EditorDeferredInit()
+{
+#if WITH_EDITOR
+    if (IsRuntimeLike()) return;        // safety
+    if (bEditorInitDone)  return;
+
+    // If you want the landscape cache for preview, do it once here (not in OnConstruction)
+    HeightCacheLoadingSet.Reset();
+    for (TActorIterator<ALandscapeProxy> It(GetWorld()); It; ++It)
+    {
+        if (ALandscapeProxy* Landscape = *It)
+        {
+            HeightCacheLoadingSet.Add(Landscape);
+            PopulateLandscapeHeightCache(Landscape); // consider yielding/throttling if this is big
+        }
+    }
+
+    // Light voxel/grid prep if you absolutely need it for preview (otherwise leave to runtime)
+    // FVoxelConversion::InitFromConfig(ChunkSize, Subdivisions, TerrainGridSize, GetActorLocation());
+
+    bEditorInitDone = true;
+#endif
+}
+
+void ADiggerManager::EnsureHoleShapeLibrary()
+{
+    if (IsValid(HoleShapeLibrary)) return;
+
+    // Prefer your project asset if you have one (leave null to force transient)
+    if (UHoleShapeLibrary* Loaded = LoadDefaultHoleLibrary())
+    {
+        HoleShapeLibrary = Loaded;
+        SeedHoleShapesFromFolder(HoleShapeLibrary);
+        return;
+    }
+
+    // Otherwise create a transient library so editor mode works immediately
+    UHoleShapeLibrary* Transient = NewObject<UHoleShapeLibrary>(
+        GetTransientPackage(),
+        UHoleShapeLibrary::StaticClass(),
+        FName(TEXT("TransientHoleShapeLibrary"))
+    );
+    HoleShapeLibrary = Transient;
+
+    SeedHoleShapesFromFolder(HoleShapeLibrary);
+}
+
+
+
+void ADiggerManager::InitRuntimeHeavy()
+{
+    // Full system init (runtime/PIE only)
+    // 1) Library is ensured already
+    // 2) Landscape cache
+    HeightCacheLoadingSet.Reset();
+    for (TActorIterator<ALandscapeProxy> It(GetWorld()); It; ++It)
+    {
+        if (ALandscapeProxy* Landscape = *It)
+        {
+            HeightCacheLoadingSet.Add(Landscape);
+            PopulateLandscapeHeightCache(Landscape);
+        }
+    }
+
+    // 3) Voxel config & chunk systems
+    FVoxelConversion::InitFromConfig(ChunkSize, Subdivisions, TerrainGridSize, GetActorLocation());
+
+    // 4) Any threads/async, proc mesh setup, etc.
 }
 
 
@@ -3034,17 +3163,65 @@ UWorld* ADiggerManager::GetSafeWorld() const
     return GetWorld();
 }
 
+#if WITH_EDITOR
+void ADiggerManager::EnsureDefaultHoleBP()
+{
+    if (!HoleBP)
+    {
+        FSoftObjectPath AssetPath(GDefaultHoleBPPath);
+        UObject* LoadedObj = AssetPath.TryLoad();
+
+        if (UClass* LoadedClass = Cast<UClass>(LoadedObj))
+        {
+            HoleBP = LoadedClass;
+            UE_LOG(LogTemp, Log, TEXT("Loaded Default HoleBP from %s"), GDefaultHoleBPPath);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Failed to load HoleBP from %s"), GDefaultHoleBPPath);
+        }
+    }
+}
+#endif
+
 void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 {
-    if (!HoleBP || !ActiveBrush)
+    if (!HoleBP)
     {
-        UE_LOG(LogTemp, Error, TEXT("HoleBP or ActiveBrush is null"));
-        return;
+        EnsureDefaultHoleBP();
+        if (!HoleBP)
+        {
+            UE_LOG(LogTemp, Error, TEXT("HoleBP or ActiveBrush is null"));
+            return;
+        }
+    }
+
+    if (!ActiveBrush)
+    {
+#if WITH_EDITOR
+        // Active Brush is only used in PIE
+        // Do anything we may need to do right here for the editor brush stuff.
+#else
+        if (GetWorld() && GetWorld()->IsPlayInEditor())
+        {
+            if (!ActiveBrush)
+            {
+                ActiveBrush = CreateDefaultSubobject<UVoxelBrushShape>(TEXT("ActiveBrush"));
+                
+                // Ensure brushes are ready forusage
+                ActiveBrush->InitializeBrush(ActiveBrush->GetBrushType(),ActiveBrush->GetBrushSize(),ActiveBrush->GetBrushLocation(),this);
+                InitializeBrushShapes();
+            }
+        }
+
+        if (!ActiveBrush)
+            return;
+#endif
     }
 
     FVector SpawnLocation = Stroke.BrushPosition;
     FRotator SpawnRotation = Stroke.BrushRotation;
-    FVector SpawnScale = FVector(Stroke.BrushRadius / 47.0f);
+    FVector SpawnScale = FVector(Stroke.BrushRadius / 40.0f);
 
     // Early out if subterranean
     if (GetLandscapeHeightAt(SpawnLocation) > SpawnLocation.Z + Stroke.BrushRadius * 0.6f)
@@ -3573,6 +3750,7 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
     }
 
     // Step 5: Broadcast ONLY the deduplicated islands to UI (clean reporting)
+    if (!OnIslandsDetectionStarted.IsBound())  // or check .ExecuteIfBound with guards in the toolkit
     OnIslandsDetectionStarted.Broadcast();
 
     for (const FIslandData& Island : FinalIslands)
@@ -3583,7 +3761,13 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
         BroadcastIsland.VoxelCount = Island.VoxelCount; // Deduplicated count
         BroadcastIsland.Voxels = Island.Voxels; // Deduplicated voxels
         BroadcastIsland.ReferenceVoxel = Island.ReferenceVoxel;
-        
+
+        if (!OnIslandDetected.IsBound())
+        {
+            if (DiggerDebug::Islands)
+                UE_LOG(LogTemp, Error, TEXT("OnIslandDetected not Bound."));
+            continue;  // or check .ExecuteIfBound with guards in the toolkit
+        }
         OnIslandDetected.Broadcast(BroadcastIsland);
         if (DiggerDebug::Islands)
         UE_LOG(LogTemp, Warning, TEXT("Unified Island Broadcast at %s with %d voxels"),
@@ -3629,6 +3813,18 @@ UVoxelChunk* ADiggerManager::GetOrCreateChunkAtChunk(const FIntVector& ChunkCoor
         return nullptr;
     }
 }
+
+
+bool ADiggerManager::IsGameWorld() const
+{
+    UWorld* W = GetWorld();
+    return W && (W->WorldType == EWorldType::Game || W->WorldType == EWorldType::PIE);
+}
+
+
+
+
+
 
 UVoxelChunk* ADiggerManager::GetOrCreateChunkAtCoordinates(const float& ProposedChunkX, const float& ProposedChunkY, const float& ProposedChunkZ)
 {
@@ -3930,9 +4126,17 @@ void ADiggerManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
     // Sync updated settings to FVoxelConversion using the actor's position as origin
     FVoxelConversion::InitFromConfig(ChunkSize,Subdivisions, TerrainGridSize, GetActorLocation());
 
+    if (!IsGameWorld())
+    {
+        // avoid full rebuilds in editor
+        bEditorInitDone = false;
+        return;
+    }
+    
     // Respond to property changes (e.g., ChunkSize, TerrainGridSize, etc.)
     EditorUpdateChunks();
 }
+
 
 void ADiggerManager::PostEditMove(bool bFinished)
 {
@@ -3941,7 +4145,11 @@ void ADiggerManager::PostEditMove(bool bFinished)
     // Update FVoxelConversion origin if the actor is moved in the editor
     FVoxelConversion::InitFromConfig(ChunkSize,Subdivisions, TerrainGridSize, GetActorLocation());
 
-    if (bFinished)
+    if (bFinished && !IsRuntimeLike())
+    {
+        EditorDeferredInit();
+    }
+    else if (bFinished)
     {
         EditorUpdateChunks();
     }
@@ -4014,6 +4222,31 @@ void ADiggerManager::Tick(float DeltaTime)
     }
     
     // Your existing tick code...
+}
+
+void ADiggerManager::QueueBrushPoint(const FVector& HitPointWS, float Radius, float Strength, float Hardness, uint8 Shape, uint8 Op)
+{
+    const float Spacing = (BrushResampleSpacing > 0.f) ? BrushResampleSpacing : (Radius * 0.5f);
+    if (!bHasLastSample || FVector::DistSquared(LastSamplePos, HitPointWS) >= Spacing*Spacing)
+    {
+        PendingStroke.Add({ HitPointWS, Radius, Strength, Hardness, Shape, Op });
+        LastSamplePos = HitPointWS;
+        bHasLastSample = true;
+    }
+}
+
+void ADiggerManager::ApplyPendingBrushSamples()
+{
+    if (PendingStroke.Num() == 0) return;
+
+    // TODO: replace this loop with your chunk/SDF application logic
+    for (const FBrushSample& S : PendingStroke)
+    {
+        // Currently you'd call your existing ApplyBrush(S.WorldPos, S.Radius, ...) here
+    }
+
+    PendingStroke.Reset();
+    bHasLastSample = false;
 }
 
 

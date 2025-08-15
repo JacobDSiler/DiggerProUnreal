@@ -118,6 +118,7 @@ public:
     void SpawnHoleMeshes();
     AActor* SpawnTransientActor(UWorld* InWorld, TSubclassOf<AActor> ActorClass, FVector Location, FRotator Rotation,
                                 FVector Scale);
+    void EnsureDefaultHoleBP();
 
     // Voxel manipulation
     void SetVoxel(int32 X, int32 Y, int32 Z, const float SDFValue, bool& bDig) const;

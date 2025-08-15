@@ -3,6 +3,11 @@
 #include "CoreMinimal.h"
 #include "SelectableBase.h"
 #include "FLightBrushTypes.h"
+#include "FBrushStroke.h"
+#include "Components/LightComponent.h"
+#include "Components/PointLightComponent.h"
+#include "Components/SpotLightComponent.h"
+#include "Components/DirectionalLightComponent.h"
 #include "DynamicLightActor.generated.h"
 
 UCLASS()
@@ -13,39 +18,29 @@ class DIGGERPROUNREAL_API ADynamicLightActor : public ASelectableBase
 public:
 	ADynamicLightActor();
 
-	void InitializeFromBrush(const struct FBrushStroke& BrushStroke);
-	void InitializeFromSavedData(const struct FSavedLightData& SavedData);
+	void InitLight(ELightBrushType LightType);
+
+	/** Initialize from a light brush stroke (editor or runtime) */
+	void InitializeFromBrush(const FBrushStroke& BrushStroke);
 
 protected:
 	virtual void OnConstruction(const FTransform& Transform) override;
 
 private:
-	void CreateLightComponent();
-	void SetupEditorSprite();
+	/** Creates (or recreates) the correct light component based on current cached data */
+	void CreateOrUpdateLightComponent();
 
-	UPROPERTY()
-	ELightBrushType LightType;
+	/** Put this actor into a nice nested folder path in the World Outliner (editor only) */
+	void AssignOutlinerFolder();
 
-	UPROPERTY()
-	FLinearColor LightColor;
-
-	UPROPERTY()
-	float Intensity;
-
-	UPROPERTY()
-	float Radius;
-
-	UPROPERTY()
-	float Falloff;
-
-	UPROPERTY()
-	float Angle;
+	/** Cached data from last InitializeFromBrush call */
+	ELightBrushType CachedType = ELightBrushType::Point;
+	FLinearColor    CachedColor = FLinearColor::White;
+	float           CachedIntensity = 1000.f;   // lumens (point/spot), lux (directional)
+	float           CachedRadius = 500.f;       // cm (attenuation)
+	float           CachedFalloff = 2.0f;       // only relevant for point/spot if you use it
+	float           CachedAngle = 45.f;         // degrees (spot)
 
 	UPROPERTY(Transient)
-	class ULightComponent* LightComponent;
-
-#if WITH_EDITORONLY_DATA
-	UPROPERTY(Transient)
-	class UBillboardComponent* SpriteComponent;
-#endif
+	ULightComponent* LightComponent = nullptr;
 };

@@ -8,3 +8,18 @@ enum class ELightBrushType : uint8
 	Directional UMETA(DisplayName = "Directional Light")
 	// Add more as needed
 };
+
+FORCEINLINE FString GetLightTypeName(ELightBrushType LightType)
+{
+	switch (LightType)
+	{
+	case ELightBrushType::Point:
+		return TEXT("Point Light");
+	case ELightBrushType::Spot:
+		return TEXT("Spot Light");
+	case ELightBrushType::Directional:
+		return TEXT("Directional Light");
+	default:
+		return TEXT("Unknown Light Type");
+	}
+}
