@@ -1,7 +1,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "VoxelChunk.h"
 #include "VoxelBrushTypes.h" // Include the shared header
 #include "UObject/NoExportTypes.h"
 #include "VoxelBrushShape.generated.h"

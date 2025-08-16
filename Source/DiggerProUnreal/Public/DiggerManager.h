@@ -18,6 +18,8 @@
 #include "AssetToolsModule.h"
 #include "FCustomSDFBrush.h"
 #include "IAssetTools.h"
+#include "MarchingCubes.h"
+#include "SparseVoxelGrid.h"
 #include "StaticMeshAttributes.h"
 #include "VoxelConversion.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -25,12 +27,21 @@
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "UObject/Package.h"
+#include "Voxel/VoxelEvents.h"
+#include "VoxelBrushTypes.h"
+
 
 
 #include "DiggerManager.generated.h"
 
 
+class UVoxelBrushShape;
 class AIslandActor;
+
+
+// Optional aggregate-for-brush event type
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnBrushFinished, const FVoxelModificationReport&);
+
 
 // Helper struct for an island
 struct FIsland
@@ -198,10 +209,16 @@ public:
 
     // Single delegate to track voxels modification stats for ALL chunks
     FOnVoxelsModified OnVoxelsModified;
+
+    // NEW (stub): will be broadcast once after routing a brush across chunks
+    FOnBrushFinished OnBrushFinished;
     
     void SpawnLight(const FBrushStroke& Stroke);
     void InitializeBrushShapes();
     UVoxelBrushShape* GetActiveBrushShape(EVoxelBrushType BrushType) const;
+    // Add this helper so callers don’t have to worry about init/fallback:
+    UVoxelBrushShape* GetBrushShapeForType(EVoxelBrushType BrushType);
+
     
     // In ADiggerManager class declaration
     void ApplyLightBrushInEditor(const FBrushStroke& BrushStroke);
@@ -210,13 +227,8 @@ public:
     void ApplyBrushToAllChunksPIE(FBrushStroke& BrushStroke);
     void ApplyBrushToAllChunks(FBrushStroke& BrushStroke, bool ForceUpdate);
     void ApplyBrushToAllChunks(FBrushStroke& BrushStroke);
-    bool SaveSDFBrushToFile(const FCustomSDFBrush& Brush, const FString& FilePath);
-    bool LoadSDFBrushFromFile(const FString& FilePath, FCustomSDFBrush& OutBrush);
-    bool GenerateSDFBrushFromStaticMesh(UStaticMesh* Mesh, FTransform MeshTransform, float VoxelSize,
-                                        FCustomSDFBrush& OutBrush);
 
     TArray<FIslandData> DetectUnifiedIslands();
-    FIntVector GetWorldMinChunkCoords() const;
     void RemoveUnifiedIslandVoxels(const FIslandData& Island);
 
     FCriticalSection UpdateChunksCriticalSection;
@@ -530,10 +542,6 @@ public:
     void InitializeChunks();  // Initialize all chunks
     void InitializeSingleChunk(UVoxelChunk* Chunk);  // Initialize a single chunk
     void UpdateLandscapeProxies();
-
-    // In ADiggerManager.h
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel System")
-    TMap<EVoxelBrushType, UVoxelBrushShape*> BrushShapeMap;
     
     //The world map of the voxel chunks
     UPROPERTY()
@@ -563,6 +571,13 @@ public:
 
 
 private:
+    // IBrush shape cache map.
+    UPROPERTY(Transient)
+    TMap<EVoxelBrushType, UVoxelBrushShape*> BrushShapeMap;
+    
+    // One global cache of reusable brush shapes
+    UPROPERTY(Transient)
+    TMap<EVoxelBrushType, TObjectPtr<UVoxelBrushShape>> CachedBrushShapes;
     std::mutex ChunkProcessingMutex;
     TArray<FBrushSample> PendingStroke;    // cleared each frame after apply
     float BrushResampleSpacing = 0.f;      // set to Radius*0.5f when brush changes

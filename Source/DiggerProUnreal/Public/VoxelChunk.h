@@ -6,6 +6,7 @@
 #include "FSpawnedHoleData.h"
 #include "HoleShapeLibrary.h"
 #include "VoxelBrushTypes.h"
+#include "Voxel/VoxelEvents.h"
 #include "VoxelChunk.generated.h"
 
 class ADynamicHole;
@@ -17,37 +18,6 @@ class USparseVoxelGrid;
 class UMarchingCubes;
 class UProceduralMeshComponent;
 
-
-// First, add this struct definition to your header file (e.g., in VoxelChunk.h or a separate types header)
-USTRUCT(BlueprintType)
-struct FVoxelModificationReport
-{
-    GENERATED_BODY()
-
-    UPROPERTY(BlueprintReadOnly)
-    int32 VoxelsDug = 0;  // Air voxels created
-
-    UPROPERTY(BlueprintReadOnly)
-    int32 VoxelsAdded = 0;  // Solid voxels created
-
-    UPROPERTY(BlueprintReadOnly)
-    FIntVector ChunkCoordinates;
-
-    UPROPERTY(BlueprintReadOnly)
-    FVector BrushPosition;
-
-    UPROPERTY(BlueprintReadOnly)
-    float BrushRadius = 0.0f;
-
-    // Constructor
-    FVoxelModificationReport(): ChunkCoordinates()
-    {
-    }
-};
-
-
-// Delegate to report stats about voxel operations (how many added and removed, type removed and added, etc.)
-DECLARE_MULTICAST_DELEGATE_OneParam(FOnVoxelsModified, const FVoxelModificationReport&);
 
 
 
@@ -61,6 +31,13 @@ public:
     UVoxelChunk();
     
     void Tick(float DeltaTime);
+
+    /** Per-chunk event: listeners subscribe to chunk changes here. */
+    FOnVoxelsModified& OnVoxelsModifiedEvent() { return OnVoxelsModified; }
+    const FOnVoxelsModified& OnVoxelsModifiedEvent() const { return OnVoxelsModified; }
+
+    /** Called by voxel code (CPU/GPU) to broadcast a per-chunk report. */
+    void ReportVoxelModification(const FVoxelModificationReport& Report);
     
     // Initialization
     void InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerManager* InDiggerManager);
@@ -71,7 +48,6 @@ public:
 
     UPROPERTY(EditAnywhere)
     UHoleShapeLibrary* HoleShapeLibrary;
-    int OnVoxelsModified;
 
     // In UVoxelChunk.h
     UFUNCTION()
@@ -166,16 +142,18 @@ public:
     int32 GenerateHoleID();
 
 private:
+    FOnVoxelsModified OnVoxelsModified; // event instance lives on each chunk
+    
     int32 HoleIDCounter = 0;  // Counter to generate unique Hole IDs
     
     // Array to store all holes in this chunk
     UPROPERTY()
     TArray<ADynamicHole*> SpawnedHoles;
 
-    // Cached brush shapes for performance
-    UPROPERTY()
-    TMap<EVoxelBrushType, UVoxelBrushShape*> CachedBrushShapes;
-    UVoxelBrushShape* GetBrushShapeForType(EVoxelBrushType BrushType);
+    // // Cached brush shapes for performance
+    // UPROPERTY()
+    // TMap<EVoxelBrushType, UVoxelBrushShape*> CachedBrushShapes;
+    // UVoxelBrushShape* GetBrushShapeForType(EVoxelBrushType BrushType);
     
 public:
     UFUNCTION(NetMulticast, Reliable)

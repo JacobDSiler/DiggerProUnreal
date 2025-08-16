@@ -58,9 +58,18 @@
 #include "Subsystems/EditorActorSubsystem.h"
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/Package.h"
-#include "Voxel/BrushShapes/ConeBrushShape.h"
-#include "Voxel/BrushShapes/CubeBrushShape.h"
+#include "VoxelBrushShape.h"
 #include "Voxel/BrushShapes/SphereBrushShape.h"
+#include "Voxel/BrushShapes/CubeBrushShape.h"
+#include "Voxel/BrushShapes/CylinderBrushShape.h"
+#include "Voxel/BrushShapes/ConeBrushShape.h"
+#include "Voxel/BrushShapes/CapsuleBrushShape.h"
+#include "Voxel/BrushShapes/TorusBrushShape.h"
+#include "Voxel/BrushShapes/PyramidBrushShape.h"
+#include "Voxel/BrushShapes/IcosphereBrushShape.h"
+#include "Voxel/BrushShapes/SmoothBrushShape.h"
+#include "Voxel/BrushShapes/NoiseBrushShape.h"
+
 
 // Save and Load
 #include "DiggerDebug.h"
@@ -81,6 +90,7 @@
 #include "Voxel/BrushShapes/TorusBrushShape.h"
 
 // Hole Shape Library Requirements
+#include "FSpawnedHoleData.h"
 #include "HoleBPHelpers.h"
 #include "Engine/StaticMesh.h"
 #include "UObject/SoftObjectPath.h"
@@ -912,6 +922,29 @@ UVoxelBrushShape* ADiggerManager::GetActiveBrushShape(EVoxelBrushType BrushType)
     }
     return nullptr;
 }
+
+UVoxelBrushShape* ADiggerManager::GetBrushShapeForType(EVoxelBrushType BrushType)
+{
+    // Lazy init
+    if (BrushShapeMap.Num() == 0)
+    {
+        InitializeBrushShapes();
+    }
+
+    if (UVoxelBrushShape* const* Found = BrushShapeMap.Find(BrushType))
+    {
+        return *Found;
+    }
+
+    // Fallback to Sphere if available
+    if (UVoxelBrushShape* const* Sphere = BrushShapeMap.Find(EVoxelBrushType::Sphere))
+    {
+        return *Sphere;
+    }
+
+    return nullptr;
+}
+
 
 
 /*void ADiggerManager::ApplyBrushAtCameraHit()

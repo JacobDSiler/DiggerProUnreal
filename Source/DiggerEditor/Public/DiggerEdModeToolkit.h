@@ -2,6 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DiggerManager.h" 
 #include "Engine/Engine.h"
 #include "ProcgenArcanaCaveImporter.h"
 #include "SparseVoxelGrid.h" // <-- Make sure this is included!
@@ -10,9 +11,11 @@
 #include "VoxelBrushTypes.h"
 #include "Toolkits/BaseToolkit.h"
 #include "FCustomBrushEntry.h"
+#include "FLightBrushTypes.h"
 #include "SocketIOLobbyManager.h"   
 #include "Widgets/Layout/SSeparator.h"
 #include "DiggerEdModeToolkit.generated.h" // This MUST be the last include
+
 
 
 class USocketIOLobbyManager;

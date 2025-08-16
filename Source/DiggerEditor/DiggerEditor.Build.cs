@@ -34,6 +34,7 @@ public class DiggerEditor : ModuleRules
 			"EditorStyle",
 			"ToolMenus",
 			"EditorWidgets",
+			"DiggerProUnreal",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {

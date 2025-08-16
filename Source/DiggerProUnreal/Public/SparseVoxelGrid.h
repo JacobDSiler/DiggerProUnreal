@@ -1,188 +1,160 @@
+// SparseVoxelGrid.h
+// Header that matches the CPU-first/GPU-ready SparseVoxelGrid.cpp you provided.
+
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DiggerManager.h"
+#include "UObject/Object.h"
+#include "HAL/CriticalSection.h"
+#include "Containers/Queue.h"
 #include "SparseVoxelGrid.generated.h"
 
+// Forward declarations
 class ADiggerManager;
-// Forward declaration
 class UVoxelChunk;
+class UWorld;
+struct FIslandData; // Defined elsewhere (e.g., DiggerManager.h) — do NOT redefine here.
 
-
-// Struct to hold SDF value and possibly other data like voxel material, etc.
-USTRUCT()
+// Minimal voxel payload (kept as a USTRUCT for future extensibility)
+USTRUCT(BlueprintType)
 struct FVoxelData
 {
 	GENERATED_BODY()
 
-	// SDF value for marching cubes (negative inside, positive outside, zero on the surface)
-	float SDFValue;
+	FVoxelData() = default;
+	explicit FVoxelData(float InSDFValue)
+		: SDFValue(InSDFValue) {}
 
-	// Optionally, additional data like material or color can be stored here
-	// Example: int32 MaterialID;
-
-	FVoxelData() : SDFValue(0.0f) {}
-	FVoxelData(float InSDFValue) : SDFValue(InSDFValue) {}
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel")
+	float SDFValue = 1.0f;
 };
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnIslandDetected, const FIslandData&, Island);
-
-UCLASS()
+UCLASS(BlueprintType)
 class DIGGERPROUNREAL_API USparseVoxelGrid : public UObject
 {
 	GENERATED_BODY()
 
 public:
-	USparseVoxelGrid();  // Add this line to declare the constructor
+	// ------------------------------------------------------------------------------------------
+	// Lifecycle
+	// ------------------------------------------------------------------------------------------
+	USparseVoxelGrid();
 
-	// The mutex for voxel data operations.
-	FCriticalSection VoxelDataMutex;
-	
-public:
-
+	/** Initialize grid with parent chunk ref (may be null for standalone use). */
 	void Initialize(UVoxelChunk* ParentChunkReference);
+
+	/** Pull runtime values (ChunkSize, TerrainGridSize, Subdivisions) from DiggerManager. */
 	void InitializeDiggerManager();
+
+	/** Ensure DiggerManager pointer is valid. */
 	bool EnsureDiggerManager();
+
+	/** Safe world getter (works in editor/PIE). */
 	UWorld* GetSafeWorld() const;
+
+	// ------------------------------------------------------------------------------------------
+	// Landscape helpers
+	// ------------------------------------------------------------------------------------------
 	bool IsPointAboveLandscape(FVector& Point);
 	float GetLandscapeHeightAtPoint(FVector Position);
-	bool FindNearestSetVoxel(const FIntVector& Start, FIntVector& OutFound);
 
-	// Add this flag for when a border voxel is set
-	bool bBorderIsDirty = false;
-
-	void RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove);
-	
-	float GetVoxel(FIntVector Vector);
-	bool IsVoxelSolid(const FIntVector& VoxelIndex) const;
-	const FVoxelData* GetVoxelData(const FIntVector& Voxel) const;
-	FVoxelData* GetVoxelData(const FIntVector& Voxel);
-
-	// Delegate to broadcast when a new island is detected
-	UPROPERTY(BlueprintAssignable, Category = "Island Detection")
-	FOnIslandDetected OnIslandDetected;
-	
-
-	//A public getter for VoxelData
-	const TMap<FIntVector, FVoxelData>& GetVoxel() const { return VoxelData; }
-	
-	// Adds a voxel at the given coordinates with the provided SDF value
+	// ------------------------------------------------------------------------------------------
+	// Core voxel access / mutation
+	// ------------------------------------------------------------------------------------------
 	bool SetVoxel(FIntVector Position, float SDFValue, bool bDig);
-	bool SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig);
+	bool SetVoxel(int32 X, int32 Y, int32 Z, float SDFValue, bool bDig);
+	
 
+	void SetVoxelData(const TMap<FIntVector, FVoxelData>& InData);
+	const FVoxelData* GetVoxelData(const FIntVector& Voxel) const;
+	FVoxelData*       GetVoxelData(const FIntVector& Voxel);
+
+	float GetVoxel(FIntVector Vector);
+	float GetVoxel(int32 X, int32 Y, int32 Z);
+	float GetVoxel(int32 X, int32 Y, int32 Z) const;
+
+	bool  IsVoxelSolid(const FIntVector& VoxelIndex) const;
+	bool  VoxelExists(int32 X, int32 Y, int32 Z) const;
+
+	// ------------------------------------------------------------------------------------------
+	// Queries / helpers
+	// ------------------------------------------------------------------------------------------
+	bool FindNearestSetVoxel(const FIntVector& StartCoords, FIntVector& OutVoxel);
+
+	bool HasVoxelAt(const FIntVector& Key) const;
+	bool HasVoxelAt(int32 X, int32 Y, int32 Z) const;
+	
+	TMap<FIntVector, FVoxelData> GetAllVoxels() const;
+	TMap<FIntVector, float> GetAllVoxelsSDF() const;
+
+
+	void LogVoxelData() const;
+
+	// ------------------------------------------------------------------------------------------
+	// Serialization
+	// ------------------------------------------------------------------------------------------
 	bool SerializeToArchive(FArchive& Ar);
 	bool SerializeFromArchive(FArchive& Ar);
 
-	// Retrieves the voxel's SDF value; returns true if the voxel exists
-	float GetVoxel(int32 X, int32 Y, int32 Z);
-	float GetVoxel(int32 X, int32 Y, int32 Z) const;
-	bool HasVoxelAt(const FIntVector& Key) const;
-
-	bool HasVoxelAt(int32 X, int32 Y, int32 Z) const;
-	// Method to get all voxel data
-	TMap<FIntVector, float> GetAllVoxels() const;
-	
-	// Checks if a voxel exists at the given coordinates
-	bool VoxelExists(int32 X, int32 Y, int32 Z) const;
-	
-	// Logs the current voxels and their SDF values
-	void LogVoxelData() const;
-	// Existing RenderVoxels method - called frequently
-	void RenderVoxels();
-
-	bool CollectIslandAtPosition(const FVector& Center, TArray<FIntVector>& OutVoxels);
-
-	bool ExtractIslandAtPosition(
-	const FVector& Center,
-	USparseVoxelGrid*& OutTempGrid,
-	TArray<FIntVector>& OutVoxels);
-	FIslandData DetectIsland(float SDFThreshold, const FIntVector& StartPosition);
-
-
-	void SetParentChunkCoordinates(FIntVector& NewParentChunkPosition)
-	{
-		this->ParentChunkCoordinates = NewParentChunkPosition;
-	}
-
-
-	UFUNCTION(BlueprintCallable, Category = "Voxel Islands")
-	bool ExtractIslandByVoxel(const FIntVector& LocalVoxelCoords, USparseVoxelGrid*& OutIslandGrid, TArray<FIntVector>& OutIslandVoxels);
-	
-	UFUNCTION(BlueprintCallable, Category = "Voxel")
-	TArray<FIslandData> DetectIslands(float SDFThreshold = 0.0f);
+	// ------------------------------------------------------------------------------------------
+	// Removal / batch ops
+	// ------------------------------------------------------------------------------------------
+	void RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove);
 	void RemoveSpecifiedVoxels(const TArray<FIntVector>& LocalVoxels);
 	bool RemoveVoxel(const FIntVector& LocalVoxel);
 
-	UPROPERTY(EditAnywhere, Category="Debug")
-	FVector DebugRenderOffset = FVector(- FVoxelConversion::ChunkWorldSize*0.5f,- FVoxelConversion::ChunkWorldSize*0.5f,- FVoxelConversion::ChunkWorldSize*0.5f);
-	
-	void SynchronizeBordersWithNeighbors();
+	// ------------------------------------------------------------------------------------------
+	// Island tools
+	// ------------------------------------------------------------------------------------------
+	bool CollectIslandAtPosition(const FVector& Center, TArray<FIntVector>& OutVoxels);
 
-	FVector3d GetParentChunkCoordinatesV3D() const
-	{
-		float X=ParentChunkCoordinates.X;
-		float Y=ParentChunkCoordinates.Y;
-		float Z=ParentChunkCoordinates.Z;
-		return FVector3d(X,Y,Z);
-	}
-	
-	FIntVector GetParentChunkCoordinates() const
-	{
-		return ParentChunkCoordinates;
-	}
-	
-	// The sparse voxel data map, keyed by 3D coordinates, storing FVoxelData
+	bool ExtractIslandByVoxel(const FIntVector& LocalVoxelCoords,
+		USparseVoxelGrid*& OutIslandGrid,
+		TArray<FIntVector>& OutIslandVoxels);
+
+	bool ExtractIslandAtPosition(const FVector& WorldPosition,
+		USparseVoxelGrid*& OutGrid,
+		TArray<FIntVector>& OutVoxels);
+
+	FIslandData          DetectIsland(float SDFThreshold, const FIntVector& StartPosition);
+	TArray<FIslandData>  DetectIslands(float SDFThreshold);
+
+	// ------------------------------------------------------------------------------------------
+	// Debug draw
+	// ------------------------------------------------------------------------------------------
+	UFUNCTION(BlueprintCallable, Category="Voxel|Debug")
+	void RenderVoxels();
+
+	// ------------------------------------------------------------------------------------------
+	// Accessors
+	// ------------------------------------------------------------------------------------------
+	FORCEINLINE UVoxelChunk* GetParentChunk() const { return ParentChunk; }
+	FORCEINLINE FIntVector   GetParentChunkCoordinates() const { return ParentChunkCoordinates; }
+
+public:
+	// Context
+	UPROPERTY() ADiggerManager* DiggerManager = nullptr;
+	UPROPERTY() UVoxelChunk*    ParentChunk   = nullptr;
+	UPROPERTY() UWorld*         World         = nullptr;
+
+	// Grid settings (cached for convenience)
+	UPROPERTY() FIntVector ParentChunkCoordinates = FIntVector::ZeroValue;
+	UPROPERTY() int32      TerrainGridSize = 0;
+	UPROPERTY() int32      Subdivisions    = 0;
+	UPROPERTY() int32      ChunkSize       = 0;
+
+	// Sparse CPU storage
 	TMap<FIntVector, FVoxelData> VoxelData;
 
-	
-private:
-	//Baked SDF for BaseSDF values for after the undo queue brush strokes fall out the end of the queue and get baked.
-	TMap<FIntVector, FVoxelData> BakedSDF;
-	
-	int32 ChunkSize = 32;  // Number of subdivisions per grid size
+	// Debug
+	UPROPERTY(EditAnywhere, Category="Voxel|Debug")
+	FVector DebugRenderOffset = FVector::ZeroVector;
 
-
-private:
-	//The VoxelSize which will be set to the VoxelSize within DiggerManager during InitializeDiggerManager;
-	int LocalVoxelSize;
-	
-	//Reference to the DiggerManager
-	UPROPERTY()
-	ADiggerManager* DiggerManager;
-	
-	// Declare but don't initialize here
-	UPROPERTY()
-	UVoxelChunk* ParentChunk;
-
-public:
-	[[nodiscard]] UVoxelChunk* GetParentChunk() const
-	{
-		return ParentChunk;
-	}
-
-	void SetVoxelData(const TMap<FIntVector, FVoxelData>& InData)
-	{
-		VoxelData = InData;
-	}
+	// Neighbor sync hint
+	UPROPERTY(VisibleAnywhere, Category="Voxel")
+	bool bBorderIsDirty = false;
 
 private:
-	UPROPERTY()
-	UWorld* World;
-
-public:
-	[[nodiscard]] ADiggerManager* GetDiggerManager() const
-	{
-		return DiggerManager;
-	}
-
-private:
-	FIntVector WorldToChunkSpace(float x, float y, float z) const
-	{/* Calculate chunk space coordinates*/ return FIntVector(x, y, z) / (ChunkSize * TerrainGridSize);}
-
-private:
-	UPROPERTY()
-	FIntVector ParentChunkCoordinates;
-	
-	int TerrainGridSize;
-	int Subdivisions;
+	// Thread safety for CPU map (kept private; cpp uses FScopeLock on this)
+	mutable FCriticalSection VoxelDataMutex;
 };

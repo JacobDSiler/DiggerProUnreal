@@ -9,7 +9,6 @@
 #include "MarchingCubes.h"
 #include "SparseVoxelGrid.h"
 #include "DiggerProUnreal/Public/Voxel/VoxelBrushHelpers.h" // or wherever you put SetDigShellVoxels
-#include "VoxelBrushShape.h"
 #include "VoxelBrushTypes.h"
 #include "VoxelConversion.h"
 #include "VoxelLogManager.h"
@@ -20,16 +19,6 @@
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDeviceNull.h"
 #include "Serialization/BufferArchive.h"
-#include "Voxel/BrushShapes/CapsuleBrushShape.h"
-#include "Voxel/BrushShapes/ConeBrushShape.h"
-#include "Voxel/BrushShapes/CubeBrushShape.h"
-#include "Voxel/BrushShapes/CylinderBrushShape.h"
-#include "Voxel/BrushShapes/IcosphereBrushShape.h"
-#include "Voxel/BrushShapes/NoiseBrushShape.h"
-#include "Voxel/BrushShapes/PyramidBrushShape.h"
-#include "Voxel/BrushShapes/SmoothBrushShape.h"
-#include "Voxel/BrushShapes/SphereBrushShape.h"
-#include "Voxel/BrushShapes/TorusBrushShape.h"
 
 
 struct FSpawnedHoleData;
@@ -69,6 +58,19 @@ void UVoxelChunk::SetUniqueSectionIndex() {
 }
 
 
+void UVoxelChunk::ReportVoxelModification(const FVoxelModificationReport& Report)
+{
+	// Per-chunk broadcast
+	OnVoxelsModified.Broadcast(Report);
+
+	// OPTIONAL: temporary backward-compat forwarding to manager’s global event.
+	// Remove this once you fully migrate listeners to per-chunk subscriptions.
+	if (ADiggerManager* Mgr = GetDiggerManager())
+	{
+		// If you want zero duplicates now, comment the next line out:
+		Mgr->OnVoxelsModified.Broadcast(Report);
+	}
+}
 
 void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerManager* InDiggerManager)
 {
@@ -823,228 +825,25 @@ void UVoxelChunk::WriteToOverflows(const FIntVector& LocalVoxelCoords,
     }
 }
 
-void UVoxelChunk::InitializeBrushShapes()
-{
-	if (CachedBrushShapes.Num() == 0)
-	{
-		CachedBrushShapes.Add(EVoxelBrushType::Sphere, NewObject<USphereBrushShape>(this));
-		CachedBrushShapes.Add(EVoxelBrushType::Cube, NewObject<UCubeBrushShape>(this));
-		CachedBrushShapes.Add(EVoxelBrushType::Cylinder, NewObject<UCylinderBrushShape>(this));
-		CachedBrushShapes.Add(EVoxelBrushType::Cone, NewObject<UConeBrushShape>(this));
-		CachedBrushShapes.Add(EVoxelBrushType::Capsule, NewObject<UCapsuleBrushShape>(this));
-		CachedBrushShapes.Add(EVoxelBrushType::Torus, NewObject<UTorusBrushShape>(this));
-		CachedBrushShapes.Add(EVoxelBrushType::Pyramid, NewObject<UPyramidBrushShape>(this));
-		CachedBrushShapes.Add(EVoxelBrushType::Icosphere, NewObject<UIcosphereBrushShape>(this));
-		CachedBrushShapes.Add(EVoxelBrushType::Smooth, NewObject<USmoothBrushShape>(this));
-		CachedBrushShapes.Add(EVoxelBrushType::Noise, NewObject<UNoiseBrushShape>(this));
-	}
-}
-
-UVoxelBrushShape* UVoxelChunk::GetBrushShapeForType(EVoxelBrushType BrushType)
-{
-	InitializeBrushShapes();
-    
-	UVoxelBrushShape** FoundShape = CachedBrushShapes.Find(BrushType);
-	if (FoundShape && *FoundShape)
-	{
-		return *FoundShape;
-	}
-    
-	UE_LOG(LogTemp, Warning, TEXT("Unknown brush type %d, defaulting to Sphere"), (int32)BrushType);
-	return CachedBrushShapes[EVoxelBrushType::Sphere];
-}
-
 void UVoxelChunk::MulticastApplyBrushStroke_Implementation(const FBrushStroke& Stroke)
 {
 	ApplyBrushStroke(Stroke);
 }
-/*
-void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
-{
-    // Get the specific brush shape for this stroke type
-    UVoxelBrushShape* BrushShape = GetBrushShapeForType(Stroke.BrushType);
 
-    if (!DiggerManager || !BrushShape || !SparseVoxelGrid)
-    {
-        if (DiggerDebug::Brush || DiggerDebug::Manager || DiggerDebug::Voxels || DiggerDebug::Error)
-        {
-            UE_LOG(LogTemp, Error, TEXT("Null pointer in UVoxelChunk::ApplyBrushStroke - DiggerManager: %s, BrushShape: %s, SparseVoxelGrid: %s"), 
-                   DiggerManager ? TEXT("Valid") : TEXT("NULL"),
-                   BrushShape ? TEXT("Valid") : TEXT("NULL"), 
-                   SparseVoxelGrid ? TEXT("Valid") : TEXT("NULL"));
-        }
-        return;
-    }
-
-    // Get chunk origin and voxel size - cache these values
-    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
-    const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
-    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
-    const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
-    const float HalfVoxelSize = CachedVoxelSize * 0.5f;
-
-    // Get brush-specific bounds
-    FVector BrushBounds = CalculateBrushBounds(Stroke);
-
-    // Convert brush bounds to voxel space
-    const float VoxelSpaceBoundsX = BrushBounds.X / CachedVoxelSize;
-    const float VoxelSpaceBoundsY = BrushBounds.Y / CachedVoxelSize;
-    const float VoxelSpaceBoundsZ = BrushBounds.Z / CachedVoxelSize;
-
-    // Convert brush position to local voxel coordinates
-    const FVector LocalBrushPos = Stroke.BrushPosition - ChunkOrigin;
-    const FIntVector VoxelCenter = FIntVector(
-        FMath::FloorToInt((LocalBrushPos.X + HalfChunkSize) / CachedVoxelSize),
-        FMath::FloorToInt((LocalBrushPos.Y + HalfChunkSize) / CachedVoxelSize),
-        FMath::FloorToInt((LocalBrushPos.Z + HalfChunkSize) / CachedVoxelSize)
-    );
-
-    // Calculate bounding box for THIS chunk's domain INCLUDING overflow slab (-1 to VoxelsPerChunk)
-    // This chunk is responsible for voxels from -1 to VoxelsPerChunk in each dimension
-    const int32 MinX = FMath::Max(-1, FMath::FloorToInt(VoxelCenter.X - VoxelSpaceBoundsX));
-    const int32 MaxX = FMath::Min(VoxelsPerChunk, FMath::CeilToInt(VoxelCenter.X + VoxelSpaceBoundsX));
-    const int32 MinY = FMath::Max(-1, FMath::FloorToInt(VoxelCenter.Y - VoxelSpaceBoundsY));
-    const int32 MaxY = FMath::Min(VoxelsPerChunk, FMath::CeilToInt(VoxelCenter.Y + VoxelSpaceBoundsY));
-    const int32 MinZ = FMath::Max(-1, FMath::FloorToInt(VoxelCenter.Z - VoxelSpaceBoundsZ));
-    const int32 MaxZ = FMath::Min(VoxelsPerChunk, FMath::CeilToInt(VoxelCenter.Z + VoxelSpaceBoundsZ));
-
-    // Calculate sizes for each dimension
-    const int32 SizeX = MaxX - MinX + 1;
-    const int32 SizeY = MaxY - MinY + 1;
-    const int32 SizeZ = MaxZ - MinZ + 1;
-
-    // Check for valid sizes before any allocation or work
-    if (SizeX <= 0 || SizeY <= 0 || SizeZ <= 0)
-    {
-        if (DiggerDebug::Error)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("ApplyBrushStroke: Invalid brush bounds: SizeX=%d SizeY=%d SizeZ=%d (MinX=%d MaxX=%d MinY=%d MaxY=%d MinZ=%d MaxZ=%d)"), 
-                SizeX, SizeY, SizeZ, MinX, MaxX, MinY, MaxY, MinZ, MaxZ);
-        }
-        return;
-    }
-
-    // Thread-safe counter and array for air voxels below terrain
-    FThreadSafeCounter ModifiedVoxels;
-    TArray<FIntVector> AirVoxelsBelowTerrain;
-
-    // Pre-filter voxels and compute terrain heights on game thread using precise queries
-    struct FVoxelInfo
-    {
-        FIntVector Coords;
-        FVector WorldPos;
-        float TerrainHeight;
-    };
-    
-    TArray<FVoxelInfo> ValidVoxels;
-    
-    // First pass: filter voxels by distance and compute precise terrain heights on game thread
-    FVector AdjustedBrushPos = Stroke.BrushPosition + Stroke.BrushOffset;
-    float OuterRadius = Stroke.BrushRadius + Stroke.BrushFalloff;
-    float OuterRadiusSq = OuterRadius * OuterRadius;
-    
-    for (int32 X = MinX; X <= MaxX; ++X)
-    {
-        for (int32 Y = MinY; Y <= MaxY; ++Y)
-        {
-            for (int32 Z = MinZ; Z <= MaxZ; ++Z)
-            {
-                // Convert voxel coordinates to center-aligned world position
-                const FVector WorldPos = ChunkOrigin + FVector(
-                    (X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
-                    (Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
-                    (Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
-                );
-
-                // Quick distance check to filter out obviously irrelevant voxels
-                float DistanceToBrushSq = FVector::DistSquared(WorldPos, AdjustedBrushPos);
-                if (DistanceToBrushSq > OuterRadiusSq)
-                {
-                    continue;
-                }
-
-                // Get precise landscape height using modified DiggerManager method (cache-free)
-                TOptional<float> Height = DiggerManager->SampleLandscapeHeight(DiggerManager->GetLandscapeProxyAt(WorldPos), WorldPos);
-                float TerrainHeight = Height.IsSet() ? Height.GetValue() : -10000000.f;
-
-                // Store voxel info for parallel processing
-                FVoxelInfo VoxelInfo;
-                VoxelInfo.Coords = FIntVector(X, Y, Z);
-                VoxelInfo.WorldPos = WorldPos;
-                VoxelInfo.TerrainHeight = TerrainHeight;
-                
-                ValidVoxels.Add(VoxelInfo);
-            }
-        }
-    }
-
-    // Process valid voxels in parallel (terrain heights already computed with precise queries)
-    ParallelFor(ValidVoxels.Num(), [&](int32 VoxelIndex)
-    {
-        const FVoxelInfo& VoxelInfo = ValidVoxels[VoxelIndex];
-        const FIntVector& Coords = VoxelInfo.Coords;
-        const FVector& WorldPos = VoxelInfo.WorldPos;
-        const float TerrainHeight = VoxelInfo.TerrainHeight;
-        const bool bAboveTerrain = WorldPos.Z >= TerrainHeight;
-
-        // Calculate SDF value using the specific brush shape with precise terrain height
-        const float SDF = BrushShape->CalculateSDF(WorldPos, Stroke, TerrainHeight);
-
-        // Apply brush operation based on type with proper terrain awareness + EXPLICIT AIR CREATION
-        if (Stroke.bDig)
-        {
-            // For digging, EXPLICITLY create air where SDF indicates we're inside the shape
-            if (SDF > 0.1f) // Threshold to filter out noise
-            {
-                // CRITICAL: Explicitly create AIR voxels - this IS digging!
-                SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, true); // true = EXPLICIT AIR
-                
-                // Track air voxels below terrain for solid shell creation
-                if (!bAboveTerrain)
-                {
-                    FScopeLock Lock(&BrushStrokeMutex);
-                    AirVoxelsBelowTerrain.Add(Coords);
-                }
-                
-                ModifiedVoxels.Increment();
-            }
-        }
-        else
-        {
-            // For adding, create solid where SDF is negative
-            if (SDF < -0.1f) // Threshold to filter out noise
-            {
-                SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, false); // false = solid
-                ModifiedVoxels.Increment();
-            }
-        }
-    });
-
-    // Create shell of solid voxels around air voxels below terrain
-    // This is ESSENTIAL for marching cubes to detect isosurfaces
-    if (!AirVoxelsBelowTerrain.IsEmpty())
-    {
-        CreateSolidShellAroundAirVoxels(AirVoxelsBelowTerrain);
-    }
-
-    // Optional: Log performance info in debug builds
-    #if UE_BUILD_DEBUG
-    if (ModifiedVoxels.GetValue() > 0)
-    {
-        if (DiggerDebug::Chunks || DiggerDebug::Voxels)
-        {
-            UE_LOG(LogTemp, Message, TEXT("ApplyBrushStroke modified %d voxels in chunk %s using %s brush"), 
-                   ModifiedVoxels.GetValue(), *ChunkCoordinates.ToString(), *UEnum::GetValueAsString(Stroke.BrushType));
-        }
-    }
-    #endif
-}
-*/
 
 void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 {
     // Get the specific brush shape for this stroke type
-    UVoxelBrushShape* BrushShape = GetBrushShapeForType(Stroke.BrushType);
+	UVoxelBrushShape* BrushShape = (DiggerManager)
+	? DiggerManager->GetBrushShapeForType(Stroke.BrushType)
+	: nullptr;
+
+	if (!BrushShape)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ApplyBrushStroke: No brush shape for type %d"), (int32)Stroke.BrushType);
+		return;
+	}
+
 
     if (!DiggerManager || !BrushShape || !SparseVoxelGrid)
     {
@@ -1826,7 +1625,7 @@ USparseVoxelGrid* UVoxelChunk::GetSparseVoxelGrid() const
 
 TMap<FIntVector, float> UVoxelChunk::GetActiveVoxels() const
 {
-	return GetSparseVoxelGrid()->GetAllVoxels();
+	return GetSparseVoxelGrid()->GetAllVoxelsSDF();
 }
 
 
