@@ -223,6 +223,7 @@ void FDiggerEdMode::EnsurePreviewExists()
     Preview = Actor;
 }
 
+
 void FDiggerEdMode::DestroyPreview()
 {
     if (Preview.IsValid())
