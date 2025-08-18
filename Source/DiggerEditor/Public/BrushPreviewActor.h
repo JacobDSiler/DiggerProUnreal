@@ -21,7 +21,7 @@ enum class EBrushPreviewShape : uint8
 	Torus
 };
 
-UCLASS(NotBlueprintable, NotPlaceable)
+UCLASS(NotBlueprintable, NotPlaceable, Transient)
 class DIGGEREDITOR_API ABrushPreviewActor : public AActor   // 👈 if in DiggerEditor module
 {
 	GENERATED_BODY()

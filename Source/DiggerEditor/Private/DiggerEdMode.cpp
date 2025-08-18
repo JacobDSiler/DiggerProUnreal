@@ -270,11 +270,7 @@ bool FDiggerEdMode::TraceUnderCursor(FEditorViewportClient* InViewportClient, FH
 FDiggerEdMode::FBrushUIParams FDiggerEdMode::GetCurrentBrushUI() const
 {
     FBrushUIParams P;
-
-    // TODO: Replace these with your real sources (Toolkit / DiggerManager / ActiveBrush)
-    // Example pulls (pseudo):
-    // const auto* TK = Toolkit.IsValid() ? Toolkit.Get() : nullptr;
-    // ADiggerManager* DM = FDiggerEditorAccess::GetDiggerManager();
+    
     if (auto DiggerToolkit = GetDiggerToolkit())
     {
         P.RadiusXYZ  = FVector(DiggerToolkit ? DiggerToolkit->GetBrushRadius() : 64.f);
@@ -330,7 +326,8 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
         Shape, {}
     );
 
-    UE_LOG(LogTemp, Warning, TEXT("Brush Radius: %s"), *P.RadiusXYZ.ToString());
+    if (DiggerDebug::Brush)
+        UE_LOG(LogTemp, Warning, TEXT("Brush Radius: %s"), *P.RadiusXYZ.ToString());
 }
 
 
