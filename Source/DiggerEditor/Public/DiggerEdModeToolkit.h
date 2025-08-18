@@ -2,6 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DiggerEdMode.h"
 #include "DiggerManager.h" 
 #include "Engine/Engine.h"
 #include "ProcgenArcanaCaveImporter.h"
@@ -556,6 +557,14 @@ private:
 	float BrushRadius = 50.0f;
 	float BrushStrength = 0.8f;
 	float BrushFalloff = 0.2f;
+
+public:
+	[[nodiscard]] float GetBrushFalloff() const
+	{
+		return BrushFalloff;
+	}
+
+private:
 	float BrushRotX = 0.0f;
 	float BrushRotY = 0.0f;
 	float BrushRotZ = 0.0f;

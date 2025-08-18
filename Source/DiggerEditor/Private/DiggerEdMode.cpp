@@ -1,16 +1,24 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "DiggerEdMode.h"
+#include "BrushPreviewActor.h"
+#include "CollisionQueryParams.h"
 #include "DiggerEditorAccess.h"
 #include "DiggerEdModeToolkit.h"
 #include "DiggerManager.h"
+#include "DrawDebugHelpers.h"
+#include "Editor.h"
 #include "EditorModeManager.h"
 #include "EditorViewportClient.h"
 #include "EngineUtils.h"
 #include "Landscape.h"
-#include "Toolkits/ToolkitManager.h"
-#include "DrawDebugHelpers.h"
+#include "SceneManagement.h" // Required for DrawWireSphere, DrawWireBox, etc.
 #include "Selection.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInterface.h"
+#include "Toolkits/ToolkitManager.h"
 
 #define LOCTEXT_NAMESPACE "DiggerEditorMode"
 
@@ -26,7 +34,6 @@ void FDiggerEdMode::DeselectAllSceneActors()
     GEditor->GetSelectedActors()->DeselectAll();
 }
 
-// forward
 // forward
 static ADiggerManager* FindExistingManager(UWorld* World)
 {
@@ -93,14 +100,20 @@ void FDiggerEdMode::Enter()
         Toolkit->Init(Owner->GetToolkitHost());
     }
 
-    // New: make sure a manager + library exist so the mode can paint safely
     EnsureDiggerPrereqs();
+
+    // NEW: create preview once
+    EnsurePreviewExists();
 }
+
 
 
 
 void FDiggerEdMode::Exit()
 {
+    // NEW: Clean up preview
+    DestroyPreview();
+
     if (Toolkit.IsValid())
     {
         FDiggerEditorAccess::SetEditorModeActive(false);
@@ -109,6 +122,7 @@ void FDiggerEdMode::Exit()
     }
     FEdMode::Exit();
 }
+
 
 bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVector& OutHitLocation, FHitResult& OutHit)
 {
@@ -187,9 +201,144 @@ bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVec
     return false;
 }
 
+// ----- Spawning / Destroying -----
+
+void FDiggerEdMode::EnsurePreviewExists()
+{
+    if (Preview.IsValid())
+        return;
+
+    UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+    if (!World) return;
+
+    ABrushPreviewActor* Actor = World->SpawnActor<ABrushPreviewActor>();
+    if (!Actor) return;
+
+    // Use engine built-in sphere for quick testing (no custom material yet)
+    UStaticMesh* UnitSphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+    UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/DiggerEditor/M_DiggerBrushPreview.M_DiggerBrushPreview")); // your path
+    Actor->Initialize(UnitSphere, BaseMat);
+    Actor->SetVisible(true);
+
+    Preview = Actor;
+}
+
+void FDiggerEdMode::DestroyPreview()
+{
+    if (Preview.IsValid())
+    {
+        Preview->Destroy();
+        Preview.Reset();
+    }
+}
+
+// ----- Mouse Hit → Preview Update -----
+
+bool FDiggerEdMode::TraceUnderCursor(FEditorViewportClient* InViewportClient, FHitResult& OutHit) const
+{
+    if (!InViewportClient) return false;
+
+    UWorld* World = InViewportClient->GetWorld();
+    if (!World) return false;
+
+    // Build a ray from screen to world
+    FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
+        InViewportClient->Viewport, InViewportClient->GetScene(), InViewportClient->EngineShowFlags)
+        .SetRealtimeUpdate(true));
+
+    FSceneView* View = InViewportClient->CalcSceneView(&ViewFamily);
+    if (!View) return false;
+
+    FIntPoint MousePos;
+    InViewportClient->Viewport->GetMousePos(MousePos);
+
+    FVector WorldOrigin, WorldDirection;
+    View->DeprojectFVector2D(FVector2D(MousePos), /*out*/WorldOrigin, /*out*/WorldDirection);
+
+    const FVector Start = WorldOrigin;
+    const FVector End   = Start + WorldDirection * 100000.f;
+
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(DiggerPreviewTrace), /*bTraceComplex*/ true);
+    Params.bReturnPhysicalMaterial = false;
+    Params.AddIgnoredActor(Preview.IsValid() ? Preview.Get() : nullptr);
+
+    // Trace against visibility by default; include landscape + static meshes
+    return World->LineTraceSingleByChannel(OutHit, Start, End, ECollisionChannel::ECC_Visibility, Params);
+}
+
+FDiggerEdMode::FBrushUIParams FDiggerEdMode::GetCurrentBrushUI() const
+{
+    FBrushUIParams P;
+
+    // TODO: Replace these with your real sources (Toolkit / DiggerManager / ActiveBrush)
+    // Example pulls (pseudo):
+    // const auto* TK = Toolkit.IsValid() ? Toolkit.Get() : nullptr;
+    // ADiggerManager* DM = FDiggerEditorAccess::GetDiggerManager();
+    if (auto DiggerToolkit = GetDiggerToolkit())
+    {
+        P.RadiusXYZ  = FVector(DiggerToolkit ? DiggerToolkit->GetBrushRadius() : 64.f);
+        P.Falloff    = DiggerToolkit ? DiggerToolkit->GetBrushFalloff() : 0.25f;
+        P.bAdd       = DiggerToolkit ? DiggerToolkit->IsDigMode() : true;
+        //P.CellSize   = (DM && DM->Subdivisions>0) ? DM->TerrainGridSize / float(DM->Subdivisions) : 50.f;
+    }
+    
+    // Map your real brush type to enum (keep a stable mapping)
+    // P.ShapeType  = MapYourBrushTypeToPreviewEnum(TK ? TK->GetBrushType() : EMyBrushType::Sphere);
+
+    return P;
+}
+
+void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClient)
+{
+    EnsurePreviewExists();
+    if (!Preview.IsValid()) return;
+
+    FHitResult Hit;
+    const bool bHasHit = TraceUnderCursor(InViewportClient, Hit);
+
+    // If no hit, don’t hide—just keep last position so you can at least see the actor:
+    if (!bHasHit)
+    {
+        Preview->SetVisible(true);
+        return;
+    }
+
+    Preview->SetVisible(true);
+    const FBrushUIParams P = GetCurrentBrushUI();
+
+    EBrushPreviewShape Shape = EBrushPreviewShape::Sphere; // map your type -> shape here
+    switch (P.ShapeType)
+    {
+    default:
+    case 0: Shape = EBrushPreviewShape::Sphere; break;
+    case 1: Shape = EBrushPreviewShape::Box; break;
+    case 2: Shape = EBrushPreviewShape::Capsule; break;
+    case 3: Shape = EBrushPreviewShape::Cylinder; break;
+    case 4: Shape = EBrushPreviewShape::Cone; break;
+    case 5: Shape = EBrushPreviewShape::RoundBox; break;
+    case 6: Shape = EBrushPreviewShape::Ellipsoid; break;
+    case 7: Shape = EBrushPreviewShape::Torus; break;
+    }
+
+    Preview->UpdatePreview(
+        Hit.Location,
+        P.RadiusXYZ,
+        P.Falloff,
+        P.bAdd,
+        P.CellSize,
+        Shape, {}
+    );
+
+    UE_LOG(LogTemp, Warning, TEXT("Brush Radius: %s"), *P.RadiusXYZ.ToString());
+}
+
+
+
 void FDiggerEdMode::Render(const FSceneView* View, FViewport* Viewport, FPrimitiveDrawInterface* PDI)
 {
-    if (!Viewport) return;
+    if (!Viewport || !PDI) return;
+    return;
+
     FEditorViewportClient* ViewportClient = (FEditorViewportClient*)Viewport->GetClient();
     if (!ViewportClient) return;
 
@@ -205,20 +354,35 @@ void FDiggerEdMode::Render(const FSceneView* View, FViewport* Viewport, FPrimiti
     const float PreviewRadius = Digger->EditorBrushRadius;
     const EVoxelBrushType BrushType = Digger->EditorBrushType;
 
+    const FColor BrushColor = FColor(0, 255, 255); // Customize per brush type
+    const uint8 DepthPriority = SDPG_Foreground;
+
     switch (BrushType)
     {
     case EVoxelBrushType::Sphere:
-        DrawDebugSphere(Digger->GetWorld(), HitLocation, PreviewRadius, 32, FColor(0,255,255,64), false, 0.f, 0, 2.f);
+        DrawWireSphere(PDI, HitLocation, BrushColor, PreviewRadius, 32, DepthPriority);
         break;
+
     case EVoxelBrushType::Cube:
-        DrawDebugBox(Digger->GetWorld(), HitLocation, FVector(PreviewRadius), FColor(0,255,0,64), false, 0.f, 0, 2.f);
+        {
+            const FVector BoxExtent(PreviewRadius);
+            const FBox Box(HitLocation - BoxExtent, HitLocation + BoxExtent);
+            DrawWireBox(PDI, Box, BrushColor, DepthPriority);
+        }
         break;
+
     case EVoxelBrushType::Cylinder:
-        DrawDebugCylinder(Digger->GetWorld(), HitLocation - FVector(0,0,PreviewRadius), HitLocation + FVector(0,0,PreviewRadius), PreviewRadius, 32, FColor(255,255,0,64), false, 0.f, 0, 2.f);
+        {
+            const FVector Base = HitLocation - FVector(0, 0, PreviewRadius);
+            const FVector Top = HitLocation + FVector(0, 0, PreviewRadius);
+            DrawWireCylinder(PDI, Base, FVector(0, 0, 1), FVector(1, 0, 0), FVector(0, 1, 0), BrushColor, PreviewRadius, PreviewRadius, 32, DepthPriority);
+        }
         break;
+
     case EVoxelBrushType::Custom:
-        DrawDebugSphere(Digger->GetWorld(), HitLocation, PreviewRadius, 32, FColor(255,0,255,64), false, 0.f, 0, 2.f);
+        DrawWireSphere(PDI, HitLocation, FColor(255, 0, 255), PreviewRadius, 32, DepthPriority);
         break;
+
     default:
         break;
     }
@@ -322,6 +486,9 @@ bool FDiggerEdMode::EndTracking(FEditorViewportClient* InViewportClient, FViewpo
 
 bool FDiggerEdMode::CapturedMouseMove(FEditorViewportClient* InViewportClient, FViewport* InViewport, int32 InMouseX, int32 InMouseY)
 {
+    // NEW: Always update the preview to follow the cursor
+    UpdatePreviewAtCursor(InViewportClient);
+
     if (bIsPainting && bPaintingEnabled)
     {
         FVector2D CurrentMousePos(InMouseX, InMouseY);
@@ -489,6 +656,8 @@ void FDiggerEdMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
 {
     FEdMode::Tick(ViewportClient, DeltaTime);
 
+    UpdatePreviewAtCursor(ViewportClient); // always refresh the brush preview
+
     if (ShouldApplyContinuously())
     {
         ContinuousApplicationTimer += DeltaTime;
@@ -514,6 +683,16 @@ ADiggerManager* FDiggerEdMode::FindDiggerManager()
     for (TActorIterator<ADiggerManager> It(World); It; ++It)
         return *It;
     return nullptr;
+}
+
+TSharedPtr<FDiggerEdModeToolkit> FDiggerEdMode::GetDiggerToolkit()
+{
+    return StaticCastSharedPtr<FDiggerEdModeToolkit>(Toolkit);
+}
+
+TSharedPtr<FDiggerEdModeToolkit> FDiggerEdMode::GetDiggerToolkit() const
+{
+    return StaticCastSharedPtr<FDiggerEdModeToolkit>(Toolkit);
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -3,11 +3,15 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "EdMode.h"
-#include "EditorModeManager.h"
 #include "DiggerEdModeToolkit.h"
+#include "EditorModeManager.h"
+#include "EdMode.h"
+#include "VoxelBrushTypes.h"
 
+class ABrushPreviewActor;
+class FDiggerEdModeToolkit;
 class ADiggerManager;
+
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnDiggerModeChanged, bool);
 
@@ -43,11 +47,11 @@ public:
     bool ShouldApplyContinuously() const;
     ADiggerManager* FindDiggerManager();
 
-    // Toolkit helper
-    TSharedPtr<FDiggerEdModeToolkit> GetDiggerToolkit()
-    {
-        return StaticCastSharedPtr<FDiggerEdModeToolkit>(Toolkit);
-    }
+    // Toolkit helpers
+    TSharedPtr<FDiggerEdModeToolkit> GetDiggerToolkit();
+
+    TSharedPtr<FDiggerEdModeToolkit> GetDiggerToolkit() const;
+
 
     // Static helpers and members
     static bool IsDiggerModeActive();
@@ -55,6 +59,30 @@ public:
     static const FEditorModeID EM_DiggerEdModeId;
 
 private:
+    // Persistent Brush Actor Refernce
+    TWeakObjectPtr<ABrushPreviewActor> Preview;
+
+    // Helpers
+    void EnsurePreviewExists();
+    void DestroyPreview();
+
+    // Recomputes preview transform + params from current cursor hit
+    void UpdatePreviewAtCursor(FEditorViewportClient* InViewportClient);
+
+    // Utility to trace under the mouse into the world
+    bool TraceUnderCursor(FEditorViewportClient* InViewportClient, FHitResult& OutHit) const;
+
+    // Pull current brush UI params (adapt to your actual accessors)
+    struct FBrushUIParams
+    {
+        FVector RadiusXYZ = FVector(100.f);
+        float Falloff = 0.25f;
+        bool bAdd = true;
+        float CellSize = 50.f;
+        uint8 ShapeType = 0; // your mapping to EBrushPreviewShape
+    };
+    FBrushUIParams GetCurrentBrushUI() const;
+
     // Paint/continuous application state
     bool bIsPainting = false;
     bool bPaintingEnabled = false;
@@ -82,7 +110,7 @@ private:
         FRotator Rotation = FRotator::ZeroRotator;
         bool bIsFilled = false;
         float Angle = 0.f;
-        EVoxelBrushType BrushType = EVoxelBrushType::Sphere;
+        EVoxelBrushType BrushType;// = EVoxelBrushType::Sphere;
         bool bHiddenSeam = false;
         bool bUseAdvancedCube = false;
         float CubeHalfExtentX = 0.f;
@@ -92,7 +120,7 @@ private:
     } BrushCache;
 
     FVector LastStrokeHitLocation = FVector::ZeroVector;
-    float StrokeSpacing = 0.f; // min move before next stamp
+    float StrokeSpacing = 1.f; // min move before next stamp
     bool bIsDragging;
 
     // Internal helper
