@@ -7,13 +7,13 @@
 #include "UObject/Object.h"
 #include "HAL/CriticalSection.h"
 #include "Containers/Queue.h"
+#include "IslandData.h"
 #include "SparseVoxelGrid.generated.h"
 
 // Forward declarations
 class ADiggerManager;
 class UVoxelChunk;
 class UWorld;
-struct FIslandData; // Defined elsewhere (e.g., DiggerManager.h) — do NOT redefine here.
 
 // Minimal voxel payload (kept as a USTRUCT for future extensibility)
 USTRUCT(BlueprintType)

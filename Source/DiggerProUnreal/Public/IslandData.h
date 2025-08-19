@@ -1,5 +1,6 @@
 #pragma once
 #include "CoreMinimal.h"
+#include "VoxelInstance.h"
 #include "IslandData.generated.h"
 
 // Helper struct for an island

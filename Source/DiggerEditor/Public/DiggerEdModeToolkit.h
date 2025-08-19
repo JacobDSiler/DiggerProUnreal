@@ -12,15 +12,15 @@
 #include "Toolkits/BaseToolkit.h"
 #include "FCustomBrushEntry.h"
 #include "FLightBrushTypes.h"
-#include "SocketIOLobbyManager.h"   
+#include "SocketIOLobbyManager.h"
 #include "Widgets/Layout/SSeparator.h"
+#include "IslandData.h"
 #include "DiggerEdModeToolkit.generated.h" // This MUST be the last include
 
 
 
 class USocketIOLobbyManager;
 class IWebSocket;
-struct FIslandData;
 class ADiggerManager;
 class SUniformGridPanel;
 
