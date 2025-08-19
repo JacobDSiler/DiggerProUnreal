@@ -177,6 +177,8 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     static float DummyFloat = 0.0f;
 
     ToolkitWidget = SNew(SVerticalBox)
+        
+
 
     // ── Brush Tools ── (collapsible)
     + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
@@ -270,8 +272,81 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
                 ]
             ]
         ]
-    ]
+        ]
 #endif
+
+            // --- Persistent Debug Settings Section ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SExpandableArea)
+        .InitiallyCollapsed(true)
+        .HeaderContent()
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString("Debug Flags"))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
+        ]
+        .BodyContent()
+        [
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+            [
+                SNew(STextBlock).Text(FText::FromString("General Debug Flags"))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Verbose"), &DiggerDebug::Verbose)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Performance"), &DiggerDebug::Performance)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Normals"), &DiggerDebug::Normals)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Error"), &DiggerDebug::Error)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Holes"), &DiggerDebug::Holes)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Landscape"), &DiggerDebug::Landscape)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Voxel Conversion"), &DiggerDebug::VoxelConv)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Islands"), &DiggerDebug::Islands)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Brush"), &DiggerDebug::Brush)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Casts"), &DiggerDebug::Casts)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Threads"), &DiggerDebug::Threads)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Manager"), &DiggerDebug::Manager)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(1)
+            [
+                this->MakeDebugCheckbox(TEXT("Caves"), &DiggerDebug::Caves)
+            ]
+        ]
+    ]
     ;
 
     ScanCustomBrushFolder();
@@ -1670,7 +1745,131 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
                     false, &DummyFloat
                 )
             ]
-        ];
+
+
+            /// --- Rotate Brush Section (roll-down) ---
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
+            [
+                SNew(SButton)
+                .Text(FText::FromString("Rotate Brush"))
+                .OnClicked_Lambda([this]()
+                {
+                    bShowRotation = !bShowRotation;
+                    return FReply::Handled();
+                })
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 8)
+            [
+                SNew(SVerticalBox)
+                .Visibility_Lambda([this]() { return bShowRotation ? EVisibility::Visible : EVisibility::Collapsed; })
+
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+                [
+                    MakeRotationRow(FText::FromString("X"), BrushRotX)
+                ]
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+                [
+                    MakeRotationRow(FText::FromString("Y"), BrushRotY)
+                ]
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+                [
+                    MakeRotationRow(FText::FromString("Z"), BrushRotZ)
+                ]
+
+                // Checkbox for surface normal rotation
+                + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+                [
+                    SNew(SCheckBox)
+                    .IsChecked_Lambda([this]()
+                    {
+                        return bUseSurfaceNormalRotation ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+                    })
+                    .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+                    {
+                        bUseSurfaceNormalRotation = (NewState == ECheckBoxState::Checked);
+                    })
+                    [
+                        SNew(STextBlock).Text(FText::FromString("Align Rotation to Normal"))
+                    ]
+                ]
+
+                // ✅ Reset Button - newly added
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 4)
+                [
+                    SNew(SButton)
+                    .Text(FText::FromString("Reset All Rotations"))
+                    .HAlign(HAlign_Fill)
+                    .ButtonStyle(FAppStyle::Get(), "FlatButton.Success")
+                    .OnClicked_Lambda([this]()
+                    {
+                        BrushRotX = 0.0f;
+                        BrushRotY = 0.0f;
+                        BrushRotZ = 0.0f;
+                        return FReply::Handled();
+                    })
+                ]
+            ]
+
+            // --- Offset Brush Section (roll-down) ---
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
+            [
+                SNew(SButton)
+                .Text(FText::FromString("Offset Brush"))
+                .OnClicked_Lambda([this]()
+                {
+                    bShowOffset = !bShowOffset;
+                    return FReply::Handled();
+                })
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 8)
+            [
+                SNew(SVerticalBox)
+                .Visibility_Lambda([this]() { return bShowOffset ? EVisibility::Visible : EVisibility::Collapsed; })
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+                [
+                    MakeOffsetRow(FText::FromString("X"), BrushOffset.X)
+                ]
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+                [
+                    MakeOffsetRow(FText::FromString("Y"), BrushOffset.Y)
+                ]
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+                [
+                    MakeOffsetRow(FText::FromString("Z"), BrushOffset.Z)
+                ]
+                //Checkbox for surface normal alignment
+                + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+                [
+                    SNew(SCheckBox)
+                    .IsChecked_Lambda([this]()
+                    {
+                        return bRotateToSurfaceNormal ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+                    })
+                    .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+                    {
+                        bRotateToSurfaceNormal = (NewState == ECheckBoxState::Checked);
+                    })
+                    [
+                        SNew(STextBlock).Text(FText::FromString("Rotate to Surface Normal"))
+                    ]
+                ]
+
+                // ✅ Reset Button - newly added
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 4)
+                [
+                    SNew(SButton)
+                    .Text(FText::FromString("Reset All Offsets"))
+                    .HAlign(HAlign_Fill)
+                    .ButtonStyle(FAppStyle::Get(), "FlatButton.Success")
+                    .OnClicked_Lambda([this]()
+                    {
+                        BrushOffset = FVector::ZeroVector;
+                        return FReply::Handled();
+                    })
+                ]
+            ]
+        ]
+        ;
 }
 
 
