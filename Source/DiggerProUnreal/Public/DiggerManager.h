@@ -16,6 +16,7 @@
 #include "GameFramework/Actor.h"
 #include "FBrushStroke.h"
 #include "HoleShapeLibrary.h"
+#include "IslandData.h"
 
 #include "AssetToolsModule.h"
 #include "FCustomSDFBrush.h"
@@ -37,7 +38,6 @@
 #include "DiggerManager.generated.h"
 
 class UVoxelBrushShape;
-class IslandData;
 class AIslandActor;
 
 
@@ -79,36 +79,6 @@ struct FDebugBrushSettings
 #if WITH_EDITOR
 class FDiggerEdModeToolkit;
 #endif
-
-
-// New struct to track voxel storage location
-USTRUCT(BlueprintType)
-struct FVoxelInstance
-{
-    GENERATED_BODY()
-
-    FVoxelInstance()
-        : GlobalVoxel(FIntVector::ZeroValue)
-        , ChunkCoords(FIntVector::ZeroValue)
-        , LocalVoxel(FIntVector::ZeroValue)
-    {}
-
-    FVoxelInstance(const FIntVector& InGlobal, const FIntVector& InChunk, const FIntVector& InLocal)
-        : GlobalVoxel(InGlobal)
-        , ChunkCoords(InChunk)
-        , LocalVoxel(InLocal)
-    {}
-
-    UPROPERTY(BlueprintReadWrite)
-    FIntVector GlobalVoxel;
-    
-    UPROPERTY(BlueprintReadWrite)
-    FIntVector ChunkCoords;
-    
-    UPROPERTY(BlueprintReadWrite)
-    FIntVector LocalVoxel;
-};
-
 
 
 // Brush batching
