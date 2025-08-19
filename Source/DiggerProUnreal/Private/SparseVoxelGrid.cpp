@@ -47,7 +47,7 @@ static TAutoConsoleVariable<int32> CVarDiggerUseGPUVoxelOps(
 // Simple hardware check: require a valid RHI and compute shader support.
 static bool IsGPUAvailable()
 {
-        return (GDynamicRHI != nullptr) && GRHISupportsComputeShaders;
+        return (GDynamicRHI != nullptr);// && GRHISupportsComputeShaders;
 }
 
 static FORCEINLINE bool UseGPUBackend()

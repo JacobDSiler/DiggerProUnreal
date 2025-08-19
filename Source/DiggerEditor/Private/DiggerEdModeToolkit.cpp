@@ -211,9 +211,25 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             [
                 MakeIslandsSection()
             ]
+        ]
+    ]
+
+    // ── Additional Tools ── (collapsible)
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+    [
+        SNew(SExpandableArea)
+        .AreaTitle(FText::FromString(TEXT("── Additional Tools ──")))
+        .InitiallyCollapsed(true)
+        .BodyContent()
+        [
+            SNew(SVerticalBox)
             + SVerticalBox::Slot().AutoHeight().Padding(8)
             [
                 MakeProcgenArcanaImporterWidget()
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+            [
+                MakeLobbySection() // DiggerConnect
             ]
         ]
     ]
@@ -234,10 +250,6 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
             [
                 MakeSaveLoadSection()
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
-            [
-                MakeLobbySection() // DiggerConnect
             ]
         ]
     ]

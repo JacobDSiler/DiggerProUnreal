@@ -8,6 +8,7 @@
 			"Name": "DiggerProUnreal",
 			"Type": "Runtime",
 			"LoadingPhase": "Default",
+			"LoadingPhase": "PostConfigInit",
 			"AdditionalDependencies": [
 				"Engine"
 			]
