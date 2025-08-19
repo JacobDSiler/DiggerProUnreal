@@ -14,6 +14,9 @@
 #include "VoxelConversion.h"
 #include "DiggerDebug.h"
 
+#include "GPU/VoxelGPUBackend.h"
+#include "RHI.h"
+
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
 #include "Async/Async.h"
@@ -41,9 +44,17 @@ static TAutoConsoleVariable<int32> CVarDiggerUseGPUVoxelOps(
 	TEXT("0 = CPU voxels (default), 1 = GPU path (not yet implemented; will fall back)."),
 	ECVF_Default);
 
+// Simple hardware check: require a valid RHI and compute shader support.
+static bool IsGPUAvailable()
+{
+        return (GDynamicRHI != nullptr) && GRHISupportsComputeShaders;
+}
+
 static FORCEINLINE bool UseGPUBackend()
 {
-	return CVarDiggerUseGPUVoxelOps.GetValueOnAnyThread() != 0;
+        return !VoxelGPU::GForceCPU &&
+               CVarDiggerUseGPUVoxelOps.GetValueOnAnyThread() != 0 &&
+               IsGPUAvailable();
 }
 
 // SDF conventions
@@ -77,31 +88,32 @@ namespace
 
 namespace VoxelGPU
 {
-	static bool SetVoxel(USparseVoxelGrid* Grid, int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig)
-	{
-		// TODO: enqueue GPU kernel dispatch and staging buffer updates
-		// For now we fall back to CPU path.
-		return Grid->USparseVoxelGrid::SetVoxel(X, Y, Z, NewSDFValue, bDig);
-	}
+        static bool SetVoxel(USparseVoxelGrid* Grid, int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig)
+        {
+                // GPU path not implemented yet; ensure we execute the CPU path without
+                // re-entering this function.
+                FForceCPU Scope;
+                return Grid->SetVoxel(X, Y, Z, NewSDFValue, bDig);
+        }
 
-	static float GetVoxel(const USparseVoxelGrid* Grid, int32 X, int32 Y, int32 Z)
-	{
-		// TODO: readback or cached GPU SDF
-		return const_cast<USparseVoxelGrid*>(Grid)->USparseVoxelGrid::GetVoxel(X, Y, Z);
-	}
+        static float GetVoxel(const USparseVoxelGrid* Grid, int32 X, int32 Y, int32 Z)
+        {
+                FForceCPU Scope;
+                return const_cast<USparseVoxelGrid*>(Grid)->GetVoxel(X, Y, Z);
+        }
 
-	static void RemoveVoxels(USparseVoxelGrid* Grid, const TArray<FIntVector>& VoxelsToRemove)
-	{
-		// TODO: GPU-side sparse buffer removal
-		Grid->USparseVoxelGrid::RemoveVoxels(VoxelsToRemove);
-	}
+        static void RemoveVoxels(USparseVoxelGrid* Grid, const TArray<FIntVector>& VoxelsToRemove)
+        {
+                FForceCPU Scope;
+                Grid->RemoveVoxels(VoxelsToRemove);
+        }
 
-	static bool ExtractIslandAtPosition(USparseVoxelGrid* Grid, const FVector& WorldPosition,
-		USparseVoxelGrid*& OutGrid, TArray<FIntVector>& OutVoxels)
-	{
-		// TODO: GPU flood fill / compaction
-		return Grid->USparseVoxelGrid::ExtractIslandAtPosition(WorldPosition, OutGrid, OutVoxels);
-	}
+        static bool ExtractIslandAtPosition(USparseVoxelGrid* Grid, const FVector& WorldPosition,
+                USparseVoxelGrid*& OutGrid, TArray<FIntVector>& OutVoxels)
+        {
+                FForceCPU Scope;
+                return Grid->ExtractIslandAtPosition(WorldPosition, OutGrid, OutVoxels);
+        }
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
