@@ -13,6 +13,7 @@ public class DiggerProUnreal : ModuleRules
 
         PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private"));
 
+
         // Core runtime dependencies
         PublicDependencyModuleNames.AddRange(new string[] {
             "Core",

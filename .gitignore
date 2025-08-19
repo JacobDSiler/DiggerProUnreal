@@ -4,21 +4,8 @@
 /Binaries/
 /DerivedDataCache/
 /Intermediate/
+/Saved/
 
-# Saved data we don't want in Git
-/Saved/Autosaves/
-/Saved/Backup-*/
-/Saved/Collections/
-/Saved/Cooked/
-/Saved/Crashes/
-/Saved/Logs/
-/Saved/StagedBuilds/
-/Saved/Swarm/
-/Saved/Temp/
-
-# Keep these Saved subfolders
-!/Saved/Config/
-!/Saved/Thumbnails/
 
 # Local voxel save data (to be removed from history later)
 VoxelData/
@@ -83,4 +70,4 @@ build/
 # Local test assets
 # ===============================
 Content/Untracked/
-Backup/
+/Backup/
