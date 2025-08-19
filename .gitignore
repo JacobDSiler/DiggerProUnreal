@@ -6,11 +6,8 @@
 /Intermediate/
 
 # Saved data we don't want in Git
-/Saved
+/Saved/
 
-# Keep these Saved subfolders
-!/Saved/Config/
-!/Saved/Thumbnails/
 
 # Local voxel save data (to be removed from history later)
 Content/VoxelData/
@@ -75,8 +72,5 @@ build/
 # Local test assets
 # ===============================
 Content/Untracked/
-Backup/
-Saved
-Saved/
- S a v e d /  
+Backup/ 
  

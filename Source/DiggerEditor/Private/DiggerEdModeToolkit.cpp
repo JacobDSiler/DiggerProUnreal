@@ -213,36 +213,49 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             [
                 MakeIslandsSection()
             ]
-            + SVerticalBox::Slot().AutoHeight().Padding(8)
-            [
-                MakeProcgenArcanaImporterWidget()
-            ]
         ]
     ]
 
-    // ── Export & Data ── (collapsible)
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
-    [
-        SNew(SExpandableArea)
-        .AreaTitle(FText::FromString(TEXT("── Export & Data ──")))
-        .InitiallyCollapsed(false)
-        .BodyContent()
+        // ── Additional Tools ── (collapsible)
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
         [
-            SNew(SVerticalBox)
-            + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+            SNew(SExpandableArea)
+            .AreaTitle(FText::FromString(TEXT("── Additional Tools ──")))
+            .InitiallyCollapsed(true)
+            .BodyContent()
             [
-                MakeBuildExportSection()
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
-            [
-                MakeSaveLoadSection()
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
-            [
-                MakeLobbySection() // DiggerConnect
+                SNew(SVerticalBox)
+                + SVerticalBox::Slot().AutoHeight().Padding(8)
+                [
+                    MakeProcgenArcanaImporterWidget()
+                ]
+                + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+                [
+                    MakeLobbySection() // DiggerConnect
+                ]
             ]
         ]
-    ]
+
+        // ── Export & Data ── (collapsible)
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+        [
+            SNew(SExpandableArea)
+            .AreaTitle(FText::FromString(TEXT("── Export & Data ──")))
+            .InitiallyCollapsed(false)
+            .BodyContent()
+            [
+                SNew(SVerticalBox)
+                + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+                [
+                    MakeBuildExportSection()
+                ]
+                + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+                [
+                    MakeSaveLoadSection()
+                ]
+            ]
+        ]
+
 
 #if WITH_EDITOR && !UE_BUILD_SHIPPING
     + SVerticalBox::Slot().AutoHeight().Padding(4)
