@@ -44,7 +44,7 @@ public class DiggerProUnreal : ModuleRules
                 // If runtime code really needs editor APIs (avoid unless necessary):
                 "UnrealEd",
                 // Depend on your editor module rather than hard-adding its include paths:
-                "DiggerEditor",
+                //"DiggerEditor",
 
                 "AssetTools",
                 "EditorStyle",

@@ -3,61 +3,56 @@
 #include "CoreMinimal.h"
 
 // Voxel & Mesh Systems
-#include "FCustomSDFBrush.h"
-#include "MarchingCubes.h"
 #include "SparseVoxelGrid.h"
 #include "VoxelChunk.h"
 #include "VoxelConversion.h"
+#include "MarchingCubes.h"
+#include "FCustomSDFBrush.h"
 
-// Landscape & Island
+// Landscape & Islands
 #include "IslandActor.h"
-#include "LandscapeEdit.h"
-#include "LandscapeInfo.h"
 #include "LandscapeProxy.h"
+#include "LandscapeInfo.h"
 
-// Procedural & Static Meshes
-#include "MeshDescription.h"
+// Mesh/StaticMesh
 #include "ProceduralMeshComponent.h"
-#include "StaticMeshAttributes.h"
-#include "StaticMeshResources.h"
 #include "Engine/StaticMesh.h"
-#include "StaticMeshDescription.h"
+#include "MeshDescription.h"
+#include "StaticMeshAttributes.h"
 #include "StaticMeshOperations.h"
 
 // Engine Systems
-#include "TimerManager.h"
 #include "Engine/World.h"
+#include "TimerManager.h"
+#include "EngineUtils.h"
 
-// Async & Performance
+// Async
 #include "Async/Async.h"
 #include "Async/ParallelFor.h"
 
 // Asset Management
-#include "AssetToolsModule.h"
-#include "IAssetTools.h"
+#include "HoleShapeLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
-#include "HoleShapeLibrary.h" // <-- use the actual path to your class
 
-// File & Path Management
+// File & Paths
 #include "HAL/PlatformFilemanager.h"
-#include "Misc/FileHelper.h"
-#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
 
 // Kismet & Helpers
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMathLibrary.h"
 
-// Rendering
+// Rendering (ok in runtime)
 #include "Rendering/PositionVertexBuffer.h"
 #include "Rendering/StaticMeshVertexBuffer.h"
 
-// UObject Utilities
-#include "EditorSupportDelegates.h"
-#include "EngineUtils.h"
-#include "Subsystems/EditorActorSubsystem.h"
-#include "UObject/ConstructorHelpers.h"
-#include "UObject/Package.h"
+// Utilities
+#include "DiggerDebug.h"
+#include "Engine/Engine.h"
+#include "DiggerProUnreal/Utilities/FastDebugRenderer.h"
+
+// Brush Shapes (runtime-only classes)
 #include "VoxelBrushShape.h"
 #include "Voxel/BrushShapes/SphereBrushShape.h"
 #include "Voxel/BrushShapes/CubeBrushShape.h"
@@ -70,50 +65,18 @@
 #include "Voxel/BrushShapes/SmoothBrushShape.h"
 #include "Voxel/BrushShapes/NoiseBrushShape.h"
 
-
-// Save and Load
-#include "DiggerDebug.h"
-#include "DiggerEdMode.h"
-#include "HAL/PlatformFilemanager.h"
-#include "Misc/FileHelper.h"
-#include "Engine/Engine.h"
-
-// Brush Shapes
-#include "DynamicLightActor.h"
-#include "VoxelLogManager.h"
-#include "DiggerProUnreal/Utilities/FastDebugRenderer.h"
-#include "Voxel/BrushShapes/CapsuleBrushShape.h"
-#include "Voxel/BrushShapes/CylinderBrushShape.h"
-#include "Voxel/BrushShapes/IcosphereBrushShape.h"
-#include "Voxel/BrushShapes/PyramidBrushShape.h"
-#include "Voxel/BrushShapes/SmoothBrushShape.h"
-#include "Voxel/BrushShapes/TorusBrushShape.h"
-
-// Hole Shape Library Requirements
+// Hole BP helpers
 #include "FSpawnedHoleData.h"
 #include "HoleBPHelpers.h"
-#include "Engine/StaticMesh.h"
 #include "UObject/SoftObjectPath.h"
 
-// Editor Tool Specific Includes
-#if WITH_EDITOR
-#include "DiggerEdModeToolkit.h"
-#include "Editor.h"
-#include "ScopedTransaction.h"
-#include "Engine/Selection.h"
-#include "Editor/EditorEngine.h"
-#include "DiggerEdModeToolkit.h"
-
-// Light Component Includes
+// Lights (runtime safe)
+#include "DynamicLightActor.h"
+#include "LandscapeEdit.h"
 #include "Components/LightComponent.h"
-#include "Engine/DirectionalLight.h"
-#include "Engine/PointLight.h"
-#include "Engine/SpotLight.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SpotLightComponent.h"
-#include "HAL/FileManagerGeneric.h"
-#endif
 
 class ADynamicLightActor;
 class Editor;
@@ -409,7 +372,7 @@ TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates(const FString& Sa
     
     TArray<FString> FoundFiles;
     FString SearchPattern = SaveDir / FString::Printf(TEXT("*%s"), *CHUNK_FILE_EXTENSION);
-    FFileManagerGeneric::Get().FindFiles(FoundFiles, *SearchPattern, true, false);
+    IFileManager::Get().FindFiles(FoundFiles, *SearchPattern, true, false);
     
     for (const FString& FileName : FoundFiles)
     {
@@ -519,7 +482,7 @@ bool ADiggerManager::DeleteSaveFile(const FString& SaveFileName)
     
     // Delete all files in the directory first
     TArray<FString> FilesToDelete;
-    FFileManagerGeneric::Get().FindFilesRecursive(FilesToDelete, *SaveDir, TEXT("*"), true, false);
+    IFileManager::Get().FindFilesRecursive(FilesToDelete, *SaveDir, TEXT("*"), true, false);
     
     bool bAllFilesDeleted = true;
     for (const FString& FileToDelete : FilesToDelete)
@@ -570,40 +533,39 @@ void ADiggerManager::InvalidateSavedChunkCache(const FString& SaveFileName)
 
 void ADiggerManager::ApplyBrushInEditor(bool bDig)
 {
-    if (DiggerDebug::Brush) {
+    if (DiggerDebug::Brush)
+    {
         UE_LOG(LogTemp, Error, TEXT("ApplyBrushInEditor Called!"));
     }
-    
-    // Create the brush stroke with all the editor properties
+
     FBrushStroke BrushStroke;
-    BrushStroke.BrushPosition = EditorBrushPosition + EditorBrushOffset;
-    BrushStroke.BrushRadius = EditorBrushRadius;
-    BrushStroke.BrushRotation = EditorBrushRotation;
-    BrushStroke.bHiddenSeam = EditorBrushHiddenSeam;
-    UE_LOG(LogTemp, Warning, TEXT("Seam Type Received in DiggerManager type: %s"), EditorBrushHiddenSeam ? TEXT("true") : TEXT("false"));
-    BrushStroke.BrushType = EditorBrushType;
-    BrushStroke.bDig = bDig;
-    BrushStroke.BrushLength = EditorBrushLength;
-    BrushStroke.bIsFilled = EditorBrushIsFilled;
-    BrushStroke.BrushAngle = EditorBrushAngle;
-    BrushStroke.HoleShape = EditorBrushHoleShape;
-    BrushStroke.bUseAdvancedCubeBrush = EditorbUseAdvancedCubeBrush;
-    BrushStroke.AdvancedCubeHalfExtentX = EditorCubeHalfExtentX;
-    BrushStroke.AdvancedCubeHalfExtentY = EditorCubeHalfExtentY;
-    BrushStroke.AdvancedCubeHalfExtentZ = EditorCubeHalfExtentZ;
-    BrushStroke.BrushStrength = EditorBrushStrength; // Make sure this is set
-    // In your ApplyBrushInEditor method, add this line when creating the BrushStroke:
-    BrushStroke.LightColor = EditorBrushLightColor;
-    
-    // Set light-specific properties if it's a light brush
+    BrushStroke.BrushPosition            = EditorBrushPosition + EditorBrushOffset;
+    BrushStroke.BrushRadius              = EditorBrushRadius;
+    BrushStroke.BrushRotation            = EditorBrushRotation;
+    BrushStroke.bHiddenSeam              = EditorBrushHiddenSeam;
+    BrushStroke.BrushType                = EditorBrushType;
+    BrushStroke.bDig                     = bDig;
+    BrushStroke.BrushLength              = EditorBrushLength;
+    BrushStroke.bIsFilled                = EditorBrushIsFilled;
+    BrushStroke.BrushAngle               = EditorBrushAngle;
+    BrushStroke.HoleShape                = EditorBrushHoleShape;
+    BrushStroke.bUseAdvancedCubeBrush    = EditorbUseAdvancedCubeBrush;
+    BrushStroke.AdvancedCubeHalfExtentX  = EditorCubeHalfExtentX;
+    BrushStroke.AdvancedCubeHalfExtentY  = EditorCubeHalfExtentY;
+    BrushStroke.AdvancedCubeHalfExtentZ  = EditorCubeHalfExtentZ;
+    BrushStroke.BrushStrength            = EditorBrushStrength;
+    BrushStroke.LightColor               = EditorBrushLightColor; // default
+
     if (EditorBrushType == EVoxelBrushType::Light)
     {
-        BrushStroke.LightType = EditorBrushLightType;
+        // Reasonable defaults for non-editor (or if toolkit missing)
+        BrushStroke.LightType  = EditorBrushLightType;
         BrushStroke.LightColor = EditorBrushLightColor;
+        
 
         if (DiggerDebug::Lights || DiggerDebug::Brush)
         {
-            UE_LOG(LogTemp, Warning, TEXT("Light brush setup: LightType = %d, Color = %s"),
+            UE_LOG(LogTemp, Warning, TEXT("Light brush setup: LightType=%d Color=%s"),
                 (int32)BrushStroke.LightType,
                 *BrushStroke.LightColor.ToString());
         }
@@ -612,69 +574,34 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
         return;
     }
 
-    
-    if (EditorBrushType == EVoxelBrushType::Light)
+    // Non-light brushes
+    if (DiggerDebug::Brush)
     {
-        // Default fallback
-        //BrushStroke.LightType = ELightBrushType::Point;
-    
-        // Get both light type and color from toolkit
-        if (GLevelEditorModeTools().IsModeActive(FDiggerEdMode::EM_DiggerEdModeId))
-        {
-            UE_LOG(LogTemp, Warning, TEXT("getting both light type and color from toolkit!"));
-            FDiggerEdMode* DiggerMode = (FDiggerEdMode*)GLevelEditorModeTools().GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId);
-           // if (DiggerMode && DiggerMode->GetToolkit().IsValid())
-            {
-                TSharedPtr<FDiggerEdModeToolkit> Toolkit = StaticCastSharedPtr<FDiggerEdModeToolkit>(DiggerMode->GetToolkit());
-                if (Toolkit.IsValid())
-                {
-                    BrushStroke.LightType = Toolkit->GetCurrentLightType();
-                    BrushStroke.LightColor = Toolkit->GetCurrentLightColor(); // Add this line
+        UE_LOG(LogTemp, Warning, TEXT("DiggerManager.cpp: Extent X: %.2f  Y: %.2f  Z: %.2f"),
+            BrushStroke.AdvancedCubeHalfExtentX,
+            BrushStroke.AdvancedCubeHalfExtentY,
+            BrushStroke.AdvancedCubeHalfExtentZ);
+    }
 
-                    if (DiggerDebug::Lights || DiggerDebug::Brush)
-                    {
-                        UE_LOG(LogTemp, Warning, TEXT("Light type from toolkit: %d, Color: %s"), 
-                               (int32)BrushStroke.LightType, 
-                               *BrushStroke.LightColor.ToString());
-                    }
-                }
-            }
-        }
-        if (DiggerDebug::Lights || DiggerDebug::Brush)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("ApplyBrushInEditor: this = %p"), this);
-            UE_LOG(LogTemp, Warning, TEXT("ApplyBrushInEditor: EditorBrushType = %d"), (int32)EditorBrushType);
-        }
-    
-        // Route to light handler with the full brush stroke
-        ApplyLightBrushInEditor(BrushStroke);
-        return;
-    }
-    
-    // Handle voxel brushes (existing logic)
-    if (DiggerDebug::Brush) {
-        UE_LOG(LogTemp, Warning, TEXT("DiggerManager.cpp: Extent X: %.2f  Extent Y: %.2f  Extent Z: %.2f"),
-               BrushStroke.AdvancedCubeHalfExtentX,
-               BrushStroke.AdvancedCubeHalfExtentY,
-               BrushStroke.AdvancedCubeHalfExtentZ);
-    }
-    
     if (DiggerDebug::Brush || DiggerDebug::Casts)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushInEditor] EditorBrushPosition (World): %s"), *EditorBrushPosition.ToString());
+        UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushInEditor] EditorBrushPosition (World): %s"),
+            *EditorBrushPosition.ToString());
     }
 
     ApplyBrushToAllChunks(BrushStroke);
     ProcessDirtyChunks();
 
+#if WITH_EDITOR
     if (GEditor)
     {
         GEditor->RedrawAllViewports();
     }
+#endif
 
-    // Update islands for the UI/toolkit
     TArray<FIslandData> DetectedIslands = DetectUnifiedIslands();
 }
+
 
 void ADiggerManager::RemoveIslandAtPosition(const FVector& IslandCenter, const FIntVector& ReferenceVoxel)
 {

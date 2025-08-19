@@ -15,10 +15,13 @@
 #include "Async/Async.h"
 #include "Async/ParallelFor.h"
 #include "DiggerProUnreal/Utilities/FastDebugRenderer.h"
+#include "GPU/VoxelGPUBackend.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDeviceNull.h"
 #include "Serialization/BufferArchive.h"
+// TODO: #include "Templates/Optional.h"
+#include "HAL/CriticalSection.h"
 
 
 struct FSpawnedHoleData;
@@ -831,6 +834,9 @@ void UVoxelChunk::MulticastApplyBrushStroke_Implementation(const FBrushStroke& S
 }
 
 
+extern int32 CVarDiggerUseGPUVoxelOps_Get();
+static FORCEINLINE bool UseGPU() { return CVarDiggerUseGPUVoxelOps_Get() != 0; } // or use your existing getter
+
 void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 {
     // Get the specific brush shape for this stroke type
@@ -867,6 +873,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
     const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
     const float HalfVoxelSize = CachedVoxelSize * 0.5f;
+	
 
     // Get brush-specific bounds from the brush shape itself
     FVector BrushBounds = CalculateBrushBounds(Stroke);

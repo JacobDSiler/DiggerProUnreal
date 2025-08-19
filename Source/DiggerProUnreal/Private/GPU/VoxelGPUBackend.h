@@ -1,43 +1,24 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "RHI.h"
-#include "RHIResources.h"
-#include "RHIDefinitions.h"
 
+// Forward decls (avoid including heavy headers here)
+class USparseVoxelGrid;
 class UVoxelChunk;
 struct FBrushStroke;
 
-// Per-chunk GPU resources
-struct FVoxelGPUResources
+namespace VoxelGPU
 {
-	int32 N = 0; // voxels per dimension
-	FTexture3DRHIRef SDFTex;                // R32_FLOAT
-	FUnorderedAccessViewRHIRef SDF_UAV;     // RW access
-	FShaderResourceViewRHIRef  SDF_SRV;     // sampling if needed
-	bool IsValid() const { return SDFTex.IsValid() && SDF_UAV.IsValid(); }
-};
+	// Brush dispatch description (keep tiny for now; expand as we wire buffers)
+	struct FBrushDispatchDesc
+	{
+		FVector ChunkOriginWS = FVector::ZeroVector;
+		float   VoxelSize     = 1.0f;
+		int32   VoxelsPerSide = 0;
+		bool    bDig          = true;
+		// NOTE: Real path will also need SDF buffers, region bounds, etc.
+	};
 
-class FVoxelGPUBackend
-{
-public:
-	static FVoxelGPUBackend& Get();
-
-	// Ensure GPU resources for this chunk (creates if missing)
-	void InitForChunk(UVoxelChunk* Chunk, int32 VoxelsPerDim);
-
-	// Apply a brush to the 3D SDF texture (GPU). Returns approximate modified voxel count.
-	int32 ApplyBrush(UVoxelChunk* Chunk, const FBrushStroke& Stroke);
-
-	// Optional: clear/destroy on chunk destroy
-	void ReleaseForChunk(UVoxelChunk* Chunk);
-
-	// Accessor for other systems (marching on GPU later)
-	const FVoxelGPUResources* GetResources(UVoxelChunk* Chunk) const;
-
-private:
-	TMap<TWeakObjectPtr<UVoxelChunk>, FVoxelGPUResources> Resources;
-
-	// Internal helpers
-	void CreateSDFTexture(FVoxelGPUResources& Out, int32 N);
-};
+	// Returns true if a GPU path actually ran. For now: always false (stub).
+	bool TryApplyBrushGPU(const UVoxelChunk* Chunk, const FBrushStroke& Stroke, const FBrushDispatchDesc& Desc);
+}

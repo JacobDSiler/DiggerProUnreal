@@ -247,10 +247,14 @@ bool USparseVoxelGrid::SetVoxel(FIntVector Position, float SDFValue, bool bDig)
 
 bool USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig)
 {
-	// Route through backend switch (GPU stub falls back to CPU for now).
+	// If user enabled GPU path, offer it first.
 	if (UseGPUBackend())
 	{
-		return VoxelGPU::SetVoxel(this, X, Y, Z, NewSDFValue, bDig);
+		if (VoxelGPU::SetVoxel(this, X, Y, Z, NewSDFValue, bDig))
+		{
+			return true; // GPU handled it
+		}
+		// else fall through to CPU
 	}
 
 	FScopeLock Lock(&VoxelDataMutex);
