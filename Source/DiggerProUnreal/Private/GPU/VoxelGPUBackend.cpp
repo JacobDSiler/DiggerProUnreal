@@ -8,6 +8,13 @@
 #include "RHI.h"
 #include "RHICommandList.h"
 
+namespace VoxelGPU
+{
+        // Default to GPU enabled; individual calls can force CPU fallback by
+        // toggling this thread-local flag via FForceCPU.
+        thread_local bool GForceCPU = false;
+}
+
 //-------------------------------------------------------------------------------------------------
 // A placeholder compute shader so the pipeline links cleanly.
 // IMPORTANT: the .usf is not actually used until we bind resources.
