@@ -3,6 +3,11 @@
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
+// Cached custom meshes used for preview shapes not provided by Engine basics
+static UStaticMesh* MeshRoundBox  = nullptr;
+static UStaticMesh* MeshEllipsoid = nullptr;
+static UStaticMesh* MeshTorus     = nullptr;
+
 ABrushPreviewActor::ABrushPreviewActor()
 {
     bIsEditorOnlyActor = true;
@@ -103,6 +108,9 @@ void ABrushPreviewActor::EnsureMeshesLoaded()
     Load(MeshCapsule,  TEXT("/Engine/BasicShapes/Capsule.Capsule"));
     Load(MeshCylinder, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
     Load(MeshCone,     TEXT("/Engine/BasicShapes/Cone.Cone"));
+    Load(MeshRoundBox,  TEXT("/Game/DynamicHoles/HoleMeshes/DH_Cub.DH_Cub"));
+    Load(MeshEllipsoid, TEXT("/Game/DynamicHoles/HoleMeshes/DH_Sphere.DH_Sphere"));
+    Load(MeshTorus,     TEXT("/Game/DynamicHoles/HoleMeshes/DH_Torus.DH_Torus"));
 }
 
 void ABrushPreviewActor::SetShape(EBrushPreviewShape NewShape)
@@ -113,16 +121,14 @@ void ABrushPreviewActor::SetShape(EBrushPreviewShape NewShape)
     UStaticMesh* NewMesh = MeshSphere; // default
     switch (NewShape)
     {
-    case EBrushPreviewShape::Sphere:     NewMesh = MeshSphere;   break;
-    case EBrushPreviewShape::Box:        NewMesh = MeshCube;     break;
-    case EBrushPreviewShape::Capsule:    NewMesh = MeshCapsule;  break;
-    case EBrushPreviewShape::Cylinder:   NewMesh = MeshCylinder; break;
-    case EBrushPreviewShape::Cone:       NewMesh = MeshCone;     break;
-
-        // These 3 don’t exist as engine basics. Use best-approx:
-    case EBrushPreviewShape::Ellipsoid:  NewMesh = MeshSphere;   break; // will non-uniform scale
-    case EBrushPreviewShape::RoundBox:   NewMesh = MeshCube;     break; // visual placeholder
-    case EBrushPreviewShape::Torus:      NewMesh = MeshSphere;   break; // needs SDF material
+    case EBrushPreviewShape::Sphere:     NewMesh = MeshSphere;     break;
+    case EBrushPreviewShape::Box:        NewMesh = MeshCube;       break;
+    case EBrushPreviewShape::Capsule:    NewMesh = MeshCapsule;    break;
+    case EBrushPreviewShape::Cylinder:   NewMesh = MeshCylinder;   break;
+    case EBrushPreviewShape::Cone:       NewMesh = MeshCone;       break;
+    case EBrushPreviewShape::RoundBox:   NewMesh = MeshRoundBox;  break;
+    case EBrushPreviewShape::Ellipsoid:  NewMesh = MeshEllipsoid; break; // will non-uniform scale
+    case EBrushPreviewShape::Torus:      NewMesh = MeshTorus;     break;
     }
 
     if (NewMesh)
