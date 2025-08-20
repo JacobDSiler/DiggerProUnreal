@@ -1,6 +1,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/StaticMesh.h"
+#include "HoleShapeLibrary.h"
+#include "FHoleShape.h"
 
 static const TCHAR* GDefaultHoleLibraryPath = TEXT("/Game/Blueprints/HoleShapeLibrary.HoleShapeLibrary");
 static const TCHAR* GDefaultHoleBPPath = TEXT("/Game/DynamicHoles/BP_MeshHole.BP_MeshHole_C");
@@ -29,53 +32,36 @@ inline void EnsureDefaultHoleBP(TSubclassOf<AActor>& HoleBPRef)
 
 inline void SeedHoleShapesFromFolder(UHoleShapeLibrary* Lib)
 {
-#if WITH_EDITOR
-    if (!IsValid(Lib)) return;
-
-    FString FolderPath = GHoleMeshesFolder;
-    FolderPath.RemoveFromEnd(TEXT("/"));
-    FName FolderName(*FolderPath);
-
-    IAssetRegistry& AR = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
-    FARFilter Filter;
-    Filter.PackagePaths.Add(FolderName);
-    Filter.ClassPaths.Add(UStaticMesh::StaticClass()->GetClassPathName());
-    Filter.bRecursivePaths = true;
-
-    TArray<FAssetData> Assets;
-    AR.GetAssets(Filter, Assets);
-
-    TMap<FString, UStaticMesh*> FoundMeshes;
-    for (const FAssetData& AD : Assets)
+    if (!IsValid(Lib))
     {
-        FString AssetName = AD.AssetName.ToString();
-        if (AssetName.StartsWith(TEXT("DH_")))
-        {
-            AssetName.RightChopInline(3);
-        }
-
-        if (UStaticMesh* Mesh = Cast<UStaticMesh>(AD.GetAsset()))
-        {
-            FoundMeshes.Add(AssetName, Mesh);
-        }
+        return;
     }
 
-    UStaticMesh* FallbackSphereMesh = FoundMeshes.Contains(TEXT("Sphere")) ? FoundMeshes[TEXT("Sphere")] : nullptr;
+    // Base path where the hole meshes live. Each mesh is expected to be named
+    // "DH_<ShapeName>" where <ShapeName> matches the EHoleShapeType value.
+    const FString BasePath = GHoleMeshesFolder;
 
     Lib->ShapeMeshMappings.Empty();
 
     UEnum* EnumPtr = StaticEnum<EHoleShapeType>();
-    for (int32 EnumIndex = 0; EnumIndex < EnumPtr->NumEnums() - 1; ++EnumIndex)
+    if (!EnumPtr)
+    {
+        return;
+    }
+
+    // Load the sphere mesh first to use as a fallback for any missing shapes.
+    const FString FallbackPath = FString::Printf(TEXT("%s/DH_Sphere.DH_Sphere"), *BasePath);
+    UStaticMesh* FallbackSphereMesh = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *FallbackPath));
+
+    for (int32 EnumIndex = 0; EnumIndex < EnumPtr->NumEnums(); ++EnumIndex)
     {
         EHoleShapeType ShapeType = static_cast<EHoleShapeType>(EnumIndex);
-        FString ShapeName = EnumPtr->GetNameStringByIndex(EnumIndex);
+        const FString ShapeName = EnumPtr->GetNameStringByIndex(EnumIndex);
 
-        UStaticMesh* MeshForShape = nullptr;
-        if (UStaticMesh** FoundMesh = FoundMeshes.Find(ShapeName))
-        {
-            MeshForShape = *FoundMesh;
-        }
-        else if (FallbackSphereMesh)
+        const FString AssetPath = FString::Printf(TEXT("%s/DH_%s.DH_%s"), *BasePath, *ShapeName, *ShapeName);
+        UStaticMesh* MeshForShape = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *AssetPath));
+
+        if (!MeshForShape)
         {
             MeshForShape = FallbackSphereMesh;
         }
@@ -86,7 +72,5 @@ inline void SeedHoleShapesFromFolder(UHoleShapeLibrary* Lib)
         Lib->ShapeMeshMappings.Add(Mapping);
     }
 
-    Lib->MarkPackageDirty();
     UE_LOG(LogTemp, Log, TEXT("Seeded %d hole shape mappings"), Lib->ShapeMeshMappings.Num());
-#endif
 }
