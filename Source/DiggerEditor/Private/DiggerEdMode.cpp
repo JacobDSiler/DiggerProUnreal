@@ -771,6 +771,11 @@ void FDiggerEdMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
 
     UpdatePreviewAtCursor(ViewportClient); // always refresh the brush preview
 
+    if (TSharedPtr<FDiggerEdModeToolkit> Toolkit = GetDiggerToolkit())
+    {
+        Toolkit->SpawnOrUpdateWorklight(ViewportClient);
+    }
+
     if (ShouldApplyContinuously())
     {
         ContinuousApplicationTimer += DeltaTime;

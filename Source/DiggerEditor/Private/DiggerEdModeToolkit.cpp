@@ -77,6 +77,7 @@
 #include "Styling/SlateStyle.h"
 #include "Styling/SlateStyleRegistry.h"
 #include "Widgets/Colors/SColorPicker.h"
+#include "EditorViewportClient.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
@@ -119,6 +120,11 @@ FDiggerEdModeToolkit::FDiggerEdModeToolkit()
     PivotModeOptions.Add(MakeShareable(new FString(TEXT("First Exit"))));
     PivotModeOptions.Add(MakeShareable(new FString(TEXT("Spline Start"))));
     PivotModeOptions.Add(MakeShareable(new FString(TEXT("Spline End"))));
+
+    // Initialize worklight type options
+    WorklightTypeOptions.Add(MakeShared<FString>("Point"));
+    WorklightTypeOptions.Add(MakeShared<FString>("Spot"));
+    SelectedWorklightTypeItem = WorklightTypeOptions[0];
 
     // Clean up any invalid entries on startup
     CustomBrushEntries.RemoveAll([](const FCustomBrushEntry& Entry) 
@@ -2886,11 +2892,11 @@ void FDiggerEdModeToolkit::UpdateWorklightType(const FString& NewType)
 {
     if (!DiggerWorklightComponent) return;
 
-    USceneComponent* Parent = DiggerWorklightComponent->GetAttachParent();
     AActor* Owner = DiggerWorklightComponent->GetOwner();
 
     // Remove old component
     DiggerWorklightComponent->DestroyComponent();
+    DiggerWorklightComponent = nullptr;
 
     // Create new component based on type
     if (NewType == "Point")
@@ -2909,8 +2915,8 @@ void FDiggerEdModeToolkit::UpdateWorklightType(const FString& NewType)
 
     DiggerWorklightComponent->RegisterComponent();
     DiggerWorklightComponent->SetMobility(EComponentMobility::Movable);
-    DiggerWorklightComponent->AttachToComponent(Parent, FAttachmentTransformRules::KeepRelativeTransform);
     Owner->AddInstanceComponent(DiggerWorklightComponent);
+    Owner->SetRootComponent(DiggerWorklightComponent);
 
     // Reapply current settings
     UpdateWorklightIntensity(WorklightIntensity);
@@ -4608,44 +4614,65 @@ void FDiggerEdModeToolkit::OnRemoveIslandClicked()
     }
 }
 
-// Spawn or Update the Worklight in the scene.
-void FDiggerEdModeToolkit::SpawnOrUpdateWorklight()
+// Spawn or update the worklight in the scene and keep it aligned with the viewport camera
+void FDiggerEdModeToolkit::SpawnOrUpdateWorklight(FEditorViewportClient* ViewportClient)
 {
-    UWorld* World = GEditor->GetEditorWorldContext().World();
+    if (!ViewportClient) return;
+
+    UWorld* World = ViewportClient->GetWorld();
     if (!World) return;
 
-    // Find or create the folder hierarchy
-    const FName DiggerFolder(TEXT("Digger"));
     const FName WorklightFolder(TEXT("Digger/Worklight"));
 
-    // Try to find existing light
-    UDirectionalLightComponent* ExistingLight = nullptr;
+    AActor* LightActor = nullptr;
     for (TActorIterator<AActor> It(World); It; ++It)
     {
         if (It->GetFName() == TEXT("DiggerWorklight"))
         {
-            ExistingLight = Cast<UDirectionalLightComponent>(It->FindComponentByClass<UDirectionalLightComponent>());
+            LightActor = *It;
             break;
         }
     }
 
-    if (!ExistingLight)
+    if (!LightActor)
     {
-        AActor* LightActor = World->SpawnActor<AActor>();
+        LightActor = World->SpawnActor<AActor>();
         LightActor->SetActorLabel(TEXT("DiggerWorklight"));
         LightActor->SetFolderPath(WorklightFolder);
         LightActor->SetFlags(RF_Transient);
+        LightActor->SetActorEnableCollision(false);
 
-        UDirectionalLightComponent* LightComp = NewObject<UDirectionalLightComponent>(LightActor);
-        LightComp->RegisterComponent();
-        LightComp->SetMobility(EComponentMobility::Movable);
-        LightComp->Intensity = 5000.f;
-        //LightComp->bUseInverseSquaredFalloff = false;
-        LightComp->LightColor = FColor::White;
-        LightComp->AttachToComponent(LightActor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+        if (SelectedWorkLightType == "Spot")
+        {
+            DiggerWorklightComponent = NewObject<USpotLightComponent>(LightActor);
+        }
+        else
+        {
+            DiggerWorklightComponent = NewObject<UPointLightComponent>(LightActor);
+        }
 
-        LightActor->AddInstanceComponent(LightComp);
-        LightActor->SetRootComponent(LightComp);
+        DiggerWorklightComponent->RegisterComponent();
+        DiggerWorklightComponent->SetMobility(EComponentMobility::Movable);
+        LightActor->AddInstanceComponent(DiggerWorklightComponent);
+        LightActor->SetRootComponent(DiggerWorklightComponent);
+
+        UpdateWorklightIntensity(WorklightIntensity);
+        UpdateWorklightAttenuation(WorklightAttenuation);
+        UpdateWorklightColor(WorklightColor);
+        ToggleWorklight(bWorklightEnabled);
+    }
+    else
+    {
+        DiggerWorklightComponent = LightActor->FindComponentByClass<ULightComponent>();
+    }
+
+    if (LightActor)
+    {
+        LightActor->SetActorLocation(ViewportClient->GetViewLocation());
+        if (Cast<USpotLightComponent>(DiggerWorklightComponent))
+        {
+            LightActor->SetActorRotation(ViewportClient->GetViewRotation());
+        }
     }
 }
 
@@ -4671,10 +4698,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeWorklightSection()
             .Text_Lambda([this]()
             {
                 return FText::FromString(
-                    bShowWorklightSection
-                    ? TEXT("▼ Worklight")
-                    : TEXT("► Worklight")
-                );
+                    bShowWorklightSection ? TEXT("▼ Worklight") : TEXT("► Worklight"));
             })
             .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
         ]
@@ -4689,56 +4713,115 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeWorklightSection()
         .Visibility_Lambda([this]()
         {
             return bShowWorklightSection ? EVisibility::Visible : EVisibility::Collapsed;
-    })
+        })
 
-    // Light Type Toggle
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
-    [
-        SNew(SHorizontalBox)
-        + SHorizontalBox::Slot().AutoWidth().Padding(2)
+        // Light Type Combo
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
         [
-            SNew(STextBlock).Text(FText::FromString("Light Type:"))
-        ]
-        + SHorizontalBox::Slot().AutoWidth().Padding(2)
-        [
-            SNew(SComboBox<TSharedPtr<FString>>)
-            .OptionsSource(&WorklightTypeOptions)
-            .OnSelectionChanged_Lambda([this](TSharedPtr<FString> NewSelection, ESelectInfo::Type)
-            {
-             SelectedWorkLightType = *NewSelection;
-             UpdateWorklightType(SelectedWorkLightType);
-            })
-            .InitiallySelectedItem(MakeShared<FString>("Point"))
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
             [
-                SNew(STextBlock)
-                .Text_Lambda([this]() { return FText::FromString(SelectedWorkLightType); })
+                SNew(STextBlock).Text(FText::FromString("Light Type:"))
+            ]
+            + SHorizontalBox::Slot().AutoWidth().Padding(2)
+            [
+                SNew(SComboBox<TSharedPtr<FString>>)
+                .OptionsSource(&WorklightTypeOptions)
+                .OnSelectionChanged_Lambda([this](TSharedPtr<FString> NewSelection, ESelectInfo::Type)
+                {
+                    if (NewSelection)
+                    {
+                        SelectedWorklightTypeItem = NewSelection;
+                        SelectedWorkLightType = *NewSelection;
+                        UpdateWorklightType(SelectedWorkLightType);
+                    }
+                })
+                .InitiallySelectedItem(SelectedWorklightTypeItem)
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([this]() { return FText::FromString(SelectedWorkLightType); })
+                ]
             ]
         ]
-    ]
 
-    // Intensity Slider
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
-    [
-        SNew(SSlider)
-        .Value_Lambda([this]() { return WorklightIntensity / 10000.f; })
-        .OnValueChanged_Lambda([this](float NewValue)
-        {
-            WorklightIntensity = NewValue * 10000.f;
-         UpdateWorklightIntensity(WorklightIntensity);
-        })
-    ]
+        // Intensity Slider
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
+            [
+                SNew(STextBlock).Text(FText::FromString("Intensity:"))
+            ]
+            + SHorizontalBox::Slot().FillWidth(1.f).Padding(2)
+            [
+                SNew(SSlider)
+                .Value_Lambda([this]() { return WorklightIntensity / 10000.f; })
+                .OnValueChanged_Lambda([this](float NewValue)
+                {
+                    UpdateWorklightIntensity(NewValue * 10000.f);
+                })
+            ]
+        ]
 
-    // Color Picker
-    + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
-    [
-        SNew(SColorBlock)
-        .Color_Lambda([this]() { return WorklightColor; })
-        .OnMouseButtonDown_Lambda([this](const FGeometry&, const FPointerEvent&) -> FReply
-        {
-            // Open color picker logic here
-            return FReply::Handled();
-        })
-    ]
+        // Radius Slider
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
+            [
+                SNew(STextBlock).Text(FText::FromString("Radius:"))
+            ]
+            + SHorizontalBox::Slot().FillWidth(1.f).Padding(2)
+            [
+                SNew(SSlider)
+                .Value_Lambda([this]() { return WorklightAttenuation / 10000.f; })
+                .OnValueChanged_Lambda([this](float NewValue)
+                {
+                    UpdateWorklightAttenuation(NewValue * 10000.f);
+                })
+            ]
+        ]
+
+        // Color Picker
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
+            [
+                SNew(STextBlock).Text(FText::FromString("Color:"))
+            ]
+            + SHorizontalBox::Slot().AutoWidth().Padding(2)
+            [
+                SNew(SColorBlock)
+                .Color_Lambda([this]() { return WorklightColor; })
+                .OnMouseButtonDown_Lambda([this](const FGeometry&, const FPointerEvent&) -> FReply
+                {
+                    FColorPickerArgs PickerArgs;
+                    PickerArgs.bUseAlpha = false;
+                    PickerArgs.InitialColorOverride = WorklightColor;
+                    PickerArgs.OnColorCommitted = FOnLinearColorValueChanged::CreateLambda([this](FLinearColor NewColor)
+                    {
+                        UpdateWorklightColor(NewColor);
+                    });
+                    OpenColorPicker(PickerArgs);
+                    return FReply::Handled();
+                })
+            ]
+        ]
+
+        // Enable toggle
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+        [
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this]() { return bWorklightEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState State)
+            {
+                ToggleWorklight(State == ECheckBoxState::Checked);
+            })
+            [
+                SNew(STextBlock).Text(FText::FromString("Enabled"))
+            ]
+        ]
     ];
 }
 

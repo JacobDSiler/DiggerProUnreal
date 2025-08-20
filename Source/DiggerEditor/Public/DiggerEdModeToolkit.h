@@ -24,6 +24,7 @@ class IWebSocket;
 struct FIslandData;
 class ADiggerManager;
 class SUniformGridPanel;
+class FEditorViewportClient;
 
 
 
@@ -135,41 +136,38 @@ private:
 	void ApplyTierCapsFromLicense();
 
 	
-	// ── Worklight UI State ──
-	//The Array for Work Light Type Options.
-	//TArray<TSharedPtr<FString>> WorkLightTypeOptions;
+        // ── Worklight UI State ──
 
+        // Worklight type options (e.g., Point, Spot)
+        TArray<TSharedPtr<FString>> WorklightTypeOptions;
 
-	// Worklight type options (e.g., Point, Spot)
-	 TArray<TSharedPtr<FString>> WorklightTypeOptions = {
-	 	MakeShared<FString>("Point"),
-	 	MakeShared<FString>("Spot")
-	 };
+        // Currently selected option pointer for the combo box
+        TSharedPtr<FString> SelectedWorklightTypeItem;
 
-	// Worklight Component
-	ULightComponent* DiggerWorklightComponent = nullptr;
-	
-	// Currently selected light type
-	FString SelectedWorkLightType = "Point";
+        // Worklight Component
+        ULightComponent* DiggerWorklightComponent = nullptr;
 
-	// Light intensity (e.g., 0–10000)
-	float WorklightIntensity = 5000.0f;
+        // Currently selected light type
+        FString SelectedWorkLightType = "Point";
 
-	// Light attenuation radius
-	float WorklightAttenuation = 1000.0f;
+        // Light intensity (e.g., 0–10000)
+        float WorklightIntensity = 5000.0f;
 
-	// Light color
-	FLinearColor WorklightColor = FLinearColor::White;
+        // Light attenuation radius
+        float WorklightAttenuation = 1000.0f;
 
-	// Whether the light is enabled
-	bool bWorklightEnabled = true;
+        // Light color
+        FLinearColor WorklightColor = FLinearColor::White;
 
-	void SpawnOrUpdateWorklight();
-	void UpdateWorklightType(const FString& NewType);
-	void UpdateWorklightIntensity(float NewIntensity);
-	void UpdateWorklightAttenuation(float NewRadius);
-	void UpdateWorklightColor(const FLinearColor& NewColor);
-	void ToggleWorklight(bool bEnable);
+        // Whether the light is enabled
+        bool bWorklightEnabled = true;
+
+        void SpawnOrUpdateWorklight(class FEditorViewportClient* ViewportClient);
+        void UpdateWorklightType(const FString& NewType);
+        void UpdateWorklightIntensity(float NewIntensity);
+        void UpdateWorklightAttenuation(float NewRadius);
+        void UpdateWorklightColor(const FLinearColor& NewColor);
+        void ToggleWorklight(bool bEnable);
 
 	
 public:
