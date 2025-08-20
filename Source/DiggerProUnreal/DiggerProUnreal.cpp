@@ -11,9 +11,11 @@ class FDiggerProUnrealModule : public IModuleInterface
 public:
 	virtual void StartupModule() override
 	{
-		// Map /Digger → <module>/Shaders
-		const FString ShaderDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir() / TEXT("Source/DiggerProUnreal/Shaders"));
-		AddShaderSourceDirectoryMapping(TEXT("/DiggerProUnreal"), ShaderDir);
+		FString ShaderDir = FPaths::ConvertRelativePathToFull(
+			FPaths::ProjectDir() / TEXT("Source/DiggerProUnreal/Shaders")
+		);
+
+		AddShaderSourceDirectoryMapping(TEXT("/DiggerProUnreal/Shaders"), ShaderDir);
 	}
 	virtual void ShutdownModule() override {}
 };
