@@ -1,4 +1,7 @@
 // /Digger/VoxelBrushCS.usf
+#include "/Engine/Public/Platform.ush"
+//#include "/Engine/Public/ShaderCommon.ush"
+
 RWTexture3D<float> RW_SDF;
 
 cbuffer Params

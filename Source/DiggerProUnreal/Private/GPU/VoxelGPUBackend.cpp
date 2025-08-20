@@ -2,6 +2,7 @@
 
 // Minimal shader plumbing — compiles, but does nothing yet
 #include "GlobalShader.h"
+#include "ShaderPermutation.h"
 #include "ShaderParameterStruct.h"
 #include "RenderGraphUtils.h"
 #include "RenderGraphBuilder.h"
@@ -22,9 +23,14 @@ namespace VoxelGPU
 
 class FApplyBrushCS : public FGlobalShader
 {
+	using FPermutationDomain = FShaderPermutationNone;
+
 public:
 	DECLARE_GLOBAL_SHADER(FApplyBrushCS);
 	SHADER_USE_PARAMETER_STRUCT(FApplyBrushCS, FGlobalShader);
+
+	// TODO: Define dispatch dimensions based on voxel bounds
+	// FIntVector DispatchSize = ...;
 
 	// Keep this EMPTY for now to avoid UAV binding errors (the source .usf can exist but won’t be used)
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
@@ -45,7 +51,7 @@ public:
 	}
 };
 
-IMPLEMENT_GLOBAL_SHADER(FApplyBrushCS, "/DiggerProUnreal/Shaders/VoxelBrushCS.usf", "MainCS", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FApplyBrushCS, "/DiggerProUnreal/Shaders/VoxelBrushCS.usf", "CSMain", SF_Compute);
 
 //-------------------------------------------------------------------------------------------------
 // Public API — stub that never dispatches (yet). Keeps compile green.
@@ -59,4 +65,10 @@ namespace VoxelGPU
 		// Once we wire the buffers, we’ll build an RDG pass here and dispatch.
 		return false;
 	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		// Example: OutEnvironment.SetDefine(TEXT("MY_DEFINE"), 1);
+	}
+
 }
