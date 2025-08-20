@@ -553,7 +553,9 @@ private:
 	TSharedPtr<SUniformGridPanel> CustomBrushGrid;
 	TArray<FCustomBrushEntry> CustomBrushEntries;
 	int32 SelectedBrushIndex = -1;
-	
+
+
+private:
 	float BrushRadius = 50.0f;
 	float BrushStrength = 0.8f;
 	float BrushFalloff = 0.2f;

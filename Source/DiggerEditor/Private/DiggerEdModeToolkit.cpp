@@ -5048,28 +5048,34 @@ void FDiggerEdModeToolkit::ClearIslands()
     // Add safety checks before the crash line
     if (!this)
     {
+        if (DiggerDebug::Islands)
         UE_LOG(LogTemp, Error, TEXT("ClearIslands: Invalid 'this' pointer!"));
         return;
     }
     
     // Check if Islands is in a valid state
+    if (DiggerDebug::Islands)
     UE_LOG(LogTemp, Warning, TEXT("ClearIslands: About to empty Islands array (current size: %d)"), Islands.Num());
     
     try
     {
         Islands.Empty(); // Line 4306 - the crash line
+        if (DiggerDebug::Islands)
         UE_LOG(LogTemp, Warning, TEXT("ClearIslands: Islands.Empty() succeeded"));
     }
     catch (...)
     {
+        if (DiggerDebug::Islands)
         UE_LOG(LogTemp, Error, TEXT("ClearIslands: Exception during Islands.Empty()"));
         return;
     }
     
     SelectedIslandIndex = INDEX_NONE;
-    
+
+    if (DiggerDebug::Islands)
     UE_LOG(LogTemp, Warning, TEXT("ClearIslands: About to call RebuildIslandGrid"));
     RebuildIslandGrid();
+    if (DiggerDebug::Islands)
     UE_LOG(LogTemp, Warning, TEXT("ClearIslands: RebuildIslandGrid completed"));
 }
 

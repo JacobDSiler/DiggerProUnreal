@@ -126,22 +126,20 @@ void FDiggerEdMode::Exit()
 
 bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVector& OutHitLocation, FHitResult& OutHit)
 {
-    if (!ViewportClient) return false;
-
-    FViewport* Viewport = ViewportClient->Viewport;
-    if (!Viewport) return false;
+    if (!ViewportClient || !ViewportClient->Viewport)
+        return false;
 
     FIntPoint MousePos;
-    Viewport->GetMousePos(MousePos);
+    ViewportClient->Viewport->GetMousePos(MousePos);
 
-    FSceneViewFamilyContext ViewFamily(
-        FSceneViewFamily::ConstructionValues(
-            Viewport,
-            ViewportClient->GetScene(),
-            ViewportClient->EngineShowFlags));
+    FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
+        ViewportClient->Viewport,
+        ViewportClient->GetScene(),
+        ViewportClient->EngineShowFlags));
 
     FSceneView* SceneView = ViewportClient->CalcSceneView(&ViewFamily);
-    if (!SceneView) return false;
+    if (!SceneView)
+        return false;
 
     FVector WorldOrigin, WorldDirection;
     SceneView->DeprojectFVector2D(MousePos, WorldOrigin, WorldDirection);
@@ -152,54 +150,60 @@ bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVec
     ADiggerManager* Digger = FindDiggerManager();
     if (!IsValid(Digger))
     {
+        UE_LOG(LogTemp, Error, TEXT("No DiggerManager found in DiggerEdMode::GetMouseWorldHit!"));
         return false;
     }
 
-    // Create brush if it doesn't exist
+    // Ensure brush exists and is initialized
     if (!IsValid(Digger->ActiveBrush))
     {
-        UWorld* World = ViewportClient->GetWorld();
-        if (!World) return false;
-
-        // Create new brush object
-        Digger->ActiveBrush = NewObject<UVoxelBrushShape>(Digger, UVoxelBrushShape::StaticClass());
-        
-        // Initialize with default values
-        if (IsValid(Digger->ActiveBrush))
+        if (UWorld* World = ViewportClient->GetWorld())
         {
-            Digger->ActiveBrush->InitializeBrush(Digger->ActiveBrush->GetBrushType(),
-                Digger->ActiveBrush->GetBrushSize(),
-                Digger->ActiveBrush->GetBrushLocation(),
-                Digger);
-            Digger->InitializeBrushShapes();
+            Digger->ActiveBrush = NewObject<UVoxelBrushShape>(Digger, UVoxelBrushShape::StaticClass());
+            if (IsValid(Digger->ActiveBrush))
+            {
+                Digger->ActiveBrush->InitializeBrush(
+                    Digger->ActiveBrush->GetBrushType(),
+                    Digger->ActiveBrush->GetBrushSize(),
+                    Digger->ActiveBrush->GetBrushLocation(),
+                    Digger);
+                Digger->InitializeBrushShapes();
+            }
         }
     }
 
-    // If we still don't have a valid brush, fall back to simple trace
-    if (!IsValid(Digger->ActiveBrush))
+    // ✅ Prefer SmartTrace if brush is valid
+    if (IsValid(Digger->ActiveBrush))
     {
-        FCollisionQueryParams Params(SCENE_QUERY_STAT(DiggerEdMode_MouseTrace), true);
-        FHitResult Hit;
-        UWorld* World = GEditor->GetEditorWorldContext().World();
-        if (World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params) && Hit.bBlockingHit)
+        UE_LOG(LogTemp, Warning, TEXT("Active Brush Found in DiggerEdMode::GetMouseWorldHit!"));
+        const FHitResult SmartHit = Digger->ActiveBrush->SmartTrace(TraceStart, TraceEnd);
+        if (SmartHit.bBlockingHit)
         {
-            OutHit = Hit;
-            OutHitLocation = Hit.ImpactPoint;
+            OutHit = SmartHit;
+            OutHitLocation = SmartHit.ImpactPoint;
+            UE_LOG(LogTemp, Warning, TEXT("SmartTrace returned: %s"), *SmartHit.ImpactPoint.ToString());
             return true;
         }
-        return false;
     }
 
-    // Use the brush's smart trace
-    const FHitResult Hit = Digger->ActiveBrush->SmartTrace(TraceStart, TraceEnd);
-    if (Hit.bBlockingHit)
+    // ❌ Fallback: basic line trace if SmartTrace fails or brush is invalid
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    if (World)
     {
-        OutHit = Hit;
-        OutHitLocation = Hit.ImpactPoint;
-        return true;
+        FCollisionQueryParams Params(SCENE_QUERY_STAT(DiggerEdMode_MouseTrace), true);
+        FHitResult FallbackHit;
+        if (World->LineTraceSingleByChannel(FallbackHit, TraceStart, TraceEnd, ECC_Visibility, Params) && FallbackHit.bBlockingHit)
+        {
+            OutHit = FallbackHit;
+            OutHitLocation = FallbackHit.ImpactPoint;
+            UE_LOG(LogTemp, Warning, TEXT("Line Trace Fallback returned hit: %s"), *FallbackHit.ImpactPoint.ToString());
+            return true;
+        }
     }
+
     return false;
 }
+
 
 // ----- Spawning / Destroying -----
 

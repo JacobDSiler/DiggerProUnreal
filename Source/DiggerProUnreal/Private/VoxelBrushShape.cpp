@@ -352,6 +352,8 @@ FHitResult UVoxelBrushShape::SmartTrace(const FVector& Start, const FVector& End
     else
     {
         // Hit something else (landscape, mesh, etc.)
+        if (DiggerDebug::Casts)
+        UE_LOG(LogTemp, Warning, TEXT("SmartTrace: Hit something else: %s"), *FirstHit.ToString());
         return FirstHit;
     }
 }

@@ -3783,7 +3783,7 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
     }
 
     // Step 5: Broadcast ONLY the deduplicated islands to UI (clean reporting)
-    if (!OnIslandsDetectionStarted.IsBound())  // or check .ExecuteIfBound with guards in the toolkit
+    if (OnIslandsDetectionStarted.IsBound())  // or check .ExecuteIfBound with guards in the toolkit
     OnIslandsDetectionStarted.Broadcast();
 
     for (const FIslandData& Island : FinalIslands)
