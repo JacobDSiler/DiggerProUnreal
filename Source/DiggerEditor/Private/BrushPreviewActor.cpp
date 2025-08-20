@@ -36,10 +36,12 @@ void ABrushPreviewActor::SetVisible(bool bVisible)
 
 void ABrushPreviewActor::Initialize(UStaticMesh* ShapeMesh, UMaterialInterface* BaseMat)
 {
+    // Preload all meshes up front so switching shapes later is seamless.
+    EnsureMeshesLoaded();
+
     if (ShapeMesh)
         PreviewMesh->SetStaticMesh(ShapeMesh);
 
-    // Skip material for now
     if (BaseMat)
     {
         MID = UMaterialInstanceDynamic::Create(BaseMat, this);
@@ -126,6 +128,11 @@ void ABrushPreviewActor::SetShape(EBrushPreviewShape NewShape)
     if (NewMesh)
     {
         PreviewMesh->SetStaticMesh(NewMesh);
+        if (MID)
+        {
+            // Ensure our preview material stays applied when swapping meshes.
+            PreviewMesh->SetMaterial(0, MID);
+        }
 
         // Update cached unit radius from the new mesh
         const FBoxSphereBounds B = NewMesh->GetBounds();
