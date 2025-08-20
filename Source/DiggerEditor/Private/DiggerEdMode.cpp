@@ -270,17 +270,47 @@ bool FDiggerEdMode::TraceUnderCursor(FEditorViewportClient* InViewportClient, FH
 FDiggerEdMode::FBrushUIParams FDiggerEdMode::GetCurrentBrushUI() const
 {
     FBrushUIParams P;
-    
-    if (auto DiggerToolkit = GetDiggerToolkit())
+
+    EVoxelBrushType BrushType = EVoxelBrushType::Sphere;
+
+    if (TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit())
     {
-        P.RadiusXYZ  = FVector(DiggerToolkit ? DiggerToolkit->GetBrushRadius() : 64.f);
-        P.Falloff    = DiggerToolkit ? DiggerToolkit->GetBrushFalloff() : 0.25f;
-        P.bAdd       = DiggerToolkit ? DiggerToolkit->IsDigMode() : true;
-        //P.CellSize   = (DM && DM->Subdivisions>0) ? DM->TerrainGridSize / float(DM->Subdivisions) : 50.f;
+        P.RadiusXYZ  = FVector(DiggerToolkit->GetBrushRadius());
+        P.Falloff    = DiggerToolkit->GetBrushFalloff();
+        P.bAdd       = DiggerToolkit->IsDigMode();
+
+        BrushType = DiggerToolkit->GetCurrentBrushType();
     }
-    
-    // Map your real brush type to enum (keep a stable mapping)
-    // P.ShapeType  = MapYourBrushTypeToPreviewEnum(TK ? TK->GetBrushType() : EMyBrushType::Sphere);
+    else if (ADiggerManager* Digger = FindDiggerManager())
+    {
+        BrushType = Digger->EditorBrushType;
+    }
+
+    switch (BrushType)
+    {
+    case EVoxelBrushType::Cube:
+    case EVoxelBrushType::AdvancedCube:
+        P.ShapeType = static_cast<uint8>(EBrushPreviewShape::Box);
+        break;
+    case EVoxelBrushType::Cylinder:
+        P.ShapeType = static_cast<uint8>(EBrushPreviewShape::Cylinder);
+        break;
+    case EVoxelBrushType::Capsule:
+        P.ShapeType = static_cast<uint8>(EBrushPreviewShape::Capsule);
+        break;
+    case EVoxelBrushType::Cone:
+    case EVoxelBrushType::Pyramid:
+        P.ShapeType = static_cast<uint8>(EBrushPreviewShape::Cone);
+        break;
+    case EVoxelBrushType::Torus:
+        P.ShapeType = static_cast<uint8>(EBrushPreviewShape::Torus);
+        break;
+    case EVoxelBrushType::Sphere:
+    case EVoxelBrushType::Icosphere:
+    default:
+        P.ShapeType = static_cast<uint8>(EBrushPreviewShape::Sphere);
+        break;
+    }
 
     return P;
 }
@@ -303,19 +333,8 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
     Preview->SetVisible(true);
     const FBrushUIParams P = GetCurrentBrushUI();
 
-    EBrushPreviewShape Shape = EBrushPreviewShape::Sphere; // map your type -> shape here
-    switch (P.ShapeType)
-    {
-    default:
-    case 0: Shape = EBrushPreviewShape::Sphere; break;
-    case 1: Shape = EBrushPreviewShape::Box; break;
-    case 2: Shape = EBrushPreviewShape::Capsule; break;
-    case 3: Shape = EBrushPreviewShape::Cylinder; break;
-    case 4: Shape = EBrushPreviewShape::Cone; break;
-    case 5: Shape = EBrushPreviewShape::RoundBox; break;
-    case 6: Shape = EBrushPreviewShape::Ellipsoid; break;
-    case 7: Shape = EBrushPreviewShape::Torus; break;
-    }
+    // The shape type is provided by GetCurrentBrushUI via the toolkit.
+    const EBrushPreviewShape Shape = static_cast<EBrushPreviewShape>(P.ShapeType);
 
     Preview->UpdatePreview(
         Hit.Location,
@@ -675,7 +694,7 @@ void FDiggerEdMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
 }
 
 
-ADiggerManager* FDiggerEdMode::FindDiggerManager()
+ADiggerManager* FDiggerEdMode::FindDiggerManager() const
 {
     UWorld* World = GEditor->GetEditorWorldContext().World();
     for (TActorIterator<ADiggerManager> It(World); It; ++It)

@@ -45,7 +45,7 @@ public:
     void StopContinuousApplication();
     void ApplyContinuousBrush(FEditorViewportClient* InViewportClient);
     bool ShouldApplyContinuously() const;
-    ADiggerManager* FindDiggerManager();
+    ADiggerManager* FindDiggerManager() const;
 
     // Toolkit helpers
     TSharedPtr<FDiggerEdModeToolkit> GetDiggerToolkit();
