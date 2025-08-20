@@ -121,6 +121,7 @@ private:
 	FString LicenseEmail;
 	FString LicenseKey;
 
+
 	// UI builders/handlers
 	TSharedRef<SWidget> MakeDiggerConnectLicensingPanel();
 	FReply OnValidateLicenseClicked();
@@ -133,6 +134,44 @@ private:
 	void SaveLicenseToConfig() const;
 	void ApplyTierCapsFromLicense();
 
+	
+	// ── Worklight UI State ──
+	//The Array for Work Light Type Options.
+	//TArray<TSharedPtr<FString>> WorkLightTypeOptions;
+
+
+	// Worklight type options (e.g., Point, Spot)
+	 TArray<TSharedPtr<FString>> WorklightTypeOptions = {
+	 	MakeShared<FString>("Point"),
+	 	MakeShared<FString>("Spot")
+	 };
+
+	// Worklight Component
+	ULightComponent* DiggerWorklightComponent = nullptr;
+	
+	// Currently selected light type
+	FString SelectedWorkLightType = "Point";
+
+	// Light intensity (e.g., 0–10000)
+	float WorklightIntensity = 5000.0f;
+
+	// Light attenuation radius
+	float WorklightAttenuation = 1000.0f;
+
+	// Light color
+	FLinearColor WorklightColor = FLinearColor::White;
+
+	// Whether the light is enabled
+	bool bWorklightEnabled = true;
+
+	void SpawnOrUpdateWorklight();
+	void UpdateWorklightType(const FString& NewType);
+	void UpdateWorklightIntensity(float NewIntensity);
+	void UpdateWorklightAttenuation(float NewRadius);
+	void UpdateWorklightColor(const FLinearColor& NewColor);
+	void ToggleWorklight(bool bEnable);
+
+	
 public:
 	
 	void SetUseAdvancedCubeBrush(bool bInUse)
@@ -444,6 +483,7 @@ private:
 	// Multiplayer Menu (Always Available)
 	TSharedRef<SWidget> MakeLobbySection();
 	TSharedRef<SWidget> MakeNetworkingWidget();
+	TSharedRef<SWidget> MakeWorklightSection();
 	TSharedRef<SWidget> MakeIslandsSection();
 	TSharedRef<SWidget> MakeNetworkingHelpWidget();
 
@@ -627,7 +667,8 @@ private:
 	bool bShowSaveLoadSection = false;
 	bool bShowLobbySection = false;
 	bool bShowCustomBrushSection = false;
-	bool bShowIslandsSection = false; // Start collapsed by default, or true if you want it expanded
+	bool bShowIslandsSection = false; 
+	bool bShowWorklightSection = false;
 	
 	
 	FString SelectedSVGFilePath;

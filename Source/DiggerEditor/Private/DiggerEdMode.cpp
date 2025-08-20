@@ -175,12 +175,12 @@ bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVec
     // ✅ Prefer SmartTrace if brush is valid
     if (IsValid(Digger->ActiveBrush))
     {
-        UE_LOG(LogTemp, Warning, TEXT("Active Brush Found in DiggerEdMode::GetMouseWorldHit!"));
         const FHitResult SmartHit = Digger->ActiveBrush->SmartTrace(TraceStart, TraceEnd);
         if (SmartHit.bBlockingHit)
         {
             OutHit = SmartHit;
             OutHitLocation = SmartHit.ImpactPoint;
+            if (DiggerDebug::Casts)
             UE_LOG(LogTemp, Warning, TEXT("SmartTrace returned: %s"), *SmartHit.ImpactPoint.ToString());
             return true;
         }
@@ -196,7 +196,8 @@ bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVec
         {
             OutHit = FallbackHit;
             OutHitLocation = FallbackHit.ImpactPoint;
-            UE_LOG(LogTemp, Warning, TEXT("Line Trace Fallback returned hit: %s"), *FallbackHit.ImpactPoint.ToString());
+            if (DiggerDebug::Casts)
+            UE_LOG(LogTemp, Error, TEXT("Line Trace Fallback returned hit: %s"), *FallbackHit.ImpactPoint.ToString());
             return true;
         }
     }
@@ -239,37 +240,90 @@ void FDiggerEdMode::DestroyPreview()
 
 // ----- Mouse Hit → Preview Update -----
 
-bool FDiggerEdMode::TraceUnderCursor(FEditorViewportClient* InViewportClient, FHitResult& OutHit) const
+bool FDiggerEdMode::TraceUnderCursor(FEditorViewportClient* InViewportClient, FHitResult& OutHit)
 {
-    if (!InViewportClient) return false;
-
-    UWorld* World = InViewportClient->GetWorld();
-    if (!World) return false;
-
-    // Build a ray from screen to world
-    FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
-        InViewportClient->Viewport, InViewportClient->GetScene(), InViewportClient->EngineShowFlags)
-        .SetRealtimeUpdate(true));
-
-    FSceneView* View = InViewportClient->CalcSceneView(&ViewFamily);
-    if (!View) return false;
+    if (!InViewportClient || !InViewportClient->Viewport)
+        return false;
 
     FIntPoint MousePos;
     InViewportClient->Viewport->GetMousePos(MousePos);
 
+    FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
+        InViewportClient->Viewport,
+        InViewportClient->GetScene(),
+        InViewportClient->EngineShowFlags)
+        .SetRealtimeUpdate(true));
+
+    FSceneView* View = InViewportClient->CalcSceneView(&ViewFamily);
+    if (!View)
+        return false;
+
     FVector WorldOrigin, WorldDirection;
-    View->DeprojectFVector2D(FVector2D(MousePos), /*out*/WorldOrigin, /*out*/WorldDirection);
+    View->DeprojectFVector2D(FVector2D(MousePos), WorldOrigin, WorldDirection);
 
-    const FVector Start = WorldOrigin;
-    const FVector End   = Start + WorldDirection * 100000.f;
+    const FVector TraceStart = WorldOrigin;
+    const FVector TraceEnd = TraceStart + WorldDirection * 100000.f;
 
-    FCollisionQueryParams Params(SCENE_QUERY_STAT(DiggerPreviewTrace), /*bTraceComplex*/ true);
-    Params.bReturnPhysicalMaterial = false;
-    Params.AddIgnoredActor(Preview.IsValid() ? Preview.Get() : nullptr);
+    ADiggerManager* Digger = FindDiggerManager();
+    if (!IsValid(Digger))
+    {
+        if (DiggerDebug::Casts || DiggerDebug::Manager)
+        UE_LOG(LogTemp, Error, TEXT("No DiggerManager found in DiggerEdMode::TraceUnderCursor!"));
+        return false;
+    }
 
-    // Trace against visibility by default; include landscape + static meshes
-    return World->LineTraceSingleByChannel(OutHit, Start, End, ECollisionChannel::ECC_Visibility, Params);
+    // Ensure brush exists and is initialized
+    if (!IsValid(Digger->ActiveBrush))
+    {
+        if (UWorld* World = InViewportClient->GetWorld())
+        {
+            Digger->ActiveBrush = NewObject<UVoxelBrushShape>(Digger, UVoxelBrushShape::StaticClass());
+            if (IsValid(Digger->ActiveBrush))
+            {
+                Digger->ActiveBrush->InitializeBrush(
+                    Digger->ActiveBrush->GetBrushType(),
+                    Digger->ActiveBrush->GetBrushSize(),
+                    Digger->ActiveBrush->GetBrushLocation(),
+                    Digger);
+                Digger->InitializeBrushShapes();
+            }
+        }
+    }
+
+    // ✅ Prefer SmartTrace if brush is valid
+    if (IsValid(Digger->ActiveBrush))
+    {
+        const FHitResult SmartHit = Digger->ActiveBrush->SmartTrace(TraceStart, TraceEnd);
+        if (SmartHit.bBlockingHit)
+        {
+            OutHit = SmartHit;
+            if (DiggerDebug::Casts)
+            UE_LOG(LogTemp, Warning, TEXT("SmartTrace returned hit: %s"), *SmartHit.ImpactPoint.ToString());
+            return true;
+        }
+    }
+
+    // ❌ Fallback: basic line trace if SmartTrace fails or brush is invalid
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    if (World)
+    {
+        FCollisionQueryParams Params(SCENE_QUERY_STAT(DiggerPreviewTrace), true);
+        Params.bReturnPhysicalMaterial = false;
+        Params.AddIgnoredActor(Preview.IsValid() ? Preview.Get() : nullptr);
+
+        FHitResult FallbackHit;
+        if (World->LineTraceSingleByChannel(FallbackHit, TraceStart, TraceEnd, ECC_Visibility, Params) && FallbackHit.bBlockingHit)
+        {
+            OutHit = FallbackHit;
+            if (DiggerDebug::Casts)
+            UE_LOG(LogTemp, Error, TEXT("Line Trace Fallback returned hit: %s"), *FallbackHit.ImpactPoint.ToString());
+            return true;
+        }
+    }
+
+    return false;
 }
+
 
 FDiggerEdMode::FBrushUIParams FDiggerEdMode::GetCurrentBrushUI() const
 {
@@ -280,8 +334,22 @@ FDiggerEdMode::FBrushUIParams FDiggerEdMode::GetCurrentBrushUI() const
         P.RadiusXYZ  = FVector(DiggerToolkit ? DiggerToolkit->GetBrushRadius() : 64.f);
         P.Falloff    = DiggerToolkit ? DiggerToolkit->GetBrushFalloff() : 0.25f;
         P.bAdd       = DiggerToolkit ? DiggerToolkit->IsDigMode() : true;
+        P.Rotation   = DiggerToolkit->GetBrushRotation();
+        P.Offset     = DiggerToolkit->GetBrushOffset();
         //P.CellSize   = (DM && DM->Subdivisions>0) ? DM->TerrainGridSize / float(DM->Subdivisions) : 50.f;
 
+        /*Vector OffsetXY(P.Offset.X, P.Offset.Y, 0.f);
+        float   ZDist       = P.Offset.Z;
+        FVector FinalOffset = P.Rotation.IsNearlyZero()
+            ? FVector(OffsetXY.X, OffsetXY.Y, ZDist)
+            : OffsetXY + P.Rotation.Quaternion() * ZDist;
+
+        const FVector PreviewCenter = BrushLocation + FinalOffset;
+        const FQuat   PreviewRot    = P.Rotation.Quaternion();
+
+        //How do I implement this functionality now that the code works this way?
+        */
+        
         // Map the active editor brush type to our preview enum so the
         // correct preview mesh is displayed for the selected tool.
         switch (DiggerToolkit->GetCurrentBrushType())
@@ -330,19 +398,48 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
     }
 
     Preview->SetVisible(true);
-    const FBrushUIParams P = GetCurrentBrushUI();
+    FBrushUIParams P = GetCurrentBrushUI();
+
+    // Align rotation to surface normal if the user has that option enabled
+    if (TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit())
+    {
+        if (DiggerToolkit->UseSurfaceNormalRotation())
+        {
+            const FVector Normal = Hit.ImpactNormal.GetSafeNormal();
+            const FQuat AlignRotation = FQuat::FindBetweenNormals(FVector::UpVector, Normal);
+            P.Rotation = (AlignRotation * P.Rotation.Quaternion()).Rotator();
+        }
+    }
 
     // The shape type is provided by GetCurrentBrushUI via the toolkit.
     const EBrushPreviewShape Shape = static_cast<EBrushPreviewShape>(P.ShapeType);
 
+    FVector OffsetXY(P.Offset.X, P.Offset.Y, 0.f);
+    float ZDist = P.Offset.Z;
+    FVector FinalOffset = OffsetXY;
+
+    if (!P.Rotation.IsNearlyZero())
+    {
+        FinalOffset += Hit.ImpactNormal * ZDist;
+    }
+    else
+    {
+        FinalOffset.Z = ZDist;
+    }
+
+    const FVector PreviewCenter = Hit.Location + FinalOffset;
+    const FQuat   PreviewRot    = P.Rotation.Quaternion();
+
+
     Preview->UpdatePreview(
-        Hit.Location,
+        PreviewCenter,
         P.RadiusXYZ,
         P.Falloff,
         P.bAdd,
         P.CellSize,
-        Shape, {}
-    );
+        Shape,
+        PreviewRot);
+
 
     if (DiggerDebug::Brush)
         UE_LOG(LogTemp, Warning, TEXT("Brush Radius: %s"), *P.RadiusXYZ.ToString());

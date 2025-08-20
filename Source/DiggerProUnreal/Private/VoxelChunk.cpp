@@ -1035,6 +1035,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 		    //if (DiggerDebug::Chunks || DiggerDebug::Manager)
 		    {
     			int TotalVoxelsDug=Report.VoxelsDug;
+    			if (DiggerDebug::Chunks || DiggerDebug::VoxelModificationReports)
 			    UE_LOG(LogTemp, Warning, TEXT("[ApplyBrushStroke] Voxel Modification report Broadcast on an instance of UVoxelChunk. Voxels Modification Report: %d"), TotalVoxelsDug);
 		    }
     	}
@@ -1069,6 +1070,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels, bool bHiddenSeam)
 {
     // DEBUG: Log the seam mode being used
+	if (DiggerDebug::Seams)
     UE_LOG(LogTemp, Warning, TEXT("CreateSolidShellAroundAirVoxels: Using %s seam for %d air voxels in chunk %s"), 
            bHiddenSeam ? TEXT("HIDDEN") : TEXT("NATURAL"), AirVoxels.Num(), *ChunkCoordinates.ToString());
            

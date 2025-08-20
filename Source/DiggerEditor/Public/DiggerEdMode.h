@@ -51,8 +51,8 @@ public:
     TSharedPtr<FDiggerEdModeToolkit> GetDiggerToolkit();
 
     TSharedPtr<FDiggerEdModeToolkit> GetDiggerToolkit() const;
-
-
+    
+    
     // Static helpers and members
     static bool IsDiggerModeActive();
     static FOnDiggerModeChanged OnDiggerModeChanged;
@@ -70,7 +70,7 @@ private:
     void UpdatePreviewAtCursor(FEditorViewportClient* InViewportClient);
 
     // Utility to trace under the mouse into the world
-    bool TraceUnderCursor(FEditorViewportClient* InViewportClient, FHitResult& OutHit) const;
+    bool TraceUnderCursor(FEditorViewportClient* InViewportClient, FHitResult& OutHit);
 
     // Pull current brush UI params (adapt to your actual accessors)
     struct FBrushUIParams
@@ -80,6 +80,8 @@ private:
         bool bAdd = true;
         float CellSize = 50.f;
         uint8 ShapeType = 0; // your mapping to EBrushPreviewShape
+        FRotator Rotation = FRotator::ZeroRotator;
+        FVector  Offset   = FVector::ZeroVector;
     };
     FBrushUIParams GetCurrentBrushUI() const;
 

@@ -66,6 +66,9 @@
 #include "Behaviors/2DViewportBehaviorTargets.h"
 #include "Behaviors/2DViewportBehaviorTargets.h"
 #include "Brushes/SlateImageBrush.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Components/PointLightComponent.h"
+#include "Components/SpotLightComponent.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "HAL/FileManager.h"
 #include "Interfaces/IHttpResponse.h"
@@ -209,6 +212,10 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         .BodyContent()
         [
             SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+            [
+                MakeWorklightSection()
+            ]
             + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
             [
                 MakeIslandsSection()
@@ -517,6 +524,7 @@ void FDiggerEdModeToolkit::BindIslandDelegates()
 
     if (!Manager)
     {
+        if (DiggerDebug::Manager || DiggerDebug::Islands || DiggerDebug::Delegates)
         UE_LOG(LogTemp, Error, TEXT("[Toolkit::BindIslandDelegates] Manager not found. Will retry in 0.25s."));
 
         if (GEditor)
@@ -524,6 +532,7 @@ void FDiggerEdModeToolkit::BindIslandDelegates()
             TSharedRef<FTimerManager> TimerManager = GEditor->GetTimerManager();
             TimerManager->SetTimerForNextTick([this]()
             {
+                if(DiggerDebug::Delegates)
                 UE_LOG(LogTemp, Warning, TEXT("[Toolkit::BindIslandDelegates] Retrying delegate bind..."));
                 BindIslandDelegates(); // Retry
             });
@@ -531,7 +540,7 @@ void FDiggerEdModeToolkit::BindIslandDelegates()
 
         return;
     }
-
+    if (DiggerDebug::Manager || DiggerDebug::Islands || DiggerDebug::Delegates)
     UE_LOG(LogTemp, Log, TEXT("[Toolkit::BindIslandDelegates] Binding to Manager %p"), Manager);
 
     Manager->OnIslandsDetectionStarted.RemoveAll(this);
@@ -989,6 +998,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDebugCheckbox(const FString& Label
     .IsChecked_Lambda([FlagPtr, Label]() -> ECheckBoxState
     {
         const bool bChecked = *FlagPtr;
+        if (DiggerDebug::Flags)
         UE_LOG(LogTemp, Verbose, TEXT("[DebugFlags] Checkbox for %s is currently: %s"),
             *Label,
             bChecked ? TEXT("Checked") : TEXT("Unchecked"));
@@ -998,6 +1008,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDebugCheckbox(const FString& Label
     {
         const bool bIsChecked = (NewState == ECheckBoxState::Checked);
         *FlagPtr = bIsChecked;
+        if (DiggerDebug::Flags)
         UE_LOG(LogTemp, Warning, TEXT("[DebugFlags] %s was %s"), *Label, bIsChecked ? TEXT("Enabled") : TEXT("Disabled"));
     })
     .Content()
@@ -2871,6 +2882,83 @@ void FDiggerEdModeToolkit::ApplyTierCapsFromLicense()
     }
 }
 
+void FDiggerEdModeToolkit::UpdateWorklightType(const FString& NewType)
+{
+    if (!DiggerWorklightComponent) return;
+
+    USceneComponent* Parent = DiggerWorklightComponent->GetAttachParent();
+    AActor* Owner = DiggerWorklightComponent->GetOwner();
+
+    // Remove old component
+    DiggerWorklightComponent->DestroyComponent();
+
+    // Create new component based on type
+    if (NewType == "Point")
+    {
+        DiggerWorklightComponent = NewObject<UPointLightComponent>(Owner);
+    }
+    else if (NewType == "Spot")
+    {
+        DiggerWorklightComponent = NewObject<USpotLightComponent>(Owner);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Unknown light type: %s"), *NewType);
+        return;
+    }
+
+    DiggerWorklightComponent->RegisterComponent();
+    DiggerWorklightComponent->SetMobility(EComponentMobility::Movable);
+    DiggerWorklightComponent->AttachToComponent(Parent, FAttachmentTransformRules::KeepRelativeTransform);
+    Owner->AddInstanceComponent(DiggerWorklightComponent);
+
+    // Reapply current settings
+    UpdateWorklightIntensity(WorklightIntensity);
+    UpdateWorklightAttenuation(WorklightAttenuation);
+    UpdateWorklightColor(WorklightColor);
+}
+
+void FDiggerEdModeToolkit::UpdateWorklightIntensity(float NewIntensity)
+{
+    if (!DiggerWorklightComponent) return;
+
+    DiggerWorklightComponent->SetIntensity(NewIntensity);
+    WorklightIntensity = NewIntensity;
+}
+
+void FDiggerEdModeToolkit::UpdateWorklightAttenuation(float NewRadius)
+{
+    if (!DiggerWorklightComponent) return;
+
+    if (auto* PointLight = Cast<UPointLightComponent>(DiggerWorklightComponent))
+    {
+        PointLight->AttenuationRadius = NewRadius;
+    }
+    else if (auto* SpotLight = Cast<USpotLightComponent>(DiggerWorklightComponent))
+    {
+        SpotLight->AttenuationRadius = NewRadius;
+    }
+
+    WorklightAttenuation = NewRadius;
+}
+
+void FDiggerEdModeToolkit::UpdateWorklightColor(const FLinearColor& NewColor)
+{
+    if (!DiggerWorklightComponent) return;
+
+    DiggerWorklightComponent->SetLightColor(NewColor);
+    WorklightColor = NewColor;
+}
+
+void FDiggerEdModeToolkit::ToggleWorklight(bool bEnable)
+{
+    if (!DiggerWorklightComponent) return;
+
+    DiggerWorklightComponent->SetVisibility(bEnable);
+    bWorklightEnabled = bEnable;
+}
+
+
 FText FDiggerEdModeToolkit::GetTierDisplayText() const
 {
     switch (CurrentTier)
@@ -4519,6 +4607,141 @@ void FDiggerEdModeToolkit::OnRemoveIslandClicked()
         RebuildIslandGrid();
     }
 }
+
+// Spawn or Update the Worklight in the scene.
+void FDiggerEdModeToolkit::SpawnOrUpdateWorklight()
+{
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    if (!World) return;
+
+    // Find or create the folder hierarchy
+    const FName DiggerFolder(TEXT("Digger"));
+    const FName WorklightFolder(TEXT("Digger/Worklight"));
+
+    // Try to find existing light
+    UDirectionalLightComponent* ExistingLight = nullptr;
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        if (It->GetFName() == TEXT("DiggerWorklight"))
+        {
+            ExistingLight = Cast<UDirectionalLightComponent>(It->FindComponentByClass<UDirectionalLightComponent>());
+            break;
+        }
+    }
+
+    if (!ExistingLight)
+    {
+        AActor* LightActor = World->SpawnActor<AActor>();
+        LightActor->SetActorLabel(TEXT("DiggerWorklight"));
+        LightActor->SetFolderPath(WorklightFolder);
+        LightActor->SetFlags(RF_Transient);
+
+        UDirectionalLightComponent* LightComp = NewObject<UDirectionalLightComponent>(LightActor);
+        LightComp->RegisterComponent();
+        LightComp->SetMobility(EComponentMobility::Movable);
+        LightComp->Intensity = 5000.f;
+        //LightComp->bUseInverseSquaredFalloff = false;
+        LightComp->LightColor = FColor::White;
+        LightComp->AttachToComponent(LightActor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+
+        LightActor->AddInstanceComponent(LightComp);
+        LightActor->SetRootComponent(LightComp);
+    }
+}
+
+
+//Make Worklight Section
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeWorklightSection()
+{
+    return SNew(SVerticalBox)
+
+    // Header Button (Fold/Unfold)
+    + SVerticalBox::Slot()
+    .AutoHeight()
+    .Padding(4)
+    [
+        SNew(SButton)
+        .OnClicked_Lambda([this]() -> FReply
+        {
+            bShowWorklightSection = !bShowWorklightSection;
+            return FReply::Handled();
+        })
+        [
+            SNew(STextBlock)
+            .Text_Lambda([this]()
+            {
+                return FText::FromString(
+                    bShowWorklightSection
+                    ? TEXT("▼ Worklight")
+                    : TEXT("► Worklight")
+                );
+            })
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+        ]
+    ]
+
+    // Collapsible Section
+    + SVerticalBox::Slot()
+    .AutoHeight()
+    .Padding(4)
+    [
+        SNew(SVerticalBox)
+        .Visibility_Lambda([this]()
+        {
+            return bShowWorklightSection ? EVisibility::Visible : EVisibility::Collapsed;
+    })
+
+    // Light Type Toggle
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+    [
+        SNew(SHorizontalBox)
+        + SHorizontalBox::Slot().AutoWidth().Padding(2)
+        [
+            SNew(STextBlock).Text(FText::FromString("Light Type:"))
+        ]
+        + SHorizontalBox::Slot().AutoWidth().Padding(2)
+        [
+            SNew(SComboBox<TSharedPtr<FString>>)
+            .OptionsSource(&WorklightTypeOptions)
+            .OnSelectionChanged_Lambda([this](TSharedPtr<FString> NewSelection, ESelectInfo::Type)
+            {
+             SelectedWorkLightType = *NewSelection;
+             UpdateWorklightType(SelectedWorkLightType);
+            })
+            .InitiallySelectedItem(MakeShared<FString>("Point"))
+            [
+                SNew(STextBlock)
+                .Text_Lambda([this]() { return FText::FromString(SelectedWorkLightType); })
+            ]
+        ]
+    ]
+
+    // Intensity Slider
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+    [
+        SNew(SSlider)
+        .Value_Lambda([this]() { return WorklightIntensity / 10000.f; })
+        .OnValueChanged_Lambda([this](float NewValue)
+        {
+            WorklightIntensity = NewValue * 10000.f;
+         UpdateWorklightIntensity(WorklightIntensity);
+        })
+    ]
+
+    // Color Picker
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+    [
+        SNew(SColorBlock)
+        .Color_Lambda([this]() { return WorklightColor; })
+        .OnMouseButtonDown_Lambda([this](const FGeometry&, const FPointerEvent&) -> FReply
+        {
+            // Open color picker logic here
+            return FReply::Handled();
+        })
+    ]
+    ];
+}
+
 
 //Make Island Section
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()

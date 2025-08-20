@@ -10,7 +10,7 @@
 
 
 # Local voxel save data (to be removed from history later)
-Content/VoxelData/
+Content/VoxelData
 
 # ===============================
 # IDE project/workspace files

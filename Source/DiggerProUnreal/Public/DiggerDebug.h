@@ -23,7 +23,11 @@ namespace DiggerDebug
 	inline bool Chunks = false;
 	inline bool Voxels = false;
 	inline bool Casts = false;
+	inline bool Delegates = false;
 	inline bool Manager = false;
 	inline bool Caves = false;
 	inline bool Lights = false;
+	inline bool Flags = false;
+	inline bool VoxelModificationReports=false;
+	inline bool Seams=false;
 }
