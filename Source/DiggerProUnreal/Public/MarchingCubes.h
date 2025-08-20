@@ -30,6 +30,25 @@ public:
 	void GenerateMesh(const UVoxelChunk* ChunkPtr);
 	void GenerateMeshSyncronous(const UVoxelChunk* VoxelChunk);
 
+	// class UMarchingCubes:
+	float SurfaceInset = 0.25f; // in *voxels*; small negative offset below surface
+
+	// fast cached height fetch using your precomputed HeightValues
+	inline float GetCachedHeightFast(const FVector& WS, const FVector& Origin, float VoxelSize, int32 N, const TArray<float>& HeightValues)
+	{
+		int32 ix = FMath::Clamp(int32(FMath::FloorToFloat((WS.X - Origin.X) / VoxelSize)), 0, N - 1);
+		int32 iy = FMath::Clamp(int32(FMath::FloorToFloat((WS.Y - Origin.Y) / VoxelSize)), 0, N - 1);
+		return HeightValues[iy * N + ix];
+	}
+
+	inline FVector ClampToLandscapeTop(const FVector& V, const FVector& Origin, float VoxelSize, int32 N, const TArray<float>& HeightValues, float InsetVoxels)
+	{
+		const float H  = GetCachedHeightFast(V, Origin, VoxelSize, N, HeightValues);
+		const float Ez = InsetVoxels * VoxelSize; // cm
+		const float Zc = FMath::Min(V.Z, H - Ez);
+		return FVector(V.X, V.Y, Zc);
+	}
+
 	// Add these members to your MarchingCubes class
 private:
 	// Height caching system

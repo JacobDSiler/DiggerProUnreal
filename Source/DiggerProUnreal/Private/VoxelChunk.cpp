@@ -1141,6 +1141,7 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
     }
 
     // DEBUG: Log boundary positions found
+	if (DiggerDebug::Seams)
     UE_LOG(LogTemp, Warning, TEXT("Found %d boundary positions for %s seam"), 
            BoundaryPositions.Num(), bHiddenSeam ? TEXT("HIDDEN") : TEXT("NATURAL"));
 
@@ -1401,6 +1402,7 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
     }
     
     // DEBUG: Final summary
+	if (DiggerDebug::Seams)
     UE_LOG(LogTemp, Warning, TEXT("Shell creation complete: %s seam - Created %d voxels, Skipped %d rim voxels"), 
            bHiddenSeam ? TEXT("HIDDEN") : TEXT("NATURAL"), CreatedVoxels, SkippedRimVoxels);
 }
@@ -1637,6 +1639,7 @@ void UVoxelChunk::GenerateMesh() const
 {
 	if (!SparseVoxelGrid)
 	{
+		if (DiggerDebug::Voxels)
 		UE_LOG(LogTemp, Error, TEXT("SparseVoxelGrid is null!"));
 		return;
 	}

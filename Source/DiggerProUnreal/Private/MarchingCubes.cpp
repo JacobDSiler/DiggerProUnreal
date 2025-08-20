@@ -914,6 +914,14 @@ void UMarchingCubes::GenerateMeshFromGrid(
                     );
                     
                     TriangleVertices[j] = ApplyLandscapeTransition(InterpolatedVertex);
+                    /*TriangleVertices[j] = ClampToLandscapeTop(
+	                    InterpolatedVertex,
+	                    Origin,
+	                    VoxelSize,
+	                    N,
+	                    HeightValues,
+	                    SurfaceInset // e.g. 0.25f of a voxel
+                    );*/
                 }
 
                 // Add vertices to mesh with proper offset

@@ -338,18 +338,7 @@ FDiggerEdMode::FBrushUIParams FDiggerEdMode::GetCurrentBrushUI() const
         P.Offset     = DiggerToolkit->GetBrushOffset();
         //P.CellSize   = (DM && DM->Subdivisions>0) ? DM->TerrainGridSize / float(DM->Subdivisions) : 50.f;
 
-        /*Vector OffsetXY(P.Offset.X, P.Offset.Y, 0.f);
-        float   ZDist       = P.Offset.Z;
-        FVector FinalOffset = P.Rotation.IsNearlyZero()
-            ? FVector(OffsetXY.X, OffsetXY.Y, ZDist)
-            : OffsetXY + P.Rotation.Quaternion() * ZDist;
 
-        const FVector PreviewCenter = BrushLocation + FinalOffset;
-        const FQuat   PreviewRot    = P.Rotation.Quaternion();
-
-        //How do I implement this functionality now that the code works this way?
-        */
-        
         // Map the active editor brush type to our preview enum so the
         // correct preview mesh is displayed for the selected tool.
         switch (DiggerToolkit->GetCurrentBrushType())

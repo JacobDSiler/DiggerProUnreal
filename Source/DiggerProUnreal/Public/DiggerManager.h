@@ -470,7 +470,14 @@ public:
     //void UpdateIslandsFromChunk(UVoxelChunk* Chunk);
 
 
-
+    FVector SnapToVoxelGrid(const FVector& WorldLocation, float InVoxelSize)
+    {
+        return FVector(
+            FMath::GridSnap(WorldLocation.X, InVoxelSize),
+            FMath::GridSnap(WorldLocation.Y, InVoxelSize),
+            FMath::GridSnap(WorldLocation.Z, InVoxelSize)
+        );
+    }
 
 #endif
 

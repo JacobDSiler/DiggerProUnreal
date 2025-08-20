@@ -164,7 +164,12 @@ private:
     
     FVector CalculateBrushBounds(const FBrushStroke& Stroke) const;
     
-
+    // helpers (static or local)
+    inline float SnapDownTo(float Value, float Step)
+    {
+        return Step > 0.f ? FMath::FloorToFloat(Value / Step) * Step : Value;
+    }
+    
     void CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels, bool bHiddenSeam = false);
 
     void ApplySmoothBrush(const FVector& Center, float Radius, bool bDig, int NumIterations);

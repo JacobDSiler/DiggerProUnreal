@@ -3166,17 +3166,18 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     if (!ActiveBrush)
     {
 #if WITH_EDITOR
-        // Active Brush is only used in PIE
-        // Do anything we may need to do right here for the editor brush stuff.
+        // Editor-only brush logic
 #else
         if (GetWorld() && GetWorld()->IsPlayInEditor())
         {
-            if (!ActiveBrush)
+            ActiveBrush = CreateDefaultSubobject<UVoxelBrushShape>(TEXT("ActiveBrush"));
+            if (ActiveBrush)
             {
-                ActiveBrush = CreateDefaultSubobject<UVoxelBrushShape>(TEXT("ActiveBrush"));
-                
-                // Ensure brushes are ready forusage
-                ActiveBrush->InitializeBrush(ActiveBrush->GetBrushType(),ActiveBrush->GetBrushSize(),ActiveBrush->GetBrushLocation(),this);
+                ActiveBrush->InitializeBrush(
+                    ActiveBrush->GetBrushType(),
+                    ActiveBrush->GetBrushSize(),
+                    ActiveBrush->GetBrushLocation(),
+                    this);
                 InitializeBrushShapes();
             }
         }
@@ -3186,15 +3187,32 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 #endif
     }
 
-    FVector SpawnLocation = Stroke.BrushPosition;
-    FRotator SpawnRotation = Stroke.BrushRotation;
-    FVector SpawnScale = FVector(Stroke.BrushRadius / 40.0f);
+    // 🔧 Modulate scale based on terrain voxel size
+    VoxelSize = FVoxelConversion::LocalVoxelSize;
+    const float HoleSize = Stroke.BrushRadius;
+    const float GridUnits = HoleSize / VoxelSize;
+    //Get the voxel size-snapped location to spawn the HoleBP
+    const float CellSize = VoxelSize; // Or however you define your voxel resolution
+    const float Cell = FMath::Max(1.f, CellSize);
+    auto Snap = [Cell](float v) { return FMath::GridSnap(v, Cell); };
 
-    // Early out if subterranean
-    if (GetLandscapeHeightAt(SpawnLocation) > SpawnLocation.Z + Stroke.BrushRadius * 0.6f)
+    const FVector& BrushPos = Stroke.BrushPosition;
+    FVector  OffsetCorrection = FVector(Stroke.BrushRadius/3);
+    FVector SpawnLocation = FVector(
+        Snap(BrushPos.X),
+        Snap(BrushPos.Y),
+        Snap(BrushPos.Z)
+    );
+    FRotator SpawnRotation = Stroke.BrushRotation;
+
+    // Adjust scale to match voxel grid footprint
+    FVector SpawnScale = FVector(GridUnits * VoxelSize / 45.0f); // Normalize to mesh scale
+
+    // 🛑 Early out if subterranean
+    if (GetLandscapeHeightAt(SpawnLocation) > SpawnLocation.Z + HoleSize * 0.25f)
     {
         if (DiggerDebug::Casts || DiggerDebug::Holes)
-        UE_LOG(LogTemp, Warning, TEXT("Subterranean hit at %s, not spawning hole."), *SpawnLocation.ToString());
+            UE_LOG(LogTemp, Warning, TEXT("Subterranean hit at %s, not spawning hole."), *SpawnLocation.ToString());
         return;
     }
 
@@ -3206,18 +3224,11 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     FHitResult HitResult;
     if (ActiveBrush->GetCameraHitLocation(HitResult))
     {
-
         AActor* HitActor = HitResult.GetActor();
-        if (!HitActor)
+        if (!HitActor || !ActiveBrush->IsLandscape(HitActor))
         {
             if (DiggerDebug::Casts || DiggerDebug::Holes)
-            UE_LOG(LogTemp, Warning, TEXT("No actor hit, not spawning hole."));
-            return;
-        }
-        if (!ActiveBrush->IsLandscape(HitActor))
-        {
-            if (DiggerDebug::Casts || DiggerDebug::Holes)
-            UE_LOG(LogTemp, Warning, TEXT("Hit actor is not landscape (is %s), not spawning hole."), *HitActor->GetName());
+                UE_LOG(LogTemp, Warning, TEXT("Invalid hit actor, not spawning hole."));
             return;
         }
 
@@ -3231,22 +3242,21 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
         SpawnLocation = HitResult.Location;
     }
 
-    // Find which chunk owns this location
     UVoxelChunk* TargetChunk = GetOrCreateChunkAtWorld(SpawnLocation);
-
     if (TargetChunk)
     {
         TargetChunk->SaveHoleData(SpawnLocation, SpawnRotation, SpawnScale);
         TargetChunk->SpawnHoleFromData(FSpawnedHoleData(SpawnLocation, SpawnRotation, SpawnScale, Stroke.HoleShape));
         if (DiggerDebug::Holes)
-        UE_LOG(LogTemp, Log, TEXT("Delegated hole spawn to chunk at location %s"), *SpawnLocation.ToString());
+            UE_LOG(LogTemp, Log, TEXT("Delegated hole spawn to chunk at location %s"), *SpawnLocation.ToString());
     }
     else
     {
         if (DiggerDebug::Chunks || DiggerDebug::Holes)
-        UE_LOG(LogTemp, Error, TEXT("No chunk found at location %s"), *SpawnLocation.ToString());
+            UE_LOG(LogTemp, Error, TEXT("No chunk found at location %s"), *SpawnLocation.ToString());
     }
 }
+
 
 
 
