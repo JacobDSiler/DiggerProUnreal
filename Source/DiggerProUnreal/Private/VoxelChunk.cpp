@@ -1199,18 +1199,15 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
     }
 
     // DEBUG: Log boundary positions found
-<<<<<<< Updated upstream
 	if (DiggerDebug::Seams)
     UE_LOG(LogTemp, Warning, TEXT("Found %d boundary positions for %s seam"), 
            BoundaryPositions.Num(), bHiddenSeam ? TEXT("HIDDEN") : TEXT("NATURAL"));
-=======
 
     if (DiggerDebug::Seams)
     {
 	    UE_LOG(LogTemp, Warning, TEXT("Found %d boundary positions for %s seam"), 
 	           BoundaryPositions.Num(), bHiddenSeam ? TEXT("HIDDEN") : TEXT("NATURAL"));
     }
->>>>>>> Stashed changes
 
     // Rim thickness calculation function
     auto GetRimThickness = [&, CachedVoxelSize](const FVector& WorldPos) -> float
@@ -1469,11 +1466,7 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
     }
     
     // DEBUG: Final summary
-<<<<<<< Updated upstream
-	if (DiggerDebug::Seams)
-=======
 	if (DiggerDebug::Seams || DiggerDebug::Voxels)
->>>>>>> Stashed changes
     UE_LOG(LogTemp, Warning, TEXT("Shell creation complete: %s seam - Created %d voxels, Skipped %d rim voxels"), 
            bHiddenSeam ? TEXT("HIDDEN") : TEXT("NATURAL"), CreatedVoxels, SkippedRimVoxels);
 }
