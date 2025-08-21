@@ -5599,6 +5599,21 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()
                     return FReply::Unhandled();
                 }
                 SelectedIslandIndex = i;
+
+                // Draw a debug icon at the island's world location
+                if (GEditor)
+                {
+                    UWorld* World = GEditor->GetEditorWorldContext().World();
+                    if (World)
+                    {
+                        const FVector& Location = Islands[i].Location;
+                        DrawDebugSphere(World, Location, 50.0f, 12, FColor::Green, false, 10.0f);
+                        DrawDebugString(World, Location + FVector(0, 0, 100),
+                                        FString::Printf(TEXT("Island %d"), i + 1),
+                                        nullptr, FColor::Green, 10.0f);
+                    }
+                }
+
                 return FReply::Handled();
             })
             [
