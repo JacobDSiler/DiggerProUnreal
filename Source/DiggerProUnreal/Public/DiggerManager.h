@@ -470,14 +470,13 @@ public:
     //void UpdateIslandsFromChunk(UVoxelChunk* Chunk);
 
 
-    FVector SnapToVoxelGrid(const FVector& WorldLocation, float InVoxelSize)
+    FVector SnapToGrid(const FVector& Position, float CellSize)
     {
-        return FVector(
-            FMath::GridSnap(WorldLocation.X, InVoxelSize),
-            FMath::GridSnap(WorldLocation.Y, InVoxelSize),
-            FMath::GridSnap(WorldLocation.Z, InVoxelSize)
-        );
+        const float Cell = FMath::Max(1.f, CellSize);
+        auto Snap = [Cell](float v) { return FMath::GridSnap(v, Cell); };
+        return FVector(Snap(Position.X), Snap(Position.Y), Snap(Position.Z));
     }
+
 
 #endif
 

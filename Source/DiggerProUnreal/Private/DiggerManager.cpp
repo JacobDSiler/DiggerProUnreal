@@ -3191,25 +3191,18 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     VoxelSize = FVoxelConversion::LocalVoxelSize;
     const float HoleSize = Stroke.BrushRadius;
     const float GridUnits = HoleSize / VoxelSize;
-    //Get the voxel size-snapped location to spawn the HoleBP
-    const float CellSize = VoxelSize; // Or however you define your voxel resolution
-    const float Cell = FMath::Max(1.f, CellSize);
-    auto Snap = [Cell](float v) { return FMath::GridSnap(v, Cell); };
-
+    
     const FVector& BrushPos = Stroke.BrushPosition;
-    FVector  OffsetCorrection = FVector(Stroke.BrushRadius/3);
-    FVector SpawnLocation = FVector(
-        Snap(BrushPos.X),
-        Snap(BrushPos.Y),
-        Snap(BrushPos.Z)
-    );
+    FVector  OffsetCorrection = FVector(5);
+    FVector BrushActualPos = BrushPos - OffsetCorrection;
+    FVector SpawnLocation = SnapToGrid(BrushActualPos, VoxelSize);
     FRotator SpawnRotation = Stroke.BrushRotation;
 
     // Adjust scale to match voxel grid footprint
-    FVector SpawnScale = FVector(GridUnits * VoxelSize / 45.0f); // Normalize to mesh scale
+    FVector SpawnScale = FVector(GridUnits * VoxelSize / 38.0f); // Normalize to mesh scale
 
     // 🛑 Early out if subterranean
-    if (GetLandscapeHeightAt(SpawnLocation) > SpawnLocation.Z + HoleSize * 0.25f)
+    if (GetLandscapeHeightAt(SpawnLocation) > SpawnLocation.Z + HoleSize * 0.5f)
     {
         if (DiggerDebug::Casts || DiggerDebug::Holes)
             UE_LOG(LogTemp, Warning, TEXT("Subterranean hit at %s, not spawning hole."), *SpawnLocation.ToString());
