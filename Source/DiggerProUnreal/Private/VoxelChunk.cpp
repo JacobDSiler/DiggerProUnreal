@@ -180,7 +180,10 @@ void UVoxelChunk::SpawnHoleFromData(const FSpawnedHoleData& HoleData)
 		DiggerManager->EnsureHoleShapeLibrary();
 		if (!HoleShapeLibrary)
 		{
-			UE_LOG(LogTemp, Error, TEXT("HoleShapeLibrary is not set in SpawnHoleFromData"));
+			if (DiggerDebug::Holes || DiggerDebug::Error)
+			{
+				UE_LOG(LogTemp, Error, TEXT("HoleShapeLibrary is not set in SpawnHoleFromData"));
+			}
 			return;
 		}
 	}
@@ -190,21 +193,30 @@ void UVoxelChunk::SpawnHoleFromData(const FSpawnedHoleData& HoleData)
 		EnsureDefaultHoleBP(); // works now
 		if (!HoleBP)
 		{
-			UE_LOG(LogTemp, Error, TEXT("HoleBP is not set in SpawnHoleFromData"));
+			if (DiggerDebug::Holes || DiggerDebug::Error)
+			{
+				UE_LOG(LogTemp, Error, TEXT("HoleBP is not set in SpawnHoleFromData"));
+			}
 			return;
 		}
 	}
 
 	if (!GetWorld())
 	{
-		UE_LOG(LogTemp, Error, TEXT("GetWorld() returned null in SpawnHoleFromData"));
+		if (DiggerDebug::Context || DiggerDebug::Holes || DiggerDebug::Error)
+		{
+			UE_LOG(LogTemp, Error, TEXT("GetWorld() returned null in SpawnHoleFromData"));
+		}
 		return;
 	}
 
 	AActor* SpawnedHole = SpawnTransientActor(GetWorld(), HoleBP, HoleData.Location, HoleData.Rotation, HoleData.Scale);
 	if (!SpawnedHole)
 	{
-		UE_LOG(LogTemp, Error, TEXT("Failed to spawn hole actor"));
+		if (DiggerDebug::Holes || DiggerDebug::Error)
+		{
+			UE_LOG(LogTemp, Error, TEXT("Failed to spawn hole actor"));
+		}
 		return;
 	}
 
@@ -220,12 +232,18 @@ void UVoxelChunk::SpawnHoleFromData(const FSpawnedHoleData& HoleData)
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("InitializeHoleMesh not found on spawned hole actor"));
+			if (DiggerDebug::Holes || DiggerDebug::Error)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("InitializeHoleMesh not found on spawned hole actor"));
+			}
 		}
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("No mesh found for shape %s"), *UEnum::GetValueAsString(HoleData.Shape.ShapeType));
+		if (DiggerDebug::Holes || DiggerDebug::Error)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("No mesh found for shape %s"), *UEnum::GetValueAsString(HoleData.Shape.ShapeType));
+		}
 	}
 
 #if WITH_EDITOR
@@ -268,15 +286,24 @@ void UVoxelChunk::DebugPrintVoxelData() const
 	
 	if (!SparseVoxelGrid)
 	{
-		UE_LOG(LogTemp, Error, TEXT("SparseVoxelGrid is null in DebugPrintVoxelData"));
+		if (DiggerDebug::Voxels || DiggerDebug::Error)
+		{
+			UE_LOG(LogTemp, Error, TEXT("SparseVoxelGrid is null in DebugPrintVoxelData"));
+		}
 		return;
 	}
- 
-	UE_LOG(LogTemp, Log, TEXT("Voxel Data for Chunk at %s:"), *GetChunkCoordinates().ToString());
+
+	if (DiggerDebug::Chunks || DiggerDebug::Voxels || DiggerDebug::Error)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Voxel Data for Chunk at %s:"), *GetChunkCoordinates().ToString());
+	}
 	for (const auto& Pair : SparseVoxelGrid->VoxelData)
 	{
-		UE_LOG(LogTemp, Log, TEXT("Voxel at (%d,%d,%d): Value = %f"),
-			Pair.Key.X, Pair.Key.Y, Pair.Key.Z, Pair.Value.SDFValue);
+		if (DiggerDebug::Voxels)
+		{
+			UE_LOG(LogTemp, Log, TEXT("Voxel at (%d,%d,%d): Value = %f"),
+			       Pair.Key.X, Pair.Key.Y, Pair.Key.Z, Pair.Value.SDFValue);
+		}
 	}
 }
 
@@ -300,7 +327,10 @@ void UVoxelChunk::ForceUpdate()
 	// Ensure we're on the game thread for mesh updates
 	if (!IsInGameThread())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("ForceUpdate called from non-game thread, dispatching to game thread"));
+		if (DiggerDebug::Mesh)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ForceUpdate called from non-game thread, dispatching to game thread"));
+		}
 		AsyncTask(ENamedThreads::GameThread, [this]()
 		{
 			if (IsValid(this))
@@ -311,15 +341,21 @@ void UVoxelChunk::ForceUpdate()
 		return;
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("UVoxelChunk::ForceUpdate - Starting mesh regeneration"));
+	if (DiggerDebug::Mesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UVoxelChunk::ForceUpdate - Starting mesh regeneration"));
+	}
     
 	// Perform the update (e.g., regenerate the mesh)
 	GenerateMeshSyncronous();
         
 	// Reset the dirty flag
 	bIsDirty = false;
-    
-	UE_LOG(LogTemp, Warning, TEXT("UVoxelChunk::ForceUpdate - Completed"));
+
+	if (DiggerDebug::Mesh)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UVoxelChunk::ForceUpdate - Completed"));
+	}
 }
 
 void UVoxelChunk::RefreshSectionMesh()
@@ -346,16 +382,21 @@ void UVoxelChunk::GenerateMeshSyncronous() const
     // Verify we're on the game thread
     if (!IsInGameThread())
     {
-        UE_LOG(LogTemp, Error, TEXT("GenerateMeshSyncronous called from non-game thread! This will cause issues."));
-        return;
+    	if (DiggerDebug::Mesh)
+    	{
+    		UE_LOG(LogTemp, Error, TEXT("GenerateMeshSyncronous called from non-game thread! This will cause issues."));
+    	}
+    	return;
     }
 
     if (!SparseVoxelGrid)
     {
+    	if (DiggerDebug::Mesh || DiggerDebug::Error || DiggerDebug::Voxels)
         UE_LOG(LogTemp, Error, TEXT("SparseVoxelGrid is null!"));
         return;
     }
 
+	if (DiggerDebug::Mesh)
     UE_LOG(LogTemp, Warning, TEXT("GenerateMeshSyncronous - Starting mesh generation"));
 
     // --- Island Detection ---
@@ -390,10 +431,12 @@ void UVoxelChunk::GenerateMeshSyncronous() const
     // Bind the completion callback
     MarchingCubesGenerator->OnMeshReady.BindLambda([this]()
     {
+    	if (DiggerDebug::Mesh)
         UE_LOG(LogTemp, Warning, TEXT("Marching cubes mesh generation completed"));
         this->OnMarchingMeshComplete();
     });
 
+	if (DiggerDebug::Mesh)
     UE_LOG(LogTemp, Warning, TEXT("Starting marching cubes generation"));
     MarchingCubesGenerator->GenerateMeshSyncronous(this);
 }
@@ -649,11 +692,17 @@ void UVoxelChunk::EnsureDefaultHoleBP()
 		if (UClass* LoadedClass = Cast<UClass>(LoadedObj))
 		{
 			HoleBP = LoadedClass;
-			UE_LOG(LogTemp, Log, TEXT("Loaded Default HoleBP from %s"), GDefaultHoleBPPath);
+			if (DiggerDebug::Holes)
+			{
+				UE_LOG(LogTemp, Log, TEXT("Loaded Default HoleBP from %s"), GDefaultHoleBPPath);
+			}
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Failed to load HoleBP from %s"), GDefaultHoleBPPath);
+			if (DiggerDebug::Holes)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("Failed to load HoleBP from %s"), GDefaultHoleBPPath);
+			}
 		}
 	}
 }
@@ -676,7 +725,10 @@ void UVoxelChunk::SpawnHole(TSubclassOf<AActor> HoleBPClass, FVector Location, F
 
     if (!HoleBPClass)
     {
-        UE_LOG(LogTemp, Error, TEXT("SpawnHole: No valid HoleBPClass after ensure"));
+	    if (DiggerDebug::Holes)
+	    {
+		    UE_LOG(LogTemp, Error, TEXT("SpawnHole: No valid HoleBPClass after ensure"));
+	    }
         return;
     }
 
@@ -684,7 +736,10 @@ void UVoxelChunk::SpawnHole(TSubclassOf<AActor> HoleBPClass, FVector Location, F
 
     if (!World)
     {
-        UE_LOG(LogTemp, Error, TEXT("SpawnHole: Invalid World"));
+	    if (DiggerDebug::Holes || DiggerDebug::Context)
+	    {
+		    UE_LOG(LogTemp, Error, TEXT("SpawnHole: Invalid World"));
+	    }
         return;
     }
 
@@ -723,12 +778,14 @@ void UVoxelChunk::SpawnHole(TSubclassOf<AActor> HoleBPClass, FVector Location, F
 
         HoleDataArray.Add(HoleData);
 
+    	if (DiggerDebug::Holes)
         UE_LOG(LogTemp, Log, TEXT("Spawned HoleBP at %s with shape %s"),
                *Location.ToString(),
                *UEnum::GetValueAsString(ShapeType));
     }
     else
     {
+    	if (DiggerDebug::Holes)
         UE_LOG(LogTemp, Error, TEXT("Failed to spawn HoleBP at %s"), *Location.ToString());
     }
 }
@@ -840,6 +897,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 
 	if (!BrushShape)
 	{
+		if (DiggerDebug::Brush || DiggerDebug::Error)
 		UE_LOG(LogTemp, Error, TEXT("ApplyBrushStroke: No brush shape for type %d"), (int32)Stroke.BrushType);
 		return;
 	}
@@ -1141,9 +1199,18 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
     }
 
     // DEBUG: Log boundary positions found
+<<<<<<< Updated upstream
 	if (DiggerDebug::Seams)
     UE_LOG(LogTemp, Warning, TEXT("Found %d boundary positions for %s seam"), 
            BoundaryPositions.Num(), bHiddenSeam ? TEXT("HIDDEN") : TEXT("NATURAL"));
+=======
+
+    if (DiggerDebug::Seams)
+    {
+	    UE_LOG(LogTemp, Warning, TEXT("Found %d boundary positions for %s seam"), 
+	           BoundaryPositions.Num(), bHiddenSeam ? TEXT("HIDDEN") : TEXT("NATURAL"));
+    }
+>>>>>>> Stashed changes
 
     // Rim thickness calculation function
     auto GetRimThickness = [&, CachedVoxelSize](const FVector& WorldPos) -> float
@@ -1328,11 +1395,11 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
             // Stricter connectivity requirements for rim voxels to eliminate floating
             bool HasStrongConnection = false;
             
-            if (TerrainConnections >= 2)
+            if (TerrainConnections >= 3)
             {
                 HasStrongConnection = true;
             }
-            else if (TerrainConnections >= 1 && SolidConnections >= 3)
+            else if (TerrainConnections >= 2 && SolidConnections >= 3)
             {
                 HasStrongConnection = true;
             }
@@ -1402,7 +1469,11 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
     }
     
     // DEBUG: Final summary
+<<<<<<< Updated upstream
 	if (DiggerDebug::Seams)
+=======
+	if (DiggerDebug::Seams || DiggerDebug::Voxels)
+>>>>>>> Stashed changes
     UE_LOG(LogTemp, Warning, TEXT("Shell creation complete: %s seam - Created %d voxels, Skipped %d rim voxels"), 
            bHiddenSeam ? TEXT("HIDDEN") : TEXT("NATURAL"), CreatedVoxels, SkippedRimVoxels);
 }

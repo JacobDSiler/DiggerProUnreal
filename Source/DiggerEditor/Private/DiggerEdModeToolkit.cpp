@@ -220,6 +220,10 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             SNew(SVerticalBox)
             + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
             [
+                MakeNavigationSection()
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+            [
                 MakeWorklightSection()
             ]
             + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
@@ -4624,60 +4628,178 @@ void FDiggerEdModeToolkit::SpawnOrUpdateWorklight(FEditorViewportClient* Viewpor
 
     const FName WorklightFolder(TEXT("Digger/Worklight"));
 
-    AActor* LightActor = nullptr;
-    for (TActorIterator<AActor> It(World); It; ++It)
+    // Check if we already have a valid reference
+    if (!WorklightActor.IsValid())
     {
-        if (It->GetFName() == TEXT("DiggerWorklight"))
+        // Try to find an existing actor in the world
+        for (TActorIterator<AActor> It(World); It; ++It)
         {
-            LightActor = *It;
-            break;
+            if (It->GetFName() == TEXT("DiggerWorklight"))
+            {
+                WorklightActor = *It;
+                break;
+            }
         }
-    }
 
-    if (!LightActor)
-    {
-        LightActor = World->SpawnActor<AActor>();
-        LightActor->SetActorLabel(TEXT("DiggerWorklight"));
-        LightActor->SetFolderPath(WorklightFolder);
-        LightActor->SetFlags(RF_Transient);
-        LightActor->SetActorEnableCollision(false);
-
-        if (SelectedWorkLightType == "Spot")
+        // If not found, spawn a new one
+        if (!WorklightActor.IsValid())
         {
-            DiggerWorklightComponent = NewObject<USpotLightComponent>(LightActor);
+            WorklightActor = World->SpawnActor<AActor>();
+            WorklightActor->SetActorLabel(TEXT("DiggerWorklight"));
+            WorklightActor->SetFolderPath(WorklightFolder);
+            WorklightActor->SetFlags(RF_Transient);
+            WorklightActor->SetActorEnableCollision(false);
+
+            if (SelectedWorkLightType == "Spot")
+            {
+                DiggerWorklightComponent = NewObject<USpotLightComponent>(WorklightActor.Get());
+            }
+            else
+            {
+                DiggerWorklightComponent = NewObject<UPointLightComponent>(WorklightActor.Get());
+            }
+
+            DiggerWorklightComponent->RegisterComponent();
+            DiggerWorklightComponent->SetMobility(EComponentMobility::Movable);
+            // Set all the transient flags
+            DiggerWorklightComponent->SetFlags(RF_Transient);
+            DiggerWorklightComponent->ClearFlags(RF_Transactional | RF_Public);
+            DiggerWorklightComponent->Modify(false);
+            WorklightActor->AddInstanceComponent(DiggerWorklightComponent);
+            WorklightActor->SetRootComponent(DiggerWorklightComponent);
+            // Set all the transient flags
+            WorklightActor->SetFlags(RF_Transient);
+            WorklightActor->ClearFlags(RF_Transactional | RF_Public);
+            WorklightActor->Modify(false);
+
+            UpdateWorklightIntensity(WorklightIntensity);
+            UpdateWorklightAttenuation(WorklightAttenuation);
+            UpdateWorklightColor(WorklightColor);
+            ToggleWorklight(bWorklightEnabled);
         }
         else
         {
-            DiggerWorklightComponent = NewObject<UPointLightComponent>(LightActor);
+            DiggerWorklightComponent = WorklightActor->FindComponentByClass<ULightComponent>();
         }
-
-        DiggerWorklightComponent->RegisterComponent();
-        DiggerWorklightComponent->SetMobility(EComponentMobility::Movable);
-        LightActor->AddInstanceComponent(DiggerWorklightComponent);
-        LightActor->SetRootComponent(DiggerWorklightComponent);
-
-        UpdateWorklightIntensity(WorklightIntensity);
-        UpdateWorklightAttenuation(WorklightAttenuation);
-        UpdateWorklightColor(WorklightColor);
-        ToggleWorklight(bWorklightEnabled);
-    }
-    else
-    {
-        DiggerWorklightComponent = LightActor->FindComponentByClass<ULightComponent>();
     }
 
-    if (LightActor)
+    // Update location and rotation every tick
+    if (WorklightActor.IsValid())
     {
-        LightActor->SetActorLocation(ViewportClient->GetViewLocation());
+        WorklightActor->SetActorLocation(ViewportClient->GetViewLocation());
+
         if (Cast<USpotLightComponent>(DiggerWorklightComponent))
         {
-            LightActor->SetActorRotation(ViewportClient->GetViewRotation());
+            WorklightActor->SetActorRotation(ViewportClient->GetViewRotation());
         }
     }
 }
 
 
-//Make Worklight Section
+// Helper to get the Current Elevation Information
+void FDiggerEdModeToolkit::GetElevationInfo(float& AbsoluteOut, float& RelativeOut) const
+{
+    AbsoluteOut = 0.f;
+    RelativeOut = 0.f;
+
+    if (!CachedViewportClient || !Manager)
+        return;
+
+    const FVector ViewLocation = CachedViewportClient->GetViewLocation();
+    AbsoluteOut = ViewLocation.Z;
+
+    TOptional<float> TerrainHeight = Manager->SampleLandscapeHeight(
+        Manager->GetLandscapeProxyAt(ViewLocation), ViewLocation);
+
+    if (TerrainHeight.IsSet())
+    {
+        RelativeOut = ViewLocation.Z - TerrainHeight.GetValue();
+    }
+    else
+    {
+        RelativeOut = -10000000.f; // Fallback value
+    }
+}
+
+
+// Make Navigation Section
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeNavigationSection()
+{
+    return SNew(SVerticalBox)
+
+    // Header Button
+    + SVerticalBox::Slot()
+    .AutoHeight()
+    .Padding(4)
+    [
+        SNew(SButton)
+        .OnClicked_Lambda([this]() -> FReply
+        {
+            bNavigationSection = !bNavigationSection;
+            return FReply::Handled();
+        })
+        [
+            SNew(STextBlock)
+            .Text_Lambda([this]()
+            {
+                return FText::FromString(
+                    bNavigationSection ? TEXT("▼ Navigation") : TEXT("► Navigation"));
+            })
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+        ]
+    ]
+
+    // Collapsible Section
+    + SVerticalBox::Slot()
+    .AutoHeight()
+    .Padding(4)
+    [
+        SNew(SVerticalBox)
+        .Visibility_Lambda([this]()
+        {
+            return bNavigationSection ? EVisibility::Visible : EVisibility::Collapsed;
+        })
+
+        // Absolute Elevation
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(2)
+        [
+            SNew(STextBlock)
+            .Text_Lambda([this]()
+            {
+                FVector ViewLocation = CachedViewportClient ? CachedViewportClient->GetViewLocation() : FVector::ZeroVector;
+                return FText::Format(
+                    FText::FromString("Absolute Elevation: {0}"),
+                    FText::AsNumber(FMath::RoundToInt(ViewLocation.Z))
+                );
+            })
+        ]
+
+        // Relative Elevation
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(2)
+        [
+            SNew(STextBlock)
+            .Text_Lambda([this]()
+            {
+
+                float AbsoluteElevation, RelativeElevation;
+                GetElevationInfo(AbsoluteElevation,RelativeElevation);
+
+                return FText::Format(
+                    FText::FromString("Landscape Surface Relative Elevation: {0}"),
+                    FText::AsNumber(FMath::RoundToInt(RelativeElevation))
+                );
+            })
+        ]
+    ];
+}
+
+
+
+// Make Worklight Section
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeWorklightSection()
 {
     return SNew(SVerticalBox)
@@ -4727,6 +4849,17 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeWorklightSection()
             [
                 SNew(SComboBox<TSharedPtr<FString>>)
                 .OptionsSource(&WorklightTypeOptions)
+                .OnGenerateWidget_Lambda([](TSharedPtr<FString> InItem)
+                {
+                    return SNew(STextBlock).Text(FText::FromString(*InItem));
+                })
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([this]()
+                    {
+                        return FText::FromString(SelectedWorkLightType);
+                    })
+                ]
                 .OnSelectionChanged_Lambda([this](TSharedPtr<FString> NewSelection, ESelectInfo::Type)
                 {
                     if (NewSelection)
@@ -4798,7 +4931,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeWorklightSection()
                 {
                     FColorPickerArgs PickerArgs;
                     PickerArgs.bUseAlpha = false;
-                    PickerArgs.InitialColorOverride = WorklightColor;
+                    PickerArgs.InitialColor = WorklightColor;
                     PickerArgs.OnColorCommitted = FOnLinearColorValueChanged::CreateLambda([this](FLinearColor NewColor)
                     {
                         UpdateWorklightColor(NewColor);
@@ -4822,6 +4955,27 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeWorklightSection()
                 SNew(STextBlock).Text(FText::FromString("Enabled"))
             ]
         ]
+        // Auto Under Landscape toggle
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 2)
+            [
+                SNew(SCheckBox)
+                .Visibility_Lambda([this]()
+                {
+                    return EVisibility::Visible;
+                })
+                .IsChecked_Lambda([this]()
+                {
+                    return bAutoUnderLandscape ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+                })
+                .OnCheckStateChanged_Lambda([this](ECheckBoxState State)
+                {
+                    bAutoUnderLandscape = (State == ECheckBoxState::Checked);
+                })
+                [
+                    SNew(STextBlock).Text(FText::FromString("Auto Under Landscape"))
+                ]
+            ]
+
     ];
 }
 
@@ -5385,6 +5539,19 @@ void FDiggerEdModeToolkit::ClearIslands()
     UE_LOG(LogTemp, Warning, TEXT("ClearIslands: RebuildIslandGrid completed"));
 }
 
+void FDiggerEdModeToolkit::RequestBrushUIRefresh()
+{
+    // If your SpinBoxes/Sliders are bound with TAttribute<float>, just invalidating is enough:
+    if (ToolkitWidget.IsValid())
+    {
+        ToolkitWidget->Invalidate(EInvalidateWidgetReason::LayoutAndVolatility);
+    }
+
+    // If you store raw pointers to specific widgets, you can also push values explicitly:
+    // RadiusSpinBox->SetValue(GetBrushRadius());
+    // StrengthSlider->SetValue(GetBrushStrength());
+    // FalloffSlider->SetValue(GetBrushFalloff());
+}
 
 void FDiggerEdModeToolkit::RebuildIslandGrid()
 {

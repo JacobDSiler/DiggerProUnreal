@@ -17,6 +17,11 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnDiggerModeChanged, bool);
 
 class DIGGEREDITOR_API FDiggerEdMode final : public FEdMode
 {
+
+/*    DECLARE_MULTICAST_DELEGATE_OneParam(FOnBrushSettingsChanged, const FBrushSettings&);
+    FOnBrushSettingsChanged OnBrushSettingsChanged;*/
+    
+    // FDiggerEdModeToolkit.h
 public:
     FDiggerEdMode();
     virtual ~FDiggerEdMode() override;
@@ -36,6 +41,9 @@ public:
     virtual bool UsesToolkits() const override;
     virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
 
+    // MouseEnter method for when the mouse enters the viewport.
+    virtual bool MouseEnter(FEditorViewportClient* ViewportClient, FViewport* Viewport, int32 x, int32 y) override;
+
     // Custom methods
     bool GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVector& OutHitLocation, FHitResult& OutHit);
     void SetPaintMode(bool bEnabled) { bPaintingEnabled = bEnabled; }
@@ -44,6 +52,9 @@ public:
     void StartContinuousApplication(const FViewportClick& Click);
     void StopContinuousApplication();
     void ApplyContinuousBrush(FEditorViewportClient* InViewportClient);
+    virtual bool InputAxis(FEditorViewportClient* ViewportClient, FViewport* Viewport, int32 ControllerId, FKey Key,
+                   float Delta,
+                   float DeltaTime) override;
     bool ShouldApplyContinuously() const;
     ADiggerManager* FindDiggerManager();
 
@@ -59,6 +70,9 @@ public:
     static const FEditorModeID EM_DiggerEdModeId;
 
 private:
+    // Store reference to original viewport client
+    FEditorViewportClient* OriginalViewportClient;
+    
     // Persistent Brush Actor Refernce
     TWeakObjectPtr<ABrushPreviewActor> Preview;
 

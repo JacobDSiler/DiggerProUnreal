@@ -142,6 +142,9 @@ void ADynamicLightActor::CreateOrUpdateLightComponent()
 	LightComponent->SetMobility(EComponentMobility::Movable);
 	LightComponent->bAffectsWorld = true;
 	LightComponent->CastShadows = true;
+	// Set all the transient flags
+	LightComponent->SetFlags(RF_Transient);
+	LightComponent->ClearFlags(RF_Transactional | RF_Public);
 
 	// Type-specific settings
 	if (UPointLightComponent* Point = Cast<UPointLightComponent>(LightComponent))

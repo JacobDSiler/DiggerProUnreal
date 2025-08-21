@@ -114,6 +114,8 @@ class FDiggerEdModeToolkit : public FModeToolkit
 public:
 	// Declare this so you can define it in the .cpp
 	FDiggerEdModeToolkit();
+	void RequestBrushUIRefresh();
+	
 private:
 	// Licensing UI state
 	EDiggerConnectTier CurrentTier = EDiggerConnectTier::Free;
@@ -121,6 +123,7 @@ private:
 	int32 CurrentActiveUsers = 0;          // From runtime check if you have one
 	FString LicenseEmail;
 	FString LicenseKey;
+
 
 
 	// UI builders/handlers
@@ -135,6 +138,9 @@ private:
 	void SaveLicenseToConfig() const;
 	void ApplyTierCapsFromLicense();
 
+	// ── Navigation UI State ──
+
+	FEditorViewportClient*  CachedViewportClient = nullptr;
 	
         // ── Worklight UI State ──
 
@@ -144,6 +150,9 @@ private:
         // Currently selected option pointer for the combo box
         TSharedPtr<FString> SelectedWorklightTypeItem;
 
+		// Worklight Actor
+		TWeakObjectPtr<AActor> WorklightActor = nullptr;
+	
         // Worklight Component
         ULightComponent* DiggerWorklightComponent = nullptr;
 
@@ -162,8 +171,18 @@ private:
         // Whether the light is enabled
         bool bWorklightEnabled = true;
 
+
+public:
+
+	void SetViewportClient(FEditorViewportClient* InClient)
+	{
+		CachedViewportClient = InClient;
+	}
+
+	
         void SpawnOrUpdateWorklight(class FEditorViewportClient* ViewportClient);
-        void UpdateWorklightType(const FString& NewType);
+	void GetElevationInfo(float& AbsoluteOut, float& RelativeOut) const;
+	void UpdateWorklightType(const FString& NewType);
         void UpdateWorklightIntensity(float NewIntensity);
         void UpdateWorklightAttenuation(float NewRadius);
         void UpdateWorklightColor(const FLinearColor& NewColor);
@@ -205,6 +224,15 @@ public:
 	virtual FText GetBaseToolkitName() const override;
 	virtual class FEdMode* GetEditorMode() const override;
 	virtual TSharedPtr<SWidget> GetInlineContent() const override;
+	
+	bool GetWorklightEnabled()
+	{
+		return bWorklightEnabled;
+	}
+	bool GetAutoUnderLandscape()
+	{
+		return bAutoUnderLandscape;
+	}
 
 	// In your class declaration
 	FDiggerUIFeatureFlags UIFeatureFlags;
@@ -481,6 +509,7 @@ private:
 	// Multiplayer Menu (Always Available)
 	TSharedRef<SWidget> MakeLobbySection();
 	TSharedRef<SWidget> MakeNetworkingWidget();
+	TSharedRef<SWidget> MakeNavigationSection();
 	TSharedRef<SWidget> MakeWorklightSection();
 	TSharedRef<SWidget> MakeIslandsSection();
 	TSharedRef<SWidget> MakeNetworkingHelpWidget();
@@ -552,6 +581,16 @@ public:
 		return BrushRadius;
 	}
 	
+	[[nodiscard]] float GetBrushStrength() const
+	{
+		return BrushStrength;
+	}
+	
+	[[nodiscard]] float GetBrushFalloff() const
+	{
+		return BrushFalloff;
+	}
+	
 	[[nodiscard]] FRotator GetBrushRotation() const
 	{
 		return FRotator(BrushRotX,BrushRotY,BrushRotZ);
@@ -599,9 +638,17 @@ private:
 	float BrushFalloff = 0.2f;
 
 public:
-	[[nodiscard]] float GetBrushFalloff() const
+	void SetBrushRadius(float NewRadius)
 	{
-		return BrushFalloff;
+		BrushRadius = NewRadius;
+	}
+	void SetBrushStrength(float NewStrength)
+	{
+		BrushStrength = NewStrength;
+	}
+	void SetBrushFalloff(float NewFalloff)
+	{
+		BrushFalloff = NewFalloff;
 	}
 
 private:
@@ -665,8 +712,11 @@ private:
 	bool bShowSaveLoadSection = false;
 	bool bShowLobbySection = false;
 	bool bShowCustomBrushSection = false;
-	bool bShowIslandsSection = false; 
+	bool bNavigationSection = false;
 	bool bShowWorklightSection = false;
+	bool bShowIslandsSection = false;
+
+	bool bAutoUnderLandscape = false;
 	
 	
 	FString SelectedSVGFilePath;

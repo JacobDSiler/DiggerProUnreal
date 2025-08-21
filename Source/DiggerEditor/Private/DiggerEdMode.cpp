@@ -26,6 +26,55 @@ const FEditorModeID FDiggerEdMode::EM_DiggerEdModeId = TEXT("EM_DiggerEdMode");
 FOnDiggerModeChanged FDiggerEdMode::OnDiggerModeChanged;
 bool FDiggerEdMode::bIsDiggerModeCurrentlyActive = false;
 
+// --- Tunables (top of FDiggerEdMode.cpp or as static const) ---
+static constexpr float RADIUS_MIN = 10.f;
+static constexpr float RADIUS_MAX = 4096.f; // feel free to raise
+static constexpr float STRENGTH_MIN = 0.f;
+static constexpr float STRENGTH_MAX = 1.f;
+static constexpr float FALLOFF_MIN = 0.f;
+static constexpr float FALLOFF_MAX = 1.f;
+
+// Base step sizes per tick of MouseWheelAxis at neutral speed
+static constexpr float BASE_RADIUS_STEP   = 8.f;
+static constexpr float BASE_STRENGTH_STEP = 0.02f;
+static constexpr float BASE_FALLOFF_STEP  = 0.02f;
+
+// Acceleration gain: how strongly scroll speed scales the step
+static constexpr float ACCEL_GAIN = 0.35f;   // 0.25–0.5 is a nice range
+static constexpr float SPEED_CLAMP = 30.f;   // cap insane wheels
+
+// Optional snapping (set to 0 to disable)
+static constexpr float RADIUS_SNAP_STEP = 0.f;  // e.g. set to your voxel size to snap
+static constexpr float FALLOFF_SNAP_STEP = 0.f; // e.g. 0.05f
+static constexpr float STRENGTH_SNAP_STEP = 0.f;// e.g. 0.05f
+
+// Helper: snap if step > 0
+static FORCEINLINE float SnapIf(float Value, float Step)
+{
+    if (Step <= KINDA_SMALL_NUMBER) return Value;
+    const float q = FMath::RoundToFloat(Value / Step);
+    return q * Step;
+}
+
+// Compute accelerated step for this wheel event.
+static FORCEINLINE float WheelStep(float BaseStep, float Delta, float DeltaTime, bool bFine, bool bCoarse)
+{
+    // Speed in "ticks/sec"
+    const float speed = FMath::Clamp(FMath::Abs(Delta) / FMath::Max(DeltaTime, KINDA_SMALL_NUMBER), 0.f, SPEED_CLAMP);
+    // Acceleration multiplier (1.0 at rest, grows with speed)
+    float accel = 1.f + speed * ACCEL_GAIN;
+
+    // Modifier scaling: Fine (Ctrl) shrinks; Coarse (Alt) grows
+    if (bFine)   accel *= 0.25f;   // precise
+    if (bCoarse) accel *= 2.5f;    // chunky
+
+    // Keep sign of wheel
+    const float sgn = (Delta >= 0.f) ? 1.f : -1.f;
+    return sgn * BaseStep * accel;
+}
+
+
+
 FDiggerEdMode::FDiggerEdMode() {}
 FDiggerEdMode::~FDiggerEdMode() {}
 
@@ -122,6 +171,7 @@ void FDiggerEdMode::Exit()
     }
     FEdMode::Exit();
 }
+
 
 
 bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVector& OutHitLocation, FHitResult& OutHit)
@@ -708,10 +758,123 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
     LastStrokeHitLocation = HitLocation;
 }
 
+// Add this method to your header file and implement it to handle mouse hover
+bool FDiggerEdMode::MouseEnter(FEditorViewportClient* ViewportClient, FViewport* Viewport, int32 x, int32 y)
+{
+    bool bResult = FEdMode::MouseEnter(ViewportClient, Viewport, x, y);
+    
+    // Auto-focus when mouse enters if we're in an active state
+    if (ViewportClient && Viewport)
+    {
+        Viewport->SetUserFocus(true);
+    }
+    
+    return bResult;
+}
 
+
+
+bool FDiggerEdMode::InputAxis(
+    FEditorViewportClient* ViewportClient,
+    FViewport* Viewport,
+    int32 ControllerId,
+    FKey Key,
+    float Delta,
+    float DeltaTime)
+{
+    TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit();
+    if (!DiggerToolkit.IsValid())
+    {
+        if (DiggerDebug::Error)
+        UE_LOG(LogTemp, Error, TEXT("Toolkit absent in FDiggerEdMode::InputAxis!!!"));
+        return false;
+    }
+
+    const bool bShift = Viewport->KeyState(EKeys::LeftShift) || Viewport->KeyState(EKeys::RightShift);
+    const bool bCtrl  = Viewport->KeyState(EKeys::LeftControl) || Viewport->KeyState(EKeys::RightControl);
+    const bool bAlt   = Viewport->KeyState(EKeys::LeftAlt) || Viewport->KeyState(EKeys::RightAlt);
+
+    // Only handle wheel when SHIFT is down (your chosen gesture)
+    if (Key == EKeys::MouseWheelAxis && bShift)
+    {
+        // ----- Choose which property with modifiers -----
+        // Shift+Ctrl  = Radius
+        // Shift+Alt   = Falloff
+        // Shift only  = Strength
+        // (feel free to swap these; logic below matches your earlier intent)
+        if (bCtrl && !bAlt)
+        {
+            // Radius
+            const float step = WheelStep(BASE_RADIUS_STEP, Delta, DeltaTime, /*bFine=*/true, /*bCoarse=*/false);
+            float v = DiggerToolkit->GetBrushRadius();
+            v = FMath::Clamp(v + step, RADIUS_MIN, RADIUS_MAX);
+            v = SnapIf(v, RADIUS_SNAP_STEP);
+            DiggerToolkit->SetBrushRadius(v);
+
+            if (DiggerDebug::Brush)
+                UE_LOG(LogTemp, Log, TEXT("Brush Radius: %.1f"), v);
+        }
+        else if (bAlt && !bCtrl)
+        {
+            // Falloff
+            const float step = WheelStep(BASE_FALLOFF_STEP, Delta, DeltaTime, /*bFine=*/false, /*bCoarse=*/true);
+            float v = DiggerToolkit->GetBrushFalloff();
+            v = FMath::Clamp(v + step, FALLOFF_MIN, FALLOFF_MAX);
+            v = SnapIf(v, FALLOFF_SNAP_STEP);
+            DiggerToolkit->SetBrushFalloff(v);
+
+            if (DiggerDebug::Brush)
+                UE_LOG(LogTemp, Log, TEXT("Brush Falloff: %.3f"), v);
+        }
+        else
+        {
+            // Strength (Shift only)
+            const float step = WheelStep(BASE_STRENGTH_STEP, Delta, DeltaTime, /*bFine=*/false, /*bCoarse=*/false);
+            float v = DiggerToolkit->GetBrushStrength();
+            v = FMath::Clamp(v + step, STRENGTH_MIN, STRENGTH_MAX);
+            v = SnapIf(v, STRENGTH_SNAP_STEP);
+            DiggerToolkit->SetBrushStrength(v);
+
+            if (DiggerDebug::Brush)
+                UE_LOG(LogTemp, Log, TEXT("Brush Strength: %.3f"), v);
+        }
+
+        // Tell the Toolkit to refresh its widgets (see section 2)
+        DiggerToolkit->RequestBrushUIRefresh();
+
+        // CRITICAL: consume so the viewport camera doesn’t zoom
+        return true;
+    }
+
+    return FEdMode::InputAxis(ViewportClient, Viewport, ControllerId, Key, Delta, DeltaTime);
+}
 // Input handling unchanged except bMouseButtonDown management
 bool FDiggerEdMode::InputKey(FEditorViewportClient* ViewportClient, FViewport* Viewport, FKey Key, EInputEvent Event)
 {
+    const bool bShift = Viewport->KeyState(EKeys::LeftShift) || Viewport->KeyState(EKeys::RightShift);
+
+    // While holding Shift for adjustments, do not start/continue brush strokes
+    if (bShift && Key.IsMouseButton())
+    {
+        return true; // consume mouse buttons so no stroke begins
+    }
+    
+    // Handle mouse enter to automatically focus viewport for our custom input
+    if (Key == EKeys::MouseX || Key == EKeys::MouseY)
+    {
+        if (ViewportClient && ViewportClient->Viewport)
+        {
+            const bool bShiftDown = Viewport->KeyState(EKeys::LeftShift) || Viewport->KeyState(EKeys::RightShift);
+            
+            // If shift is held and mouse moves over viewport, prepare for input capture
+            if (bShiftDown && Event == IE_Axis)
+            {
+                ViewportClient->Viewport->CaptureMouse(false); // Don't fully capture yet
+                ViewportClient->Viewport->SetUserFocus(true);
+            }
+        }
+    }
+    
     if (Key == EKeys::P && Event == IE_Pressed)
     {
         bPaintingEnabled = !bPaintingEnabled;
@@ -760,9 +923,35 @@ void FDiggerEdMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
 
     UpdatePreviewAtCursor(ViewportClient); // always refresh the brush preview
 
-    if (TSharedPtr<FDiggerEdModeToolkit> Toolkit = GetDiggerToolkit())
+    if (ViewportClient && ViewportClient->Viewport)
     {
-        Toolkit->SpawnOrUpdateWorklight(ViewportClient);
+        const bool bShiftDown = ViewportClient->Viewport->KeyState(EKeys::LeftShift) || 
+                               ViewportClient->Viewport->KeyState(EKeys::RightShift);
+        
+        // Maintain focus when shift is held to ensure our input works
+        // Check if the viewport has mouse focus/capture
+        if (bShiftDown && ViewportClient->Viewport->HasMouseCapture())
+        {
+            ViewportClient->Viewport->SetUserFocus(true);
+        }
+    }
+
+    if (TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit())
+    {
+        DiggerToolkit->SpawnOrUpdateWorklight(ViewportClient);
+        DiggerToolkit->SetViewportClient(ViewportClient);
+
+        if (DiggerToolkit->GetAutoUnderLandscape())
+        {
+            float AbsoluteZ, RelativeZ;
+            DiggerToolkit->GetElevationInfo(AbsoluteZ, RelativeZ);
+
+            const bool bShouldEnable = RelativeZ < 0.f;
+            if (DiggerToolkit->GetWorklightEnabled() != bShouldEnable)
+            {
+                DiggerToolkit->ToggleWorklight(bShouldEnable);
+            }
+        }
     }
 
     if (ShouldApplyContinuously())
