@@ -1914,7 +1914,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
 
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
 {
-    return SNew(SVerticalBox)
+    TSharedRef<SVerticalBox> SaveLoadWidget = SNew(SVerticalBox)
 
     // Header Button (Fold/Unfold)
     + SVerticalBox::Slot()
@@ -2260,6 +2260,11 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
             ]
         ]
     ];
+
+    // ✅ Now that SaveFileComboBox is assigned inside the widget tree, refresh the list
+    RefreshSaveFilesList();
+
+    return SaveLoadWidget; 
 }
 
 // Build/Export Section
@@ -2401,6 +2406,12 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBuildExportSection()
 
 void FDiggerEdModeToolkit::RefreshSaveFilesList()
 {
+    if (!SaveFileComboBox.IsValid())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SaveFileComboBox is not valid — skipping refresh"));
+        return;
+    }
+    
     UE_LOG(LogTemp, Log, TEXT("RefreshSaveFilesList: Starting refresh..."));
     
     AvailableSaveFiles.Empty();

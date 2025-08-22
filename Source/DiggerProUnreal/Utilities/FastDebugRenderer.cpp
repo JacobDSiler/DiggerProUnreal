@@ -9,7 +9,11 @@
 void UFastDebugRenderer::DrawBoxLines(UWorld* World, const FVector& Center, const FVector& Extent, 
                                     const FRotator& Rotation, const FFastDebugConfig& Config)
 {
-    if (!World) return;
+    if (!World)
+    {
+        UE_LOG(LogTemp, Error, TEXT("World not valid in UFastDebugRenderer::DrawBoxLines!"));
+        return;
+    }
     
     // Generate box vertices
     TArray<FVector> Vertices;
@@ -34,7 +38,11 @@ void UFastDebugRenderer::DrawBoxLines(UWorld* World, const FVector& Center, cons
 void UFastDebugRenderer::DrawBoxLinesBatch(UWorld* World, const TArray<FVector>& Centers, const FVector& Extent,
                                          const FFastDebugConfig& Config)
 {
-    if (!World || Centers.Num() == 0) return;
+    if (!World || Centers.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("World not valid in UFastDebugRenderer::DrawBoxLinesBatch!"));
+        return;
+    }
     
     // Batch draw all boxes at once
     FColor DrawColor = Config.Color.ToFColor(true);
@@ -63,7 +71,11 @@ void UFastDebugRenderer::DrawBoxLinesBatch(UWorld* World, const TArray<FVector>&
 void UFastDebugRenderer::DrawSphereLines(UWorld* World, const FVector& Center, float Radius, int32 Segments,
                                        const FFastDebugConfig& Config)
 {
-    if (!World) return;
+    if (!World)
+    {
+        UE_LOG(LogTemp, Error, TEXT("World not valid in UFastDebugRenderer::DrawSphereLines!"));
+        return;
+    }
     
     // Generate sphere vertices
     TArray<FVector> Vertices;
@@ -88,7 +100,11 @@ void UFastDebugRenderer::DrawSphereLines(UWorld* World, const FVector& Center, f
 void UFastDebugRenderer::DrawSphereLinesBatch(UWorld* World, const TArray<FVector>& Centers, float Radius,
                                             const FFastDebugConfig& Config)
 {
-    if (!World || Centers.Num() == 0) return;
+    if (!World || Centers.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("World not valid in UFastDebugRenderer::DrawSphereLinesBatch!"));
+        return;
+    }
     
     FColor DrawColor = Config.Color.ToFColor(true);
     
@@ -116,7 +132,10 @@ void UFastDebugRenderer::DrawSphereLinesBatch(UWorld* World, const TArray<FVecto
 void UFastDebugRenderer::DrawLine(UWorld* World, const FVector& Start, const FVector& End,
                                 const FFastDebugConfig& Config)
 {
-    if (!World) return;
+    if (!World)    {
+        UE_LOG(LogTemp, Error, TEXT("World not valid in UFastDebugRenderer::DrawSphereLinesBatch!"));
+        return;
+    }
     
     FColor DrawColor = Config.Color.ToFColor(true);
     DrawDebugLine(World, Start, End, DrawColor, false, Config.Duration, 0, Config.Thickness);
@@ -125,7 +144,11 @@ void UFastDebugRenderer::DrawLine(UWorld* World, const FVector& Start, const FVe
 void UFastDebugRenderer::DrawLinesBatch(UWorld* World, const TArray<FVector>& StartPoints, const TArray<FVector>& EndPoints,
                                       const FFastDebugConfig& Config)
 {
-    if (!World || StartPoints.Num() == 0 || EndPoints.Num() != StartPoints.Num()) return;
+    if (!World || StartPoints.Num() == 0 || EndPoints.Num() != StartPoints.Num())
+    {
+        UE_LOG(LogTemp, Error, TEXT("World not valid in UFastDebugRenderer::DrawSphereLinesBatch!"));
+        return;
+    }
     
     FColor DrawColor = Config.Color.ToFColor(true);
     
@@ -138,7 +161,11 @@ void UFastDebugRenderer::DrawLinesBatch(UWorld* World, const TArray<FVector>& St
 void UFastDebugRenderer::DrawPoint(UWorld* World, const FVector& Location, float Size,
                                  const FFastDebugConfig& Config)
 {
-    if (!World) return;
+    if (!World)
+    {
+        UE_LOG(LogTemp, Error, TEXT("World not valid in UFastDebugRenderer::DrawPoint!"));
+        return;
+    }
     
     FColor DrawColor = Config.Color.ToFColor(true);
     DrawDebugPoint(World, Location, Size, DrawColor, false, Config.Duration, 0);
@@ -147,7 +174,11 @@ void UFastDebugRenderer::DrawPoint(UWorld* World, const FVector& Location, float
 void UFastDebugRenderer::DrawPointsBatch(UWorld* World, const TArray<FVector>& Locations, float Size,
                                        const FFastDebugConfig& Config)
 {
-    if (!World || Locations.Num() == 0) return;
+    if (!World || Locations.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("World not valid in UFastDebugRenderer::DrawPointsBatch!"));
+        return;
+    }
     
     FColor DrawColor = Config.Color.ToFColor(true);
     

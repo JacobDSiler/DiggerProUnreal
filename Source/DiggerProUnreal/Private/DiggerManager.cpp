@@ -4190,7 +4190,13 @@ void ADiggerManager::Tick(float DeltaTime)
             RefreshSavedChunkCache();
         }
     }
-    
+
+    // Debug test:
+    if (GetWorld())
+    {
+        UE_LOG(LogTemp, Error, TEXT("World is correct in ADiggerManager::Tick!"));
+        DrawDebugLine(GetWorld(), FVector(0,0,100), FVector(100,0,50), FColor::Red, false, 5.0f, 0, 2.0f);
+    }
     // Your existing tick code...
 }
 
