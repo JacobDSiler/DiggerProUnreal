@@ -34,7 +34,6 @@
 #include "VoxelBrushTypes.h"
 
 
-
 #include "DiggerManager.generated.h"
 
 class UVoxelBrushShape;
@@ -43,6 +42,7 @@ class AIslandActor;
 
 // Optional aggregate-for-brush event type
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnBrushFinished, const FVoxelModificationReport&);
+
 
 
 USTRUCT(BlueprintType)
@@ -106,7 +106,10 @@ public:
 
     // NEW (stub): will be broadcast once after routing a brush across chunks
     FOnBrushFinished OnBrushFinished;
-    
+
+    UPROPERTY()
+    UInstancedStaticMeshComponent* VoxelDebugMesh;
+
     void SpawnLight(const FBrushStroke& Stroke);
     void InitializeBrushShapes();
     UVoxelBrushShape* GetActiveBrushShape(EVoxelBrushType BrushType) const;
@@ -122,8 +125,18 @@ public:
     void ApplyBrushToAllChunks(FBrushStroke& BrushStroke, bool ForceUpdate);
     void ApplyBrushToAllChunks(FBrushStroke& BrushStroke);
 
+    /**
+ * Detects all unified voxel islands across the chunk map.
+ * Populates IslandLookupMap for fast access and broadcasts deduplicated islands to the UI.
+ * Optionally returns the full set of enhanced islands for direct use.
+ */
     TArray<FIslandData> DetectUnifiedIslands();
+    
     void RemoveUnifiedIslandVoxels(const FIslandData& Island);
+
+    UPROPERTY()
+    TMap<FIntVector, AIslandActor*> SpawnedIslandActors;
+    
 
     FCriticalSection UpdateChunksCriticalSection;
 
@@ -134,6 +147,11 @@ public:
 
     void DrawDiagonalDebugVoxels(FIntVector ChunkCoords);
     void DrawDiagonalDebugVoxelsFast(FIntVector ChunkCoords);
+    void AddDebugVoxelInstance(const FVector& WorldPosition, const FColor& Color);
+    void RemoveIslandByReferenceVoxel(const FIntVector& ReferenceVoxel);
+    FIslandData* FindIslandByReferenceVoxel(const FIntVector& ReferenceVoxel);
+    void HighlightIslandByReferenceVoxel(const FIntVector& ReferenceVoxel);
+    void ConvertIslandByReferenceVoxelToActor(const FIntVector& ReferenceVoxel, bool bEnablePhysics);
     UStaticMesh* ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName);
     void UpdateAllDirtyChunks();
     AIslandActor* SpawnIslandActorFromIslandAtPosition(const FVector& IslandCenter, bool bEnablePhysics);
@@ -147,7 +165,7 @@ public:
     void ConvertIslandAtPositionToStaticMesh(const FVector& Vector);
     void ConvertIslandAtPositionToActor(const FVector& IslandCenter, bool bEnablePhysics, FIntVector ReferenceVoxel);
     FIslandMeshData ExtractIslandByCenter(const FVector& IslandCenter, bool bRemoveAfter, bool bEnablePhysics);
-    FIslandMeshData ExtractAndGenerateIslandMeshFromData(UVoxelChunk* Chunk, const FIslandData& IslandData);
+    FIslandMeshData ExtractAndGenerateIslandMeshFromData(const FIslandData& IslandData);
     void RemoveIslandVoxels(const FIslandData& Island);
     void ClearAllIslandActors();
     void DestroyIslandActor(AIslandActor* IslandActor);
@@ -304,10 +322,11 @@ public:
         const FIslandMeshData& MeshData,
         bool bEnablePhysics
     );
-    void SaveIslandMeshAsStaticMesh(
+    UStaticMesh* SaveIslandMeshAsStaticMesh(
         const FString& AssetName,
         const FIslandMeshData& MeshData
     );
+    void ConvertIslandByReferenceVoxelToStaticMesh(const FIntVector& ReferenceVoxel, bool bEnablePhysics);
 
     UFUNCTION(BlueprintCallable, CallInEditor, Category = "Islands")
     AStaticMeshActor* SpawnPhysicsIsland(UStaticMesh* StaticMesh, FVector Location = FVector::ZeroVector)
@@ -370,9 +389,14 @@ public:
 
 public:
     
+    // Island Testing Phase 23/08/2025
+    // Use this to adjust voxel alignment if necessary for debugging.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Debug Settings")
+    FVector DebugVisualizationOffset = FVector(-1600);
 
+    
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
-    int32 ChunkSize = 32;  // Number of grif squares per chunk
+    int32 ChunkSize = 32;  // Number of grid squares per chunk
 
     // Chunk and grid settings
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
@@ -437,9 +461,14 @@ public:
     void InitializeSingleChunk(UVoxelChunk* Chunk);  // Initialize a single chunk
     void UpdateLandscapeProxies();
     
-    //The world map of the voxel chunks
+    // The world map of the voxel chunks
     UPROPERTY()
     TMap<FIntVector, UVoxelChunk*> ChunkMap;
+
+    // Cached Islands Map
+    UPROPERTY()
+    TMap<FIntVector, FIslandData> IslandLookupMap;
+
 
     // Cache map from proxy pointer to boolean flag (just for example—can be more complex if needed later)
     UPROPERTY()

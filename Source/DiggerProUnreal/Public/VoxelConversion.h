@@ -340,6 +340,7 @@ static FIntVector ChunkAndLocalToGlobalVoxel_CenterAligned(const FIntVector& Chu
      * @param GlobalVoxelCoords - Integer coordinates of the voxel in global space
      * @return World position of the voxel's center
      */
+    // Remove This 22/08/2025
     static FVector LocalVoxelToWorld(const FIntVector& GlobalVoxelCoords)
     {
         int32 VoxelsPerChunk = ChunkSize * Subdivisions;
@@ -373,6 +374,7 @@ static FIntVector ChunkAndLocalToGlobalVoxel_CenterAligned(const FIntVector& Chu
      * @param LocalVoxel - Integer coordinates of the voxel within the chunk
      * @return World position of the voxel's center
      */
+    // Remove This 22/08/2025
     static FVector ChunkVoxelToWorld(const FIntVector& ChunkCoords, const FIntVector& LocalVoxel)
     {
         FVector ChunkOrigin = ChunkToWorld(ChunkCoords);

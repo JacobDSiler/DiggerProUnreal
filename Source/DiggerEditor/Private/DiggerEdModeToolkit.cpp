@@ -394,15 +394,6 @@ bool FDiggerEdModeToolkit::IsJoinLobbyEnabled() const
 
 #endif
 
-void FDiggerEdModeToolkit::OnIslandDetectedHandler(const FIslandData& NewIslandData)
-{
-    // Only add if not already present (e.g., by IslandID)
-   /* if (!Islands.ContainsByPredicate([&](const FIslandData& Island) { return Island.IslandID == NewIslandData.IslandID; }))
-    {
-        Islands.Add(NewIslandData);
-        RebuildIslandGrid();
-    }*/
-}
 
 bool FDiggerEdModeToolkit::GetBrushIsFilled()
 {
@@ -413,9 +404,11 @@ void FDiggerEdModeToolkit::AddIsland(const FIslandData& Island)
 {
     if (DiggerDebug::Islands)
         UE_LOG(LogTemp, Error, TEXT("AddIsland called on toolkit!"));
-    Islands.Add(Island);
+
+    IslandReferenceVoxels.Add(Island.ReferenceVoxel);
     RebuildIslandGrid();
 }
+
 
 //Helper Methods
 
@@ -4247,78 +4240,81 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, floa
 void FDiggerEdModeToolkit::OnConvertToPhysicsActorClicked()
 {
     UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Add Physics to Selected Island button pressed."));
-    
-    if (SelectedIslandIndex != INDEX_NONE && Islands.IsValidIndex(SelectedIslandIndex))
+
+    if (SelectedIslandIndex != INDEX_NONE && IslandReferenceVoxels.IsValidIndex(SelectedIslandIndex))
     {
-        const FIslandData& Island = Islands[SelectedIslandIndex];
-        
-        // Check if there's actually an island at this position
-        if (Manager == GetDiggerManager())
+        const FIntVector RefVoxel = IslandReferenceVoxels[SelectedIslandIndex];
+
+        ADiggerManager* LocalManager = GetDiggerManager();
+        if (LocalManager)
         {
-            // Use the reference voxel if available
-            if (Island.ReferenceVoxel != FIntVector::ZeroValue)
+            FIslandData* Island = LocalManager->FindIslandByReferenceVoxel(RefVoxel);
+            if (Island)
             {
-                Manager->ConvertIslandAtPositionToActor(Island.Location, true, Island.ReferenceVoxel);
+                LocalManager->ConvertIslandByReferenceVoxelToStaticMesh(RefVoxel, true);;
+
                 if (DiggerDebug::Islands)
                     UE_LOG(LogTemp, Log, TEXT("Island Location: %s, Reference Voxel: %s"), 
-                    *Island.Location.ToString(), *Island.ReferenceVoxel.ToString());
+                        *Island->Location.ToString(), *RefVoxel.ToString());
             }
             else
             {
-                //Manager->ConvertIslandAtPositionToActor(Island.Location, true);
-                UE_LOG(LogTemp, Log, TEXT("Island Location: %s (no reference voxel)"), *Island.Location.ToString());
+                UE_LOG(LogTemp, Warning, TEXT("No island found for reference voxel %s"), *RefVoxel.ToString());
             }
         }
     }
 }
+
 
 void FDiggerEdModeToolkit::OnConvertToSceneActorClicked()
 {
     UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Create Static Mesh from Island button pressed."));
 
-    if (SelectedIslandIndex != INDEX_NONE && Islands.IsValidIndex(SelectedIslandIndex))
+    if (SelectedIslandIndex != INDEX_NONE && IslandReferenceVoxels.IsValidIndex(SelectedIslandIndex))
     {
-        const FIslandData& Island = Islands[SelectedIslandIndex];
+        const FIntVector RefVoxel = IslandReferenceVoxels[SelectedIslandIndex];
 
-        if (Manager == GetDiggerManager())
+        ADiggerManager* LocalManager = GetDiggerManager();
+        if (LocalManager)
         {
-            if (Island.ReferenceVoxel != FIntVector::ZeroValue)
+            FIslandData* Island = LocalManager->FindIslandByReferenceVoxel(RefVoxel);
+            if (Island)
             {
-                Manager->ConvertIslandAtPositionToActor(Island.Location, false, Island.ReferenceVoxel);
+                LocalManager->ConvertIslandByReferenceVoxelToStaticMesh(RefVoxel, false);;
 
                 if (DiggerDebug::Islands)
                     UE_LOG(LogTemp, Log, TEXT("Island Location: %s, Reference Voxel: %s"),
-                        *Island.Location.ToString(), *Island.ReferenceVoxel.ToString());
+                        *Island->Location.ToString(), *RefVoxel.ToString());
             }
             else
             {
-                //Manager->ConvertIslandAtPositionToActor(Island.Location, false);
-                UE_LOG(LogTemp, Log, TEXT("Island Location: %s (no reference voxel)"),
-                    *Island.Location.ToString());
+                UE_LOG(LogTemp, Warning, TEXT("No island found for reference voxel %s"), *RefVoxel.ToString());
             }
         }
     }
 }
+
 
 
 // For removing the selected island from the voxel grid and the island list in the UI
 void FDiggerEdModeToolkit::OnRemoveIslandClicked()
 {
-    if (SelectedIslandIndex != INDEX_NONE && Islands.IsValidIndex(SelectedIslandIndex))
+    if (SelectedIslandIndex != INDEX_NONE && IslandReferenceVoxels.IsValidIndex(SelectedIslandIndex))
     {
-        const FIslandData Island = Islands[SelectedIslandIndex];
+        const FIntVector RefVoxel = IslandReferenceVoxels[SelectedIslandIndex];
 
         ADiggerManager* LocalManager = GetDiggerManager();
         if (LocalManager)
         {
-            LocalManager->RemoveIslandVoxels(Island);
+            LocalManager->RemoveIslandByReferenceVoxel(RefVoxel);
         }
 
-        Islands.RemoveAt(SelectedIslandIndex);
+        IslandReferenceVoxels.RemoveAt(SelectedIslandIndex);
         SelectedIslandIndex = INDEX_NONE;
         RebuildIslandGrid();
     }
 }
+
 
 //Make Island Section
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
@@ -4378,10 +4374,40 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                     return FReply::Handled();
                 })
             ]
+            /*
+             *+ SHorizontalBox::Slot().AutoWidth().Padding(2)
+[
+    SNew(SButton)
+    .Text(FText::FromString("Simulate Physics"))
+    .OnClicked_Lambda([]() -> FReply
+    {
+        //if (GEditor)
+        //{
+        //    GEditor->RequestStartSimulation();
+        //}
+        UE_LOG(LogTemp, Warning, TEXT("Start Simulation button pressed."));
+        return FReply::Handled();
+    })
+]
+            + SHorizontalBox::Slot().AutoWidth().Padding(2)
+[
+    SNew(SButton)
+    .Text(FText::FromString("Stop Simulation"))
+    .OnClicked_Lambda([]() -> FReply
+    {
+       // if (GEditor)
+       // {
+       //     GEditor->RequestEndSimulation();
+       // }
+       UE_LOG(LogTemp, Warning, TEXT("Stop Simulation button pressed."));
+        return FReply::Handled();
+    })
+]*/
+
             + SHorizontalBox::Slot().AutoWidth().Padding(2)
             [
                 SNew(SButton)
-                .Text(FText::FromString("Convert/Save as Scene Actor"))
+                .Text(FText::FromString("Convert to Static Scene Actor"))
                 .IsEnabled_Lambda([this]() { return SelectedIslandIndex != INDEX_NONE; })
                 .OnClicked_Lambda([this]() -> FReply
                 {
@@ -4658,127 +4684,6 @@ FReply FDiggerEdModeToolkit::ShowLoginModal()
 #endif
 
 
-/*
-TSharedRef<SWidget> FDiggerEdModeToolkit::MakeNetworkingHelpWidget()
-{
-    TSharedPtr<SProgressBar> DownloadProgress;
-
-    TSharedPtr<IPlugin> ZipPlugin = IPluginManager::Get().FindPlugin(TEXT("ZipUtility"));
-    const bool bZipPluginValid = ZipPlugin.IsValid();
-    const bool bZipPluginEnabled = bZipPluginValid && ZipPlugin->IsEnabled();
-    const bool bZipModuleLoaded = FModuleManager::Get().IsModuleLoaded("ZipFile");
-
-    return SNew(SVerticalBox)
-
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString("Multiplayer features require the SocketIO Plugin"))
-        ]
-
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [
-            SNew(SButton)
-            .OnClicked_Lambda([DownloadProgress, bZipPluginEnabled, bZipModuleLoaded]() -> FReply
-            {
-                const FString PluginURL = TEXT("https://github.com/getnamo/socketio-client-ue4/archive/refs/heads/main.zip");
-                const FString ZipPath = FPaths::ProjectPluginsDir() / TEXT("SocketIOClient.zip");
-                const FString ExtractPath = FPaths::ProjectPluginsDir();
-
-                FHttpModule* Http = &FHttpModule::Get();
-                TSharedRef<IHttpRequest> Request = Http->CreateRequest();
-
-                Request->OnProcessRequestComplete().BindLambda([ZipPath, ExtractPath, DownloadProgress, bZipPluginEnabled, bZipModuleLoaded](FHttpRequestPtr RequestPtr, FHttpResponsePtr Response, bool bWasSuccessful)
-                {
-                    if (bWasSuccessful && Response.IsValid())
-                    {
-                        FFileHelper::SaveArrayToFile(Response->GetContent(), *ZipPath);
-                        UE_LOG(LogTemp, Log, TEXT("SocketIO Plugin downloaded to: %s"), *ZipPath);
-
-                        if (DownloadProgress.IsValid())
-                        {
-                            DownloadProgress->SetPercent(1.0f);
-                        }
-
-#if WITH_ZIPFILE
-                        if (bZipPluginEnabled)
-                        {
-                            if (!bZipModuleLoaded)
-                            {
-                                FModuleManager::Get().LoadModule("ZipFile");
-                            }
-
-                            UZipFileFunctionLibrary::UnzipFile(ZipPath, ExtractPath, true);
-                            IFileManager::Get().Delete(*ZipPath);
-                            UE_LOG(LogTemp, Log, TEXT("SocketIO Plugin extracted to: %s"), *ExtractPath);
-                        }
-                        else
-#endif
-                        {
-                            UE_LOG(LogTemp, Warning, TEXT("ZipUtility plugin is not enabled. Please enable it and restart the editor."));
-                        }
-                    }
-                    else
-                    {
-                        UE_LOG(LogTemp, Error, TEXT("Failed to download SocketIO plugin."));
-                        if (DownloadProgress.IsValid())
-                        {
-                            DownloadProgress->SetPercent(0.0f);
-                        }
-                    }
-                });
-
-                Request->SetURL(PluginURL);
-                Request->SetVerb("GET");
-                Request->OnRequestProgress().BindLambda([DownloadProgress](FHttpRequestPtr Req, int32 BytesSent, int32 BytesReceived)
-                {
-                    if (DownloadProgress.IsValid() && Req->GetContentLength() > 0)
-                    {
-                        const float Progress = static_cast<float>(BytesReceived) / static_cast<float>(Req->GetContentLength());
-                        DownloadProgress->SetPercent(Progress);
-                    }
-                });
-
-                Request->ProcessRequest();
-
-                return FReply::Handled();
-            })
-            [
-                SNew(STextBlock).Text(FText::FromString("Auto-Install SocketIO Plugin"))
-            ]
-        ]
-
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [
-            SAssignNew(DownloadProgress, SProgressBar)
-            .Percent(0.0f)
-        ]
-
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [
-            SNew(STextBlock).Text(FText::FromString("Note: The ZipUtility plugin must be enabled and compiled for automatic installation to work."))
-        ]
-
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
-        [
-            SNew(SButton)
-            .IsEnabled(!bZipPluginEnabled)
-            .OnClicked_Lambda([]() -> FReply
-            {
-                FMessageDialog::Open(EAppMsgType::Ok, NSLOCTEXT("DiggerPlugin", "ManualZipEnable", 
-                    "To use automatic installation, please enable the ZipUtility plugin in the editor and restart."));
-                return FReply::Handled();
-            })
-            [
-                SNew(STextBlock).Text(FText::FromString("Enable ZipUtility Plugin"))
-            ]
-        ];
-}
-*/
-
-
-
-
 
 void FDiggerEdModeToolkit::ShutdownNetworking()
 {
@@ -4844,34 +4749,32 @@ void FDiggerEdModeToolkit::ClearIslands()
 {
     if (DiggerDebug::Islands)
         UE_LOG(LogTemp, Warning, TEXT("ClearIslands called on toolkit: %p"), this);
-    
-    // Add safety checks before the crash line
+
+    // Safety check (though 'this' is always valid in non-static context)
     if (!this)
     {
+        if (DiggerDebug::Islands || DiggerDebug::Error)
         UE_LOG(LogTemp, Error, TEXT("ClearIslands: Invalid 'this' pointer!"));
         return;
     }
-    
-    // Check if Islands is in a valid state
-    UE_LOG(LogTemp, Warning, TEXT("ClearIslands: About to empty Islands array (current size: %d)"), Islands.Num());
-    
-    try
-    {
-        Islands.Empty(); // Line 4306 - the crash line
-        UE_LOG(LogTemp, Warning, TEXT("ClearIslands: Islands.Empty() succeeded"));
-    }
-    catch (...)
-    {
-        UE_LOG(LogTemp, Error, TEXT("ClearIslands: Exception during Islands.Empty()"));
-        return;
-    }
-    
+
+    // Clear the reference voxel list
+    if (DiggerDebug::Islands)
+    UE_LOG(LogTemp, Warning, TEXT("ClearIslands: About to empty IslandReferenceVoxels array (current size: %d)"), IslandReferenceVoxels.Num());
+
+    IslandReferenceVoxels.Empty();
+    if (DiggerDebug::Islands)
+    UE_LOG(LogTemp, Warning, TEXT("ClearIslands: IslandReferenceVoxels.Empty() succeeded"));
+
     SelectedIslandIndex = INDEX_NONE;
-    
+
+    if (DiggerDebug::Islands)
     UE_LOG(LogTemp, Warning, TEXT("ClearIslands: About to call RebuildIslandGrid"));
     RebuildIslandGrid();
+    if (DiggerDebug::Islands)
     UE_LOG(LogTemp, Warning, TEXT("ClearIslands: RebuildIslandGrid completed"));
 }
+
 
 
 void FDiggerEdModeToolkit::RebuildIslandGrid()
@@ -4896,41 +4799,52 @@ void FDiggerEdModeToolkit::RebuildIslandGrid()
 // In DiggerEdModeToolkit.cpp
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()
 {
-    const int32 NumColumns = 4;
-    TSharedRef<SUniformGridPanel> IslandGridPanel = SNew(SUniformGridPanel).SlotPadding(2.0f);
+    TSharedRef<SVerticalBox> GridBox = SNew(SVerticalBox);
 
-    for (int32 i = 0; i < Islands.Num(); ++i)
+    for (int32 Index = 0; Index < IslandReferenceVoxels.Num(); ++Index)
     {
-        IslandGridPanel->AddSlot(i % NumColumns, i / NumColumns)
+        const FIntVector& RefVoxel = IslandReferenceVoxels[Index];
+
+        GridBox->AddSlot().AutoHeight().Padding(2)
         [
-            SNew(SButton)
-            .ButtonColorAndOpacity_Lambda([this, i]() -> FLinearColor
-            {
-                // Defensive check in case of async changes
-                if (!this || i < 0 || i >= Islands.Num())
-                {
-                    return FLinearColor::Gray;
-                }
-                return (SelectedIslandIndex == i) ? FLinearColor::Yellow : FLinearColor::White;
-            })
-            .OnClicked_Lambda([this, i]() -> FReply
-            {
-                if (!this || i < 0 || i >= Islands.Num())
-                {
-                    return FReply::Unhandled();
-                }
-                SelectedIslandIndex = i;
-                return FReply::Handled();
-            })
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().Padding(2)
             [
-                SNew(STextBlock)
-                .Text(FText::Format(FText::FromString("Island {0}"), FText::AsNumber(i + 1)))
+                SNew(SButton)
+                .Text(FText::FromString(FString::Printf(TEXT("Island %d"), Index)))
+                .OnClicked_Lambda([this, Index]() -> FReply
+                {
+                    SelectedIslandIndex = Index;
+
+                    const FIntVector& RefVoxel = IslandReferenceVoxels[Index];
+                    ADiggerManager* Manager = GetDiggerManager();
+                    if (Manager)
+                    {
+                        Manager->HighlightIslandByReferenceVoxel(RefVoxel);
+                    }
+
+                    if (DiggerDebug::Islands)
+                    {
+                        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Island button clicked: Index %d, RefVoxel %s"),
+                               Index, *RefVoxel.ToString());
+                    }
+
+                    return FReply::Handled();
+                })
+
             ]
         ];
     }
 
-    return IslandGridPanel;
+    if (DiggerDebug::Islands)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] MakeIslandGridWidget: Built grid with %d islands"),
+               IslandReferenceVoxels.Num());
+    }
+
+    return GridBox;
 }
+
 
 
 

@@ -1029,92 +1029,131 @@ FIslandData USparseVoxelGrid::DetectIsland(float SDFThreshold, const FIntVector&
 	return Island;
 }
 
+// Complete DetectIslands method with debug logging
 TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
 {
-	TArray<FIslandData> Islands;
-	TSet<FIntVector> Visited;
+    TArray<FIslandData> Islands;
+    TSet<FIntVector> Visited;
 
-	auto IsSolid = [this, SDFThreshold](const FIntVector& Voxel) -> bool
-	{
-		const FVoxelData* Data = VoxelData.Find(Voxel);
-		return Data && Data->SDFValue < SDFThreshold;
-	};
+    auto IsSolid = [this, SDFThreshold](const FIntVector& Voxel) -> bool
+    {
+        const FVoxelData* Data = VoxelData.Find(Voxel);
+        return Data && Data->SDFValue < SDFThreshold;
+    };
 
-	// 26-neighborhood list
-	TArray<FIntVector> Directions;
-	Directions.Reserve(26);
-	for (int dx = -1; dx <= 1; ++dx)
-	for (int dy = -1; dy <= 1; ++dy)
-	for (int dz = -1; dz <= 1; ++dz)
-	{
-		if (dx != 0 || dy != 0 || dz != 0)
-		{
-			Directions.Add(FIntVector(dx, dy, dz));
-		}
-	}
+    TArray<FIntVector> Directions;
+    Directions.Reserve(26);
+    for (int dx = -1; dx <= 1; ++dx)
+    for (int dy = -1; dy <= 1; ++dy)
+    for (int dz = -1; dz <= 1; ++dz)
+    {
+        if (dx != 0 || dy != 0 || dz != 0)
+        {
+            Directions.Add(FIntVector(dx, dy, dz));
+        }
+    }
 
-	for (const auto& Pair : VoxelData)
-	{
-		const FIntVector& Seed = Pair.Key;
+    // Get chunk coordinates once
+    FIntVector ChunkCoords = GetParentChunkCoordinates();
+    UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] DetectIslands ChunkCoords: %s"), *ChunkCoords.ToString());
 
-		if (Visited.Contains(Seed) || !IsSolid(Seed))
-			continue;
+    for (const auto& Pair : VoxelData)
+    {
+        const FIntVector& Seed = Pair.Key;
 
-		TArray<FIntVector> IslandVoxels;
-		TQueue<FIntVector> Queue;
+        if (Visited.Contains(Seed) || !IsSolid(Seed))
+            continue;
 
-		Queue.Enqueue(Seed);
-		Visited.Add(Seed);
-		IslandVoxels.Add(Seed);
+        TArray<FIntVector> IslandVoxels;
+        TQueue<FIntVector> Queue;
 
-		while (!Queue.IsEmpty())
-		{
-			FIntVector Current;
-			Queue.Dequeue(Current);
+        Queue.Enqueue(Seed);
+        Visited.Add(Seed);
+        IslandVoxels.Add(Seed);
 
-			for (const FIntVector& Dir : Directions)
-			{
-				const FIntVector Neighbor = Current + Dir;
+        while (!Queue.IsEmpty())
+        {
+            FIntVector Current;
+            Queue.Dequeue(Current);
 
-				if (!Visited.Contains(Neighbor) && IsSolid(Neighbor))
-				{
-					Queue.Enqueue(Neighbor);
-					Visited.Add(Neighbor);
-					IslandVoxels.Add(Neighbor);
-				}
-			}
-		}
+            for (const FIntVector& Dir : Directions)
+            {
+                const FIntVector Neighbor = Current + Dir;
 
-		// Center (chunk-aware)
-		FVector Center = FVector::ZeroVector;
-		for (const FIntVector& Voxel : IslandVoxels)
-		{
-			Center += FVoxelConversion::ChunkVoxelToWorld(GetParentChunkCoordinates(), Voxel);
-		}
-		Center /= FMath::Max(1, IslandVoxels.Num());
+                if (!Visited.Contains(Neighbor) && IsSolid(Neighbor))
+                {
+                    Queue.Enqueue(Neighbor);
+                    Visited.Add(Neighbor);
+                    IslandVoxels.Add(Neighbor);
+                }
+            }
+        }
 
-		FIslandData Island;
-		Island.Location       = Center + DebugRenderOffset;
-		Island.VoxelCount     = IslandVoxels.Num();
-		Island.ReferenceVoxel = IslandVoxels[0];
-		Island.Voxels         = IslandVoxels;
+        // Calculate center using the SAME method as highlight function
+        FVector Center = FVector::ZeroVector;
+        TArray<FVoxelInstance> TempInstances;
+        TempInstances.Reserve(IslandVoxels.Num());
 
-		Islands.Add(Island);
-	}
+        // Debug the first few voxel conversions
+        int32 DebugCount = 0;
+        for (const FIntVector& LocalVoxel : IslandVoxels)
+        {
+	        FVoxelInstance Instance;
+        	Instance.ChunkCoords = ChunkCoords;
+        	Instance.LocalVoxel = LocalVoxel;
+        	Instance.GlobalVoxel = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(ChunkCoords, LocalVoxel);
+            
+        	TempInstances.Add(Instance);
+            
+        	// Use the EXACT same calculation as highlight method
+        	FVector IslandOffset = FVector(1734, 2444, -1600);
+
+        	FVector WorldPos = FVoxelConversion::MinCornerVoxelToWorld(Instance.ChunkCoords, Instance.LocalVoxel) + IslandOffset;
+        	Center += WorldPos;
+
+        	//P1: (X=2184.241071,Y=5500.904018,Z=0.000000)
+			//P2: (X=-1010.000000,Y=2301.000000,Z=0.000000)
+        	
+            // Debug first 3 voxels
+            if (DebugCount < 3)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Detection Voxel %d:"), DebugCount);
+                UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   LocalVoxel: %s"), *LocalVoxel.ToString());
+                UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   GlobalVoxel: %s"), *Instance.GlobalVoxel.ToString());
+                UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   ExpectedWorldPos: %s"), *WorldPos.ToString());
+            }
+            DebugCount++;
+        }
+        Center /= FMath::Max(1, IslandVoxels.Num());
+
+        FIslandData Island;
+        Island.Location = Center;
+        Island.VoxelCount = IslandVoxels.Num();
+        Island.Voxels = IslandVoxels;
+        Island.VoxelInstances = TempInstances; // Use the instances we just created
+
+        // Convert reference voxel to global space
+        Island.ReferenceVoxel = TempInstances[0].GlobalVoxel; // Use the already converted value
+        
+        UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Detection calculated center: %s (from %d voxels)"), 
+               *Center.ToString(), IslandVoxels.Num());
+        
+        Islands.Add(Island);
+    }
 
 #if WITH_EDITOR
-	// Optional: sanity logs for missed solids
-	for (const auto& Pair : VoxelData)
-	{
-		const FIntVector& V = Pair.Key;
-		if (IsSolid(V) && !Visited.Contains(V))
-		{
-			UE_LOG(LogTemp, VeryVerbose, TEXT("[IslandDetection] Missed solid voxel at %s"), *V.ToString());
-		}
-	}
+    for (const auto& Pair : VoxelData)
+    {
+        const FIntVector& V = Pair.Key;
+        if (IsSolid(V) && !Visited.Contains(V))
+        {
+            if (DiggerDebug::Islands)
+            UE_LOG(LogTemp, VeryVerbose, TEXT("[IslandDetection] Missed solid voxel at %s"), *V.ToString());
+        }
+    }
 #endif
 
-	return Islands;
+    return Islands;
 }
 
 

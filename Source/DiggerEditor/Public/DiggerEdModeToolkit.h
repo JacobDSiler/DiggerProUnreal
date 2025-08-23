@@ -172,7 +172,6 @@ public:
 	FDiggerUIFeatureFlags UIFeatureFlags;
 
 	virtual ~FDiggerEdModeToolkit() override;
-	void OnIslandDetectedHandler(const FIslandData& NewIslandData);
 	
 
 
@@ -201,12 +200,6 @@ public:
 		return ConeAngle;
 	}
 	
-
-    void SetIslands(const TArray<FIslandData>& InIslands)
-    {
-        Islands = InIslands;
-        RebuildIslandGrid();
-    }
 
 	void SetBrushRotation(const FRotator& SurfaceNormal)
 	{
@@ -529,10 +522,6 @@ public:
 	void SetCurrentBrushType(EVoxelBrushType NewBrushType)
 	{ CurrentBrushType = NewBrushType; }
 
-	const TArray<FIslandData>& GetIslands() const
-	{
-	    return Islands;
-	}
 
 	void SetTemporaryDigOverride(TOptional<bool> Override);
 	
@@ -570,7 +559,7 @@ private:
 	float BrushLength = 200.0f; // Default value, adjust as needed
 	bool bDebugVoxels = false;
 
-	TArray<FIslandData> Islands; // Your detected islands
+	TArray<FIntVector> IslandReferenceVoxels; // Unique Detected Island Reference Voxels
 	int32 SelectedIslandIndex = INDEX_NONE; // Currently selected island
 	FRotator IslandRotation;
 	
