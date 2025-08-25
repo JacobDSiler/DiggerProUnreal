@@ -146,13 +146,9 @@ public:
 	// Sparse CPU storage
 	TMap<FIntVector, FVoxelData> VoxelData;
 
-	// Debug
-	UPROPERTY(EditAnywhere, Category="Voxel|Debug")
-	FVector DebugRenderOffset = FVector::ZeroVector;
-
-	// Neighbor sync hint
-	UPROPERTY(VisibleAnywhere, Category="Voxel")
-	bool bBorderIsDirty = false;
+        // Neighbor sync hint
+        UPROPERTY(VisibleAnywhere, Category="Voxel")
+        bool bBorderIsDirty = false;
 
 private:
 	// Thread safety for CPU map (kept private; cpp uses FScopeLock on this)
