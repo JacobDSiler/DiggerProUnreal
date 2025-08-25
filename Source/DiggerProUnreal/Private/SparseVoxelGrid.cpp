@@ -122,14 +122,13 @@ namespace VoxelGPU
 
 USparseVoxelGrid::USparseVoxelGrid()
 	: DiggerManager(nullptr)
-	, ParentChunk(nullptr)
-	, World(nullptr)
-	, ParentChunkCoordinates(0, 0, 0)
-	, TerrainGridSize(0)
-	, Subdivisions(0)
-	, ChunkSize(0)
-	, DebugRenderOffset(FVector::ZeroVector)
-	, bBorderIsDirty(false)
+	  , ParentChunk(nullptr)
+	  , World(nullptr)
+	  , ParentChunkCoordinates(0, 0, 0)
+	  , TerrainGridSize(0)
+	  , Subdivisions(0)
+	  , ChunkSize(0)
+	  , bBorderIsDirty(false)
 {
 }
 
@@ -1106,7 +1105,7 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
         	TempInstances.Add(Instance);
         	
 
-        	FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld_MinCornerAligned(Instance.GlobalVoxel);
+        	FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel);
         	Center += WorldPos;
         	
         	
@@ -1198,15 +1197,27 @@ void USparseVoxelGrid::RenderVoxels()
 		const FIntVector& Local = V.Key;
 		const float SDF = V.Value.SDFValue;
 
-		const FIntVector Global = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(ChunkCoords, Local);
-		const FVector WorldP = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(Global);
-		const FVector Center = WorldP + DebugRenderOffset;
-		const FVector VoxelCenter = Center + FVector(FVoxelConversion::LocalVoxelSize / 2.0f);
+		// Directly get voxel world center from chunk + local
+		const FVector WorldP = FVoxelConversion::ChunkVoxelToWorld(ChunkCoords, Local);
 
-		if (SDF >  0.0f) Air.Add(VoxelCenter);
-		else if (SDF < 0.0f) Solid.Add(VoxelCenter);
-		else Surface.Add(VoxelCenter);
+		// Apply debug offset
+		const FVector VoxelCenter = WorldP;
+
+		// Classify voxel
+		if (SDF > 0.0f)
+		{
+			Air.Add(VoxelCenter);
+		}
+		else if (SDF < 0.0f)
+		{
+			Solid.Add(VoxelCenter);
+		}
+		else
+		{
+			Surface.Add(VoxelCenter);
+		}
 	}
+
 
 	const FVector Extent(FVoxelConversion::LocalVoxelSize / 2.0f);
 
