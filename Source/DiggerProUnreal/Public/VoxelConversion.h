@@ -193,6 +193,21 @@ static FIntVector WorldToGlobalVoxel_CenterAligned(const FVector& WorldPos)
         return FIntVector::ZeroValue;
     }
 
+    static FIntVector ChunkAndLocalToGlobalVoxel_MinCornerAligned(const FIntVector& ChunkCoords,
+                                                                  const FIntVector& LocalVoxel)
+    {
+        const int32 VoxelsPerChunk = ChunkSize * Subdivisions;
+        FIntVector ChunkMinCornerGlobalVoxel = ChunkCoords * VoxelsPerChunk;
+        return ChunkMinCornerGlobalVoxel + LocalVoxel;
+    }
+    
+    // Optionally // Date: 25/08/2025
+    static FVector GlobalVoxelToWorld_MinCornerAligned(const FIntVector& GlobalVoxel)
+    {
+        return FVector(GlobalVoxel) * LocalVoxelSize;
+    }
+
+
 /**
  * FIXED: Convert chunk coords and center-aligned local voxel to global voxel
  */

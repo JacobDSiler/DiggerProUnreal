@@ -1,7 +1,10 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "VoxelInstance.h"
+#include "FVoxelData.h"
 #include "IslandData.generated.h"
+
+
 
 // Helper struct for an island
 struct FIsland
@@ -62,6 +65,9 @@ struct FIslandData
 
 	UPROPERTY(BlueprintReadWrite)
 	int32 VoxelCount;
+
+	UPROPERTY() // Here we store the full voxel data associated with each voxel.
+	TMap<FIntVector, FVoxelData> VoxelDataMap;
 
 	// Keep this for backward compatibility with UI/broadcasting (deduplicated global voxels)
 	UPROPERTY(BlueprintReadWrite)

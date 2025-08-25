@@ -607,55 +607,6 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
 }
 
 
-void ADiggerManager::RemoveIslandAtPosition(const FVector& IslandCenter, const FIntVector& ReferenceVoxel)
-{
-    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] RemoveIslandAtPosition called at %s"), *IslandCenter.ToString());
-
-    // Guard 1: Reference voxel must be valid
-    if (!ensure(!ReferenceVoxel.IsZero()))
-    {
-        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] No reference voxel provided."));
-        return;
-    }
-
-    FIntVector ChunkCoords, LocalVoxel;
-    FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(ReferenceVoxel, ChunkCoords, LocalVoxel);
-
-    // Guard 2: Chunk must exist and be valid
-    UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
-    if (!ChunkPtr || !IsValid(*ChunkPtr))
-    {
-        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Invalid or missing chunk at coords %s"), *ChunkCoords.ToString());
-        return;
-    }
-
-    UVoxelChunk* Chunk = *ChunkPtr;
-
-    // Guard 3: Grid must exist and be valid
-    USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
-    if (!IsValid(Grid))
-    {
-        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Invalid SparseVoxelGrid in chunk."));
-        return;
-    }
-
-    // Guard 4: Attempt island extraction
-    USparseVoxelGrid* ExtractedIsland = nullptr;
-    TArray<FIntVector> ExtractedVoxels;
-
-    if (!Grid->ExtractIslandByVoxel(LocalVoxel, ExtractedIsland, ExtractedVoxels) || !IsValid(ExtractedIsland) || ExtractedVoxels.IsEmpty())
-    {
-        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Failed to extract island at voxel %s"), *LocalVoxel.ToString());
-        return;
-    }
-
-    // Safe voxel removal (encapsulated)
-    Grid->RemoveVoxels(ExtractedVoxels);
-    Chunk->MarkDirty();
-
-    UE_LOG(LogTemp, Display, TEXT("[DiggerPro] Successfully removed %d voxels at %s."), ExtractedVoxels.Num(), *IslandCenter.ToString());
-}
-
 
 
 
@@ -1552,116 +1503,68 @@ FIslandData ADiggerManager::FindIslandByID_BP(const FName& IslandID)
 }
 
 
-
-
-
-void ADiggerManager::ConvertIslandByReferenceVoxelToActor(const FIntVector& ReferenceVoxel, bool bEnablePhysics)
+// Currently in use // Date: 25/08/2025
+void ADiggerManager::ConvertIslandToStaticMesh(const FName& IslandID, bool bEnablePhysics)
 {
-    FIslandData* Island = FindIsland(ReferenceVoxel);
+    FIslandData* Island = FindIsland(IslandID);
     if (!Island)
     {
-        if (DiggerDebug::Islands)
-        {
-            UE_LOG(LogTemp, Error, TEXT("[DiggerPro] No island found for reference voxel %s"), *ReferenceVoxel.ToString());
-        }
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] ConvertIslandToStaticMesh: Island ID %s not found."), *IslandID.ToString());
         return;
     }
 
-    FIslandMeshData MeshData = ExtractAndGenerateIslandMeshFromData(*Island);
+    FIslandMeshData MeshData = GenerateIslandMeshFromStoredData(*Island);
     if (!MeshData.bValid)
     {
-        if (DiggerDebug::Islands)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Mesh extraction failed for island at %s"), *Island->Location.ToString());
-        }
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Mesh extraction failed for island %s"), *IslandID.ToString());
         return;
     }
 
-    AIslandActor* IslandActor = SpawnIslandActorWithMeshData(Island->Location, MeshData, bEnablePhysics);
-    if (IslandActor)
+    // Offset vertices so mesh is centered at origin
+    for (FVector& Vertex : MeshData.Vertices)
     {
-        SpawnedIslandActors.Add(ReferenceVoxel, IslandActor);
-        if (DiggerDebug::Islands)
+        Vertex -= MeshData.MeshOrigin;
+    }
+
+    // Save mesh as asset
+    FString AssetName = FString::Printf(TEXT("Island_%s_StaticMesh"), *IslandID.ToString());
+    UStaticMesh* SavedMesh = SaveIslandMeshAsStaticMesh(AssetName, MeshData);
+    if (!SavedMesh)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Failed to save static mesh for island %s"), *IslandID.ToString());
+        return;
+    }
+
+    // Spawn static mesh actor
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+    Island->Location = MeshData.MeshOrigin;
+
+    AStaticMeshActor* MeshActor = GetWorld()->SpawnActor<AStaticMeshActor>(
+        AStaticMeshActor::StaticClass(),
+        Island->Location,
+        FRotator::ZeroRotator,
+        SpawnParams
+    );
+
+    if (MeshActor && MeshActor->GetStaticMeshComponent())
+    {
+        MeshActor->SetActorLabel(FString::Printf(TEXT("IslandActor_%s"), *IslandID.ToString()));
+        MeshActor->GetStaticMeshComponent()->SetStaticMesh(SavedMesh);
+        MeshActor->GetStaticMeshComponent()->SetMobility(EComponentMobility::Movable);
+        MeshActor->GetStaticMeshComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+        MeshActor->GetStaticMeshComponent()->SetCollisionObjectType(ECC_PhysicsBody);
+
+        if (bEnablePhysics)
         {
-            UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Spawned island actor at %s"), *Island->Location.ToString());
+            MeshActor->GetStaticMeshComponent()->SetSimulatePhysics(true);
+            MeshActor->GetStaticMeshComponent()->SetEnableGravity(true);
         }
     }
-}
 
-
-// Unused method, cull? 23/08/2025
-UStaticMesh* ADiggerManager::ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName)
-{
-    if (DiggerDebug::Islands)
-        UE_LOG(LogTemp, Warning, TEXT("Converting island %d to static mesh..."));
-
-    // 1. Generate mesh data for the island using Marching Cubes
-    TArray<FVector> Vertices;
-    TArray<int32> Triangles;
-    TArray<FVector> Normals;
-    TArray<FVector2D> UVs;
-    TArray<FColor> Colors;
-    TArray<FProcMeshTangent> Tangents;
-
-    // Generate mesh for the island (your implementation here)
-    // MarchingCubes->GenerateMeshForIsland(...);
-
-    if (Vertices.Num() == 0 || Triangles.Num() == 0)
-    {
-        UE_LOG(LogTemp, Error, TEXT("No mesh data generated for island!"));
-        return nullptr;
-    }
-
-    // 2. Calculate mesh bounds and center
-    FBox MeshBounds(ForceInit);
-    for (const FVector& Vertex : Vertices)
-    {
-        MeshBounds += Vertex;
-    }
-    FVector MeshCenter = MeshBounds.GetCenter();
-
-    // 3. Offset vertices so mesh is centered at origin
-    for (FVector& Vertex : Vertices)
-    {
-        Vertex -= MeshCenter;
-    }
-
-    // 4. Create a temporary ProceduralMeshComponent
-    UProceduralMeshComponent* TempProcMesh = NewObject<UProceduralMeshComponent>(this);
-    TempProcMesh->CreateMeshSection(0, Vertices, Triangles, Normals, UVs, Colors, Tangents, true);
-
-    // 5. Convert ProceduralMeshComponent to StaticMesh
-    FString PackageName = FString::Printf(TEXT("/Game/Islands/%s"), *AssetName);
-    UPackage* MeshPackage = CreatePackage(*PackageName);
-
-    UStaticMesh* NewStaticMesh = NewObject<UStaticMesh>(MeshPackage, *AssetName, RF_Public | RF_Standalone);
-    if (!NewStaticMesh)
-    {
-        UE_LOG(LogTemp, Error, TEXT("Failed to create UStaticMesh object!"));
-        return nullptr;
-    }
-
-    // Conversion logic (depends on your engine version and tooling)
-    bool bSuccess = false; // Replace with actual conversion call
-    if (!bSuccess)
-    {
-        UE_LOG(LogTemp, Error, TEXT("Failed to convert procedural mesh to static mesh!"));
-        return nullptr;
-    }
-
-    // 6. Register and save the asset
-    FAssetRegistryModule::AssetCreated(NewStaticMesh);
-    NewStaticMesh->MarkPackageDirty();
-
-#if WITH_EDITOR
-    TArray<UObject*> ObjectsToSync;
-    ObjectsToSync.Add(NewStaticMesh);
-    GEditor->SyncBrowserToObjects(ObjectsToSync);
-#endif
-
-    UE_LOG(LogTemp, Warning, TEXT("Static mesh asset created: %s"), *PackageName);
-
-    return NewStaticMesh;
+    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Spawned static mesh actor for island %s at location %s"),
+        *IslandID.ToString(), *Island->Location.ToString());
 }
 
 
@@ -1687,196 +1590,6 @@ void ADiggerManager::UpdateAllDirtyChunks()
     }
 }
 
-//Possibly Unused? 23/08/2025
-FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMesh(const FVector& IslandCenter)
-{
-    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Starting ExtractAndGenerateIslandMesh at IslandCenter: %s"), *IslandCenter.ToString());
-
-    FIslandMeshData Result;
-
-    // Step 1: Find or create the voxel chunk at the given center
-    UVoxelChunk* Chunk = FindOrCreateNearestChunk(IslandCenter);
-    if (!Chunk)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] No chunk found or created near IslandCenter."));
-        return Result;
-    }
-
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(Chunk->GetChunkCoordinates());
-    FVector LocalPosition = IslandCenter - ChunkOrigin;
-
-    FIntVector VoxelCoords = FIntVector(
-        FMath::FloorToInt(LocalPosition.X / VoxelSize),
-        FMath::FloorToInt(LocalPosition.Y / VoxelSize),
-        FMath::FloorToInt(LocalPosition.Z / VoxelSize)
-    );
-
-    FVector VoxelWorldCenter = ChunkOrigin + FVector(VoxelCoords) * VoxelSize + FVector(FVoxelConversion::LocalVoxelSize * 0.5f);
-
-    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Chunk Origin: %s | LocalPosition: %s | VoxelCoords: %s | VoxelWorldCenter: %s"),
-        *ChunkOrigin.ToString(),
-        *LocalPosition.ToString(),
-        *VoxelCoords.ToString(),
-        *VoxelWorldCenter.ToString()
-    );
-
-    // Visual debugging
-    if (true)
-    {
-        // Draw debug string above search origin
-        DrawDebugString(
-            GetSafeWorld(),
-            VoxelWorldCenter + FVector(0, 0, VoxelSize),
-            TEXT("Search Origin"),
-            nullptr,
-            FColor::White,
-            60.0f,
-            false
-        );
-
-        // RED: Voxel being searched
-        DrawDebugBox(
-            GetSafeWorld(),
-            VoxelWorldCenter,
-            FVector(VoxelSize * 0.5f),
-            FColor::Red,
-            false,
-            60.0f,
-            0,
-            3.0f
-        );
-
-        // GREEN: 3x3x3 area around it
-        for (int32 dx = -1; dx <= 1; dx++)
-        {
-            for (int32 dy = -1; dy <= 1; dy++)
-            {
-                for (int32 dz = -1; dz <= 1; dz++)
-                {
-                    FIntVector Offset = VoxelCoords + FIntVector(dx, dy, dz);
-                    FVector OffsetWorldCenter = ChunkOrigin + FVector(Offset) * VoxelSize + FVector(VoxelSize * 0.5f);
-
-                    DrawDebugBox(
-                        GetSafeWorld(),
-                        OffsetWorldCenter,
-                        FVector(VoxelSize * 0.5f),
-                        FColor::Green,
-                        false,
-                        60.0f,
-                        0,
-                        1.5f
-                    );
-                }
-            }
-        }
-    }
-
-    // Step 2: Get voxel grid
-    USparseVoxelGrid* VoxelGrid = Chunk->GetSparseVoxelGrid();
-    if (!VoxelGrid)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] No SparseVoxelGrid found on chunk."));
-        return Result;
-    }
-    
-    if (true)
-    {
-        for (const auto& Pair : VoxelGrid->VoxelData)
-        {
-            FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(Pair.Key);
-            DrawDebugBox(GetSafeWorld(), WorldPos, FVector(VoxelSize * 0.5f), FColor::Blue, false, 60.0f, 0, 1.5f);
-        }
-    }
-
-    // Step 3: Find the nearest set voxel and extract the island
-    USparseVoxelGrid* ExtractedGrid = nullptr;
-    TArray<FIntVector> IslandVoxels;
-
-    FIntVector StartVoxel;
-    if (!VoxelGrid->FindNearestSetVoxel(VoxelCoords, StartVoxel))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] No set voxel found near the provided position."));
-        return Result;
-    }
-
-    // Make a backup of the original grid before extraction
-    USparseVoxelGrid* OriginalGridBackup = nullptr;
-   /* if (bMakeBackupBeforeExtraction)
-    {
-        OriginalGridBackup = DuplicateObject<USparseVoxelGrid>(VoxelGrid, this);
-    }*/
-
-    // Run extraction to get surface voxels
-    bool bExtractionSuccess = VoxelGrid->ExtractIslandAtPosition(
-        FVoxelConversion::LocalVoxelToWorld(StartVoxel), 
-        ExtractedGrid, 
-        IslandVoxels
-    );
-
-    if (!bExtractionSuccess || !ExtractedGrid || IslandVoxels.Num() == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Failed to extract island or ExtractedGrid is null."));
-        
-        // Restore from backup if needed
-        /*if (bMakeBackupBeforeExtraction && OriginalGridBackup)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Restoring grid from backup."));
-            Chunk->SetSparseVoxelGrid(OriginalGridBackup);
-        }*/
-        
-        return Result;
-    }
-
-    // Ensure the extracted grid has the necessary references
-    //ExtractedGrid->ParentChunk = nullptr; // Don't want to affect the original chunk
-    //ExtractedGrid->DiggerManager = this;
-
-    // Step 4: Generate mesh
-    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Starting mesh generation using Marching Cubes."));
-
-    // Use the chunk origin for mesh generation
-    MarchingCubes->GenerateMeshFromGrid(
-        ExtractedGrid, ChunkOrigin, VoxelSize,
-        Result.Vertices, Result.Triangles, Result.Normals
-    );
-    
-    
-    // Step 5: Finalize result
-    Result.MeshOrigin = ChunkOrigin;
-    Result.bValid = (Result.Vertices.Num() > 0 && Result.Triangles.Num() > 0);
-
-    if (Result.Vertices.Num() > 0 && Result.Triangles.Num() > 0 && Result.Normals.Num() > 0) {
-        // Call mesh creation on game thread
-        AsyncTask(ENamedThreads::GameThread, [=]()
-        {
-            int IslandId=0;
-            MarchingCubes->CreateIslandProceduralMesh(Result.Vertices, Result.Triangles, Result.Normals, ChunkOrigin, IslandId);
-        });
-    } else {
-        UE_LOG(LogTemp, Warning, TEXT("Island mesh generation returned empty data"));
-    }
-
-    // Debug visualization of the extracted island
-    //if (IsDebugging && Result.bValid)
-    //{
-        for (const FIntVector& Voxel : IslandVoxels)
-        {
-            FVector WorldPos = ChunkOrigin + FVector(Voxel) * VoxelSize + FVector(VoxelSize * 0.5f);
-            DrawDebugBox(GetSafeWorld(), WorldPos, FVector(VoxelSize * 0.4f), FColor::Yellow, false, 60.0f, 0, 2.0f);
-        }
-   //}
-
-    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Mesh generation complete. Valid: %s, Vertices: %d, Triangles: %d"),
-        Result.bValid ? TEXT("true") : TEXT("false"),
-        Result.Vertices.Num(),
-        Result.Triangles.Num() / 3
-    );
-
-    // Mark the chunk as dirty to trigger a rebuild
-    Chunk->MarkDirty();
-
-    return Result;
-}
 
 // In ADiggerManager.cpp
 void ADiggerManager::RemoveIslandVoxels(const FIslandData& Island)
@@ -2040,314 +1753,69 @@ AIslandActor* ADiggerManager::SpawnIslandActorWithMeshData(
 
 
 
-void ADiggerManager::ConvertIslandAtPositionToStaticMesh(const FVector& IslandCenter)
-{
-    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] ConvertIslandAtPositionToStaticMesh called at %s"), *IslandCenter.ToString());
-    FIslandMeshData MeshData = ExtractAndGenerateIslandMesh(IslandCenter);
-    if (MeshData.bValid)
-    {
-        FString AssetName = FString::Printf(TEXT("Island_%s_StaticMesh"), *IslandCenter.ToString());
-        SaveIslandMeshAsStaticMesh(AssetName, MeshData);
-    }
-    else
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] ConvertIslandAtPositionToStaticMesh called with invalid static mesh data at %s"), *IslandCenter.ToString());
-    }
-}
-
-void ADiggerManager::ConvertIslandAtPositionToActor(const FVector& IslandCenter, bool bEnablePhysics, FIntVector ReferenceVoxel)
-{
-    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] ConvertIslandAtPositionToActor called at %s"), *IslandCenter.ToString());
-
-    // Debug visualization
-    DrawDebugSphere(GetSafeWorld(), IslandCenter, 50.0f, 16, FColor::Red, false, 10.0f, 0, 2.0f);
-    DrawDebugString(GetSafeWorld(), IslandCenter + FVector(0, 0, 60.0f), TEXT("Island Search Point"), nullptr, FColor::White, 10.0f);
-
-    if (ReferenceVoxel != FIntVector::ZeroValue)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Using reference voxel: %s"), *ReferenceVoxel.ToString());
-
-        // Convert global voxel index to chunk + local voxel
-        FIntVector ChunkCoords, LocalVoxel;
-        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(ReferenceVoxel, ChunkCoords, LocalVoxel);
-
-        // Find the chunk containing this voxel
-        UVoxelChunk* Chunk = ChunkMap.FindRef(ChunkCoords);
-        if (!Chunk)
-        {
-            UE_LOG(LogTemp, Error, TEXT("[DiggerPro] No chunk found for chunk coords: %s"), *ChunkCoords.ToString());
-            return;
-        }
-
-        // Verify the voxel exists in the grid before extraction
-        USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
-        if (!Grid || !Grid->IsVoxelSolid(LocalVoxel))
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Reference voxel not found or not solid at local coords: %s"), *LocalVoxel.ToString());
-            
-            // Fallback to center-based extraction
-            FIslandMeshData MeshData = ExtractIslandByCenter(IslandCenter, false, bEnablePhysics);
-            if (MeshData.bValid)
-            {
-                AIslandActor* IslandActor = SpawnIslandActorWithMeshData(IslandCenter, MeshData, bEnablePhysics);
-                if (IslandActor)
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Successfully created island actor using center-based extraction"));
-                }
-            }
-            return;
-        }
-
-        FIslandData* Island = FindIsland(ReferenceVoxel);
-        if (!Island)
-        {
-            UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Failed to retrieve island data for reference voxel %s"), *ReferenceVoxel.ToString());
-            return;
-        }
-
-        FIslandMeshData MeshData = ExtractAndGenerateIslandMeshFromData(*Island);
-
-        if (MeshData.bValid)
-        {
-            // Use the generated mesh data
-            UE_LOG(LogTemp, Log, TEXT("Successfully generated mesh for island with reference voxel at %s"), 
-                   *Island->ReferenceVoxel.ToString());
-        }
-    }
-    else
-    {
-        // Fallback to center-based extraction
-        FIslandMeshData MeshData = ExtractIslandByCenter(IslandCenter, false, bEnablePhysics);
-        if (MeshData.bValid)
-        {
-            AIslandActor* IslandActor = SpawnIslandActorWithMeshData(IslandCenter, MeshData, bEnablePhysics);
-            if (IslandActor)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Successfully created island actor using center-based extraction"));
-            }
-        }
-    }
-}
-
-
-// New function to extract island mesh from a specific voxel
-FIslandMeshData ADiggerManager::ExtractIslandByCenter(const FVector& IslandCenter, bool bRemoveAfter, bool bEnablePhysics)
+// We are using this GenerateIslandMeshFromStoredData! 25/08/2025
+FIslandMeshData ADiggerManager::GenerateIslandMeshFromStoredData(const FIslandData& IslandData)
 {
     FIslandMeshData Result;
 
-    // Step 1: Get all islands from unified grid
-    TArray<FIslandData> AllIslands = DetectUnifiedIslands();
-    if (AllIslands.Num() == 0)
+    const int32 InstanceCount = IslandData.VoxelInstances.Num();
+    const int32 VoxelDataCount = IslandData.VoxelDataMap.Num();
+
+    if (InstanceCount == 0 || VoxelDataCount == 0)
     {
-        if (DiggerDebug::Islands)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] No islands found during extraction."));
-        }
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Island %s has no voxel instances (%d) or voxel data (%d)."),
+            *IslandData.IslandID.ToString(), InstanceCount, VoxelDataCount);
         return Result;
     }
 
-    // Step 2: Find closest island to center
-    FIslandData* ClosestIsland = nullptr;
-    float MinDist = FLT_MAX;
-
-    for (FIslandData& Island : AllIslands)
-    {
-        float Dist = FVector::DistSquared(Island.Location, IslandCenter);
-        if (Dist < MinDist)
-        {
-            MinDist = Dist;
-            ClosestIsland = &Island;
-        }
-    }
-
-    if (!ClosestIsland)
-    {
-        if (DiggerDebug::Islands)
-        {
-            UE_LOG(LogTemp, Error, TEXT("[DiggerPro] No matching island found near %s"), *IslandCenter.ToString());
-        }
-        return Result;
-    }
-
-    // Step 3: Build temporary grid from island voxels
-    USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
-    TMap<FIntVector, FVoxelData> IslandVoxelMap;
-
-    for (const FIntVector& Global : ClosestIsland->Voxels)
-    {
-        FIntVector ChunkCoords, LocalVoxel;
-        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(Global, ChunkCoords, LocalVoxel);
-
-        UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
-        if (!ChunkPtr || !*ChunkPtr) continue;
-
-        USparseVoxelGrid* Grid = (*ChunkPtr)->GetSparseVoxelGrid();
-        if (!Grid) continue;
-
-        const FVoxelData* Data = Grid->GetVoxelData(LocalVoxel);
-        if (Data)
-        {
-            IslandVoxelMap.Add(Global, *Data);
-        }
-    }
-
-    TempGrid->SetVoxelData(IslandVoxelMap);
-    TempGrid->Initialize(nullptr); // no parent
-
-    // Step 4: Generate mesh
-    MarchingCubes->GenerateMeshFromGrid(
-        TempGrid, FVector::ZeroVector, VoxelSize,
-        Result.Vertices, Result.Triangles, Result.Normals
-    );
-
-    Result.MeshOrigin = FVector::ZeroVector;
-    Result.bValid = Result.Vertices.Num() > 0;
-
-    // Step 5: Optionally remove island from grid
-    if (bRemoveAfter)
-    {
-        RemoveIslandVoxels(*ClosestIsland);
-    }
-
-    return Result;
-}
-
-// Complete ExtractAndGenerateIslandMeshFromData method with debug logging
-FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMeshFromData(const FIslandData& IslandData)
-{
-    FIslandMeshData Result;
-
-    if (IslandData.VoxelInstances.Num() == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Island data contains no voxel instances."));
-        return Result;
-    }
-
-    // Use the first voxel instance to locate the chunk
-    const FVoxelInstance& FirstInstance = IslandData.VoxelInstances[0];
-    UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Extraction using chunk coords: %s"), 
-           *FirstInstance.ChunkCoords.ToString());
-    
-    UVoxelChunk* Chunk = ChunkMap.FindRef(FirstInstance.ChunkCoords);
-    if (!Chunk)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] No chunk found for island reference voxel at %s"), *FirstInstance.ChunkCoords.ToString());
-        return Result;
-    }
-
-    USparseVoxelGrid* VoxelGrid = Chunk->GetSparseVoxelGrid();
-    if (!VoxelGrid)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] No SparseVoxelGrid found on chunk."));
-        return Result;
-    }
-
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(Chunk->GetChunkCoordinates());
-    UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Extraction ChunkOrigin: %s from chunk coords: %s"), 
-           *ChunkOrigin.ToString(), *Chunk->GetChunkCoordinates().ToString());
-
-    // Create a temporary grid for the island
     USparseVoxelGrid* ExtractedGrid = NewObject<USparseVoxelGrid>();
-
-    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Extracting island at location %s with %d voxel instances (reference: %s)"),
-        *IslandData.Location.ToString(),
-        IslandData.VoxelInstances.Num(),
-        *IslandData.ReferenceVoxel.ToString());
-
-    TMap<FIntVector, FVoxelData> ExtractedVoxelData;
-    int32 ValidVoxels = 0;
-
-    TArray<FIntVector> SolidVoxels;
-    for (const FVoxelInstance& Instance : IslandData.VoxelInstances)
-    {
-        FVoxelData* Data = VoxelGrid->GetVoxelData(Instance.LocalVoxel);
-        if (Data)
-        {
-            ExtractedVoxelData.Add(Instance.LocalVoxel, *Data);
-            SolidVoxels.Add(Instance.LocalVoxel);
-            ValidVoxels++;
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Voxel at %s not found in grid"), *Instance.LocalVoxel.ToString());
-        }
-    }
-
-    if (ValidVoxels == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] No valid voxel data found for island."));
-        return Result;
-    }
-
-    TSet<FIntVector> IslandVoxelSet(SolidVoxels);
-    TSet<FIntVector> BoundaryVoxels;
-
-    for (const FIntVector& SolidVoxel : SolidVoxels)
-    {
-        for (int32 i = 0; i < 6; i++)
-        {
-            FIntVector Neighbor = SolidVoxel + FVoxelConversion::GetDirectionVector(i);
-            if (!IslandVoxelSet.Contains(Neighbor) && !BoundaryVoxels.Contains(Neighbor))
-            {
-                BoundaryVoxels.Add(Neighbor);
-                FVoxelData* NeighborData = VoxelGrid->GetVoxelData(Neighbor);
-                if (NeighborData)
-                {
-                    ExtractedVoxelData.Add(Neighbor, *NeighborData);
-                }
-            }
-        }
-    }
-
-    ExtractedGrid->SetVoxelData(ExtractedVoxelData);
+    ExtractedGrid->SetVoxelData(IslandData.VoxelDataMap);
     ExtractedGrid->Initialize(nullptr);
 
-    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Extracted grid contains %d voxels (%d solid + %d boundary)"),
-        ExtractedVoxelData.Num(), ValidVoxels, BoundaryVoxels.Num());
+    if (ExtractedGrid->GetAllVoxels().Num() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] ExtractedGrid is empty after SetVoxelData."));
+        return Result;
+    }
 
-    // Generate mesh (vertices are currently in world space relative to ChunkOrigin)
+    FVector IslandWorldCenter = FVector::ZeroVector;
+    for (const FVoxelInstance& Instance : IslandData.VoxelInstances)
+    {
+        IslandWorldCenter += FVoxelConversion::GlobalVoxelToWorld_MinCornerAligned(Instance.GlobalVoxel);
+    }
+    IslandWorldCenter /= InstanceCount;
+
     MarchingCubes->GenerateMeshFromGrid(
-        ExtractedGrid, ChunkOrigin, VoxelSize,
-        Result.Vertices, Result.Triangles, Result.Normals
+        ExtractedGrid,
+        IslandWorldCenter,
+        VoxelSize,
+        Result.Vertices,
+        Result.Triangles,
+        Result.Normals
     );
 
-    // **NEW CODE: Center the mesh on the island's center**
-    if (Result.Vertices.Num() > 0)
-    {
-        // Calculate the island's center in world space
-        FVector IslandWorldCenter = FVector::ZeroVector;
-        for (const FVoxelInstance& Instance : IslandData.VoxelInstances)
-        {
-            IslandWorldCenter += FVoxelConversion::GlobalVoxelToWorld_CenterAligned(Instance.LocalVoxel);
-        }
-        IslandWorldCenter /= IslandData.VoxelInstances.Num();
+    Result.MeshOrigin = IslandWorldCenter;
+    Result.bValid = (Result.Vertices.Num() > 0 && Result.Triangles.Num() > 0);
 
-        
-        // Translate all vertices so they're relative to the island center instead of chunk origin
-        FVector CenteringOffset = IslandWorldCenter - ChunkOrigin;
-        for (FVector& Vertex : Result.Vertices)
+    if (!Result.bValid)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Mesh generation failed for island %s. No vertices or triangles."),
+            *IslandData.IslandID.ToString());
+
+        for (const auto& Pair : IslandData.VoxelDataMap)
         {
-            Vertex -= CenteringOffset;
+            FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld_MinCornerAligned(Pair.Key);
+            DrawDebugBox(GetWorld(), WorldPos, FVector(VoxelSize * 0.5f), FColor::Red, false, 10.0f);
         }
-        
-        // Update mesh origin to be the island center
-        Result.MeshOrigin = IslandWorldCenter;
-        
-        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Centered mesh on island. Island center: %s, Centering offset: %s"), 
-               *IslandWorldCenter.ToString(), *CenteringOffset.ToString());
     }
     else
     {
-        Result.MeshOrigin = ChunkOrigin;
+        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Mesh generation complete for island %s. Origin: %s | Vertices: %d | Triangles: %d"),
+            *IslandData.IslandID.ToString(),
+            *IslandWorldCenter.ToString(),
+            Result.Vertices.Num(),
+            Result.Triangles.Num() / 3);
     }
-
-    Result.bValid = (Result.Vertices.Num() > 0 && Result.Triangles.Num() > 0);
-
-    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Island mesh generation complete. Valid Voxels: %d, Vertices: %d, Triangles: %d"),
-        ValidVoxels,
-        Result.Vertices.Num(),
-        Result.Triangles.Num() / 3
-    );
 
     return Result;
 }
@@ -2412,23 +1880,20 @@ void ADiggerManager::RemoveIslandByID(const FName& IslandID)
 void ADiggerManager::HighlightIslandByID(const FName& IslandID)
 {
     FIslandData* Island = FindIsland(IslandID);
-    if (!Island) return;
-
-    if (!IsValid(VoxelDebugMesh)) return;
+    if (!Island || !IsValid(VoxelDebugMesh)) return;
 
     VoxelDebugMesh->ClearInstances();
 
     VoxelSize = FVoxelConversion::LocalVoxelSize;
     const FVector Scale = FVector(VoxelSize / 100.0f);
 
-    // Debug the first few instances
     int32 DebugCount = 0;
     for (const FVoxelInstance& Instance : Island->VoxelInstances)
     {
-        // The voxel indices start at 0,0,0 being the chunk minimum corner
-        FVector WorldPos = FVoxelConversion::MinCornerVoxelToWorld(Instance.ChunkCoords, Instance.LocalVoxel) + DebugVisualizationOffset;
+        // ✅ Use global voxel position for world alignment
+        FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld_MinCornerAligned(Instance.GlobalVoxel);
 
-        if (DebugCount < 3) // Log first 3 positions
+        if (DebugCount < 3)
         {
             UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Highlight Instance %d:"), DebugCount);
             UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   ChunkCoords: %s"), *Instance.ChunkCoords.ToString());
@@ -2439,11 +1904,21 @@ void ADiggerManager::HighlightIslandByID(const FName& IslandID)
 
         FTransform Transform;
         Transform.SetLocation(WorldPos);
-        Transform.SetScale3D(Scale * 1.1f);
+        Transform.SetScale3D(Scale * 1.3f);
 
         VoxelDebugMesh->AddInstance(Transform);
         DebugCount++;
     }
+
+    // ✅ Draw debug box at island center (mesh origin)
+    FTransform CenterTransform;
+    CenterTransform.SetLocation(Island->Location);
+    CenterTransform.SetScale3D(FVector(3.0f));
+
+    VoxelDebugMesh->AddInstance(CenterTransform);
+    DebugCount++;
+
+    UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Island.Location debug box at: %s"), *Island->Location.ToString());
 
     if (DiggerDebug::Islands)
     {
@@ -2451,70 +1926,24 @@ void ADiggerManager::HighlightIslandByID(const FName& IslandID)
     }
 }
 
-void ADiggerManager::ConvertIslandToStaticMesh(const FName& IslandID, bool bEnablePhysics)
-{
-    FIslandData* Island = FindIsland(IslandID);
-    if (!Island)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] ConvertIslandToStaticMesh: Island ID %s not found."), *IslandID.ToString());
-        return;
-    }
-
-    FIslandMeshData MeshData = ExtractAndGenerateIslandMeshFromData(*Island);
-    if (!MeshData.bValid)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Mesh extraction failed for island %s"), *IslandID.ToString());
-        return;
-    }
-
-    // Save mesh as asset
-    FString AssetName = FString::Printf(TEXT("Island_%s_StaticMesh"), *IslandID.ToString());
-    UStaticMesh* SavedMesh = SaveIslandMeshAsStaticMesh(AssetName, MeshData);
-    if (!SavedMesh)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Failed to save static mesh for island %s"), *IslandID.ToString());
-        return;
-    }
-
-    // Spawn static mesh actor
-    FActorSpawnParameters SpawnParams;
-    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-    AStaticMeshActor* MeshActor = GetWorld()->SpawnActor<AStaticMeshActor>(
-        AStaticMeshActor::StaticClass(),
-        Island->Location,
-        FRotator::ZeroRotator,
-        SpawnParams
-    );
-
-    if (MeshActor && MeshActor->GetStaticMeshComponent())
-    {
-        MeshActor->SetActorLabel(FString::Printf(TEXT("IslandActor_%s"), *IslandID.ToString()));
-        MeshActor->GetStaticMeshComponent()->SetStaticMesh(SavedMesh);
-        MeshActor->GetStaticMeshComponent()->SetMobility(EComponentMobility::Movable);
-        MeshActor->GetStaticMeshComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-        MeshActor->GetStaticMeshComponent()->SetCollisionObjectType(ECC_PhysicsBody);
-
-        if (bEnablePhysics)
-        {
-            MeshActor->GetStaticMeshComponent()->SetSimulatePhysics(true);
-            MeshActor->GetStaticMeshComponent()->SetEnableGravity(true);
-        }
-    }
-
-    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Spawned static mesh actor for island %s at location %s"),
-        *IslandID.ToString(), *Island->Location.ToString());
-}
 
 
+// In Use // Date: 25/08/2025
 UStaticMesh* ADiggerManager::SaveIslandMeshAsStaticMesh(const FString& AssetName, const FIslandMeshData& MeshData)
 {
-    if (!MeshData.bValid) return nullptr;
+    if (!MeshData.bValid)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] MeshData is invalid. Cannot save static mesh: %s"), *AssetName);
+        return nullptr;
+    }
 
     TArray<FVector3f> FloatVerts = ConvertArray<FVector, FVector3f>(MeshData.Vertices);
     TArray<FVector3f> FloatNormals = ConvertArray<FVector, FVector3f>(MeshData.Normals);
 
-    return CreateStaticMeshFromRawData(
+    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Saving static mesh: %s | Vertices: %d | Triangles: %d"),
+        *AssetName, FloatVerts.Num(), MeshData.Triangles.Num() / 3);
+
+    UStaticMesh* Mesh = CreateStaticMeshFromRawData(
         GetTransientPackage(),
         AssetName,
         FloatVerts,
@@ -2522,7 +1951,15 @@ UStaticMesh* ADiggerManager::SaveIslandMeshAsStaticMesh(const FString& AssetName
         FloatNormals,
         {}, {}, {}
     );
+
+    if (!Mesh)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Static mesh creation failed for asset: %s"), *AssetName);
+    }
+
+    return Mesh;
 }
+
 
 
 bool ADiggerManager::EnsureWorldReference()
@@ -4061,6 +3498,7 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
     IslandIDMap.Empty();
     VoxelToIslandIDMap.Empty();
 
+    // Step 1: Collect all voxel data and physical instances
     TMap<FIntVector, FVoxelData> UnifiedVoxelData;
     TArray<FVoxelInstance> AllPhysicalVoxelInstances;
 
@@ -4079,19 +3517,21 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
             const FIntVector& LocalIndex = VoxelPair.Key;
             const FVoxelData& Data = VoxelPair.Value;
 
-            FIntVector GlobalIndex = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(ChunkCoords, LocalIndex);
+            FIntVector GlobalIndex = FVoxelConversion::ChunkAndLocalToGlobalVoxel_MinCornerAligned(ChunkCoords, LocalIndex);
 
             UnifiedVoxelData.Add(GlobalIndex, Data);
             AllPhysicalVoxelInstances.Add(FVoxelInstance(GlobalIndex, ChunkCoords, LocalIndex));
         }
     }
 
+    // Step 2: Detect deduplicated islands
     USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
     TempGrid->SetVoxelData(UnifiedVoxelData);
 
     TArray<FIslandData> DeduplicatedIslands = TempGrid->DetectIslands(0.0f);
     TArray<FIslandData> FinalIslands;
 
+    // Step 3: Enhance islands with full physical instances and voxel data
     for (const FIslandData& DedupIsland : DeduplicatedIslands)
     {
         FIslandData EnhancedIsland;
@@ -4105,14 +3545,24 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
         TSet<FIntVector> IslandGlobalVoxels(DedupIsland.Voxels);
         EnhancedIsland.VoxelCount = IslandGlobalVoxels.Num();
 
+        TMap<FIntVector, FVoxelData> VoxelDataMap;
+
         for (const FVoxelInstance& Instance : AllPhysicalVoxelInstances)
         {
             if (IslandGlobalVoxels.Contains(Instance.GlobalVoxel))
             {
                 EnhancedIsland.VoxelInstances.Add(Instance);
                 EnhancedIsland.Voxels.Add(Instance.GlobalVoxel);
+
+                const FVoxelData* Data = UnifiedVoxelData.Find(Instance.GlobalVoxel);
+                if (Data)
+                {
+                    VoxelDataMap.Add(Instance.GlobalVoxel, *Data);
+                }
             }
         }
+
+        EnhancedIsland.VoxelDataMap = VoxelDataMap;
 
         FinalIslands.Add(EnhancedIsland);
         IslandIDMap.Add(EnhancedIsland.IslandID, EnhancedIsland);
@@ -4123,6 +3573,7 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
         }
     }
 
+    // Step 4: Broadcast islands to UI
     if (OnIslandsDetectionStarted.IsBound())
         OnIslandsDetectionStarted.Broadcast();
 
@@ -4130,12 +3581,13 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
     {
         if (OnIslandDetected.IsBound())
         {
-            OnIslandDetected.Broadcast(Island); // Send full island with ID and Name
+            OnIslandDetected.Broadcast(Island);
         }
     }
 
     return FinalIslands;
 }
+
 
 
 
@@ -4304,7 +3756,7 @@ void ADiggerManager::RemoveUnifiedIslandVoxels(const FIslandData& Island)
     int32 TotalRemoved = 0;
     TSet<UVoxelChunk*> ChunksToUpdate;
 
-    //if (DiggerDebug::Islands || DiggerDebug::Voxels || DiggerDebug::Chunks)
+    if (DiggerDebug::Islands || DiggerDebug::Voxels || DiggerDebug::Chunks)
     UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Starting unified island removal with %d pre-computed voxel instances"), Island.VoxelInstances.Num());
     
     // Group voxel instances by their storage chunks for efficient batch removal

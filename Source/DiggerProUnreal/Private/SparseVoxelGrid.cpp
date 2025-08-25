@@ -1020,7 +1020,7 @@ FIslandData USparseVoxelGrid::DetectIsland(float SDFThreshold, const FIntVector&
 		}
 		Center /= IslandVoxels.Num();
 
-		Island.Location       = Center + DebugRenderOffset;
+		Island.Location       = Center;
 		Island.VoxelCount     = IslandVoxels.Num();
 		Island.ReferenceVoxel = IslandVoxels[0];
 		Island.Voxels         = IslandVoxels;
@@ -1101,18 +1101,14 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
 	        FVoxelInstance Instance;
         	Instance.ChunkCoords = ChunkCoords;
         	Instance.LocalVoxel = LocalVoxel;
-        	Instance.GlobalVoxel = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(ChunkCoords, LocalVoxel);
+        	Instance.GlobalVoxel = FVoxelConversion::ChunkAndLocalToGlobalVoxel_MinCornerAligned(ChunkCoords, LocalVoxel);
             
         	TempInstances.Add(Instance);
-            
-        	// Use the EXACT same calculation as highlight method
-        	FVector IslandOffset = FVector(1734, 2444, -1600);
+        	
 
-        	FVector WorldPos = FVoxelConversion::MinCornerVoxelToWorld(Instance.ChunkCoords, Instance.LocalVoxel) + IslandOffset;
+        	FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld_MinCornerAligned(Instance.GlobalVoxel);
         	Center += WorldPos;
-
-        	//P1: (X=2184.241071,Y=5500.904018,Z=0.000000)
-			//P2: (X=-1010.000000,Y=2301.000000,Z=0.000000)
+        	
         	
             // Debug first 3 voxels
             if (DebugCount < 3)

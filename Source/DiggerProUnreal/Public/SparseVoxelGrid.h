@@ -7,6 +7,7 @@
 #include "UObject/Object.h"
 #include "HAL/CriticalSection.h"
 #include "Containers/Queue.h"
+#include "FVoxelData.h"
 #include "IslandData.h"
 #include "SparseVoxelGrid.generated.h"
 
@@ -15,19 +16,6 @@ class ADiggerManager;
 class UVoxelChunk;
 class UWorld;
 
-// Minimal voxel payload (kept as a USTRUCT for future extensibility)
-USTRUCT(BlueprintType)
-struct FVoxelData
-{
-	GENERATED_BODY()
-
-	FVoxelData() = default;
-	explicit FVoxelData(float InSDFValue)
-		: SDFValue(InSDFValue) {}
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Voxel")
-	float SDFValue = 1.0f;
-};
 
 UCLASS(BlueprintType)
 class DIGGERPROUNREAL_API USparseVoxelGrid : public UObject

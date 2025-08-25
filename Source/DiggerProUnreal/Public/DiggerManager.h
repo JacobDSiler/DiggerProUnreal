@@ -179,7 +179,7 @@ public:
     void ConvertIslandAtPositionToStaticMesh(const FVector& Vector);
     void ConvertIslandAtPositionToActor(const FVector& IslandCenter, bool bEnablePhysics, FIntVector ReferenceVoxel);
     FIslandMeshData ExtractIslandByCenter(const FVector& IslandCenter, bool bRemoveAfter, bool bEnablePhysics);
-    FIslandMeshData ExtractAndGenerateIslandMeshFromData(const FIslandData& IslandData);
+    FIslandMeshData GenerateIslandMeshFromStoredData(const FIslandData& IslandData);
     void RemoveIslandVoxels(const FIslandData& Island);
     void ClearAllIslandActors();
     void DestroyIslandActor(AIslandActor* IslandActor);
@@ -405,12 +405,6 @@ public:
 #endif
 
 public:
-    
-    // Island Testing Phase 23/08/2025
-    // Use this to adjust voxel alignment if necessary for debugging.
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Debug Settings")
-    FVector DebugVisualizationOffset = FVector(-1600);
-    
     
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
     int32 ChunkSize = 32;  // Number of grid squares per chunk

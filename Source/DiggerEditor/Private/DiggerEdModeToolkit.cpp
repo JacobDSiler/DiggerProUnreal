@@ -4473,6 +4473,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                                 Island->IslandName = NewText.ToString();
                                 UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Island renamed to: %s"), *Island->IslandName);
                             }
+                            // TODO: make this update the name in the actual manager's map data for the island! It isn't actually being renamed until this is done.
                         })
                     ]
                 ]
@@ -4510,7 +4511,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                     {
                         UE_LOG(LogTemp, Warning, TEXT("Island Rotation Applied: Pitch=%f, Yaw=%f, Roll=%f"),
                             IslandRotation.Pitch, IslandRotation.Yaw, IslandRotation.Roll);
-                        // Your apply logic here
+                        // comment: TODO: implement rotation application that actually reads the island voxels, rotated them, and places them correctly in the source grid.
                         return FReply::Handled();
                     })
                 ]
