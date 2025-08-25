@@ -376,9 +376,10 @@ private:
 	{
 		return bDetailedDebug ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
 	}
-
+public:
 	//Helpers
 	ADiggerManager* GetDiggerManager();
+private:
 //SubSubSections
 	TSharedRef<SWidget> MakeIslandGridWidget();
 	TSharedRef<SWidget> MakeDebugCheckbox(const FString& Label, bool* FlagPtr);
@@ -395,7 +396,9 @@ private:
 	TSharedRef<SWidget> MakeRotationRow(const FText& Label, float& Value);
 	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, double& Value);
 	TSharedRef<SWidget> MakeOffsetRow(const FText& Label, float& Value);
-
+public:
+	FName GetSelectedIslandID() const;
+private:
 	TSharedRef<SWidget> MakeProcgenArcanaImporterWidget();
 
 	FVector CalculatePivotOffset(const TArray<FVector>& Points, 
@@ -405,6 +408,7 @@ private:
 	void OnConvertToPhysicsActorClicked();
 	void OnConvertToSceneActorClicked();
 	void OnRemoveIslandClicked();
+	FIslandData* GetSelectedIsland();
 
 	TSharedRef<SWidget> MakeLabeledSliderRow(
 		const FText& Label,
@@ -524,8 +528,6 @@ public:
 
 
 	void SetTemporaryDigOverride(TOptional<bool> Override);
-	
-	
 
 	// Make sure this declaration matches exactly
 	void OnLightTypeChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
@@ -559,7 +561,38 @@ private:
 	float BrushLength = 200.0f; // Default value, adjust as needed
 	bool bDebugVoxels = false;
 
-	TArray<FIntVector> IslandReferenceVoxels; // Unique Detected Island Reference Voxels
+	
+	bool bIsAwaitingIslandDuplication = false;
+	bool bIsGhostPreviewActive = false;
+
+public:
+	[[nodiscard]] bool IsGhostPreviewActive() const
+	{
+		return bIsGhostPreviewActive;
+	}
+
+	void SetIsGhostPreviewActive(bool InIsGhostPreviewActive)
+	{
+		this->bIsGhostPreviewActive = InIsGhostPreviewActive;
+	}
+
+
+	FName GhostIslandID;
+
+
+public:
+	[[nodiscard]] bool IsAwaitingIslandDuplication() const
+	{
+		return bIsAwaitingIslandDuplication;
+	}
+
+	void SetIsAwaitingIslandDuplication(bool InIsAwaitingIslandDuplication)
+	{
+		this->bIsAwaitingIslandDuplication = InIsAwaitingIslandDuplication;
+	}
+
+private:
+	TArray<FName> IslandIDs; // Unique identifiers for each detected island
 	int32 SelectedIslandIndex = INDEX_NONE; // Currently selected island
 	FRotator IslandRotation;
 	

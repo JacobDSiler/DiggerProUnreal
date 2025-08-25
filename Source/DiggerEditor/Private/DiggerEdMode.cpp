@@ -11,6 +11,17 @@
 #include "Toolkits/ToolkitManager.h"
 #include "DrawDebugHelpers.h"
 #include "Selection.h"
+#include "Components/InstancedStaticMeshComponent.h"
+//#include "ScopedTransaction.h"
+#include "VoxelConversion.h"
+
+// Duplicate the definitions here for the Editor module
+int32   FVoxelConversion::ChunkSize = 8;
+int32   FVoxelConversion::Subdivisions = 4;
+float   FVoxelConversion::TerrainGridSize = 100.0f;
+float   FVoxelConversion::LocalVoxelSize = FVoxelConversion::TerrainGridSize / FVoxelConversion::Subdivisions;
+FVector FVoxelConversion::Origin = FVector::ZeroVector;
+float   FVoxelConversion::ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::TerrainGridSize;
 
 #define LOCTEXT_NAMESPACE "DiggerEditorMode"
 
@@ -228,6 +239,39 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
 {
     DeselectAllSceneActors();
 
+    if (TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit())
+    {
+        if (DiggerToolkit && DiggerToolkit->IsAwaitingIslandDuplication())
+        {
+            FVector WorldLocation = Click.GetOrigin(); // Or use raycast for surface hit
+
+            const FName IslandID = DiggerToolkit->GetSelectedIslandID();
+            if (ADiggerManager* Manager = DiggerToolkit->GetDiggerManager())
+            {
+                Manager->DuplicateIslandAtLocation(IslandID, WorldLocation);
+            }
+
+            DiggerToolkit->SetIsAwaitingIslandDuplication(false);
+            return true;
+        }
+
+        if (DiggerToolkit && DiggerToolkit->IsGhostPreviewActive())
+        {
+            FVector ClickLocation = Click.GetOrigin(); // Or raycast hit
+            const FName IslandID = DiggerToolkit->GhostIslandID;
+
+            if (ADiggerManager* Manager = DiggerToolkit->GetDiggerManager())
+            {
+                Manager->DuplicateIslandAtLocation(IslandID, ClickLocation);
+                Manager->VoxelDebugMesh->ClearInstances(); // Clear ghost
+            }
+
+            DiggerToolkit->SetIsGhostPreviewActive(false);
+            DiggerToolkit->GhostIslandID = NAME_None;
+            return true;
+        }
+    }
+
     FVector HitLocation;
     FHitResult Hit;
     if (!GetMouseWorldHit(InViewportClient, HitLocation, Hit))
@@ -275,6 +319,45 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
         }
     }
     return false;
+}
+
+void FDiggerEdMode::UpdateGhostPreview(const FVector& CursorWorldLocation)
+{
+    if (TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit())
+    {
+        if (!DiggerToolkit || !DiggerToolkit->IsGhostPreviewActive()) return;
+    
+
+        const FName IslandID = DiggerToolkit->GhostIslandID;
+        ADiggerManager* Manager = DiggerToolkit->GetDiggerManager();
+        FIslandData* Island = Manager ? Manager->FindIsland(IslandID) : nullptr;
+        if (!Island || !IsValid(Manager->VoxelDebugMesh)) return;
+
+        Manager->VoxelDebugMesh->ClearInstances();
+    
+
+        FVector Center(0, 0, 0);
+        for (const FVoxelInstance& Instance : Island->VoxelInstances)
+        {
+            Center += FVector(Instance.GlobalVoxel);
+        }
+        Center /= Island->VoxelInstances.Num();
+
+        FVector Offset = CursorWorldLocation - Center;
+        FVector Scale = FVector(FVoxelConversion::LocalVoxelSize / 100.0f);
+
+        for (const FVoxelInstance& Instance : Island->VoxelInstances)
+        {
+            FVector WorldPos = FVoxelConversion::MinCornerVoxelToWorld(Instance.ChunkCoords, Instance.LocalVoxel);
+            WorldPos += Offset;
+
+            FTransform Transform;
+            Transform.SetLocation(WorldPos);
+            Transform.SetScale3D(Scale * 1.1f);
+
+            Manager->VoxelDebugMesh->AddInstance(Transform);
+        }
+    }
 }
 
 
@@ -373,6 +456,9 @@ void FDiggerEdMode::StopContinuousApplication()
 
 void FDiggerEdMode::ApplyBrushWithSettings(ADiggerManager* Digger, const FVector& HitLocation, const FHitResult& Hit, const FBrushCache& Settings)
 {
+    //FScopedTransaction Transaction(NSLOCTEXT("Digger", "BrushStroke", "Digger Brush Stroke"));
+    //Digger->Modify();
+    
     Digger->EditorBrushRadius = Settings.Radius;
     Digger->EditorBrushDig = Settings.bFinalBrushDig;
     Digger->EditorBrushRotation = Settings.Rotation;

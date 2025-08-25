@@ -55,6 +55,9 @@ struct FIslandData
 	{}
 
 	UPROPERTY(BlueprintReadWrite)
+	FName IslandID;
+	
+	UPROPERTY(BlueprintReadWrite)
 	FVector Location;
 
 	UPROPERTY(BlueprintReadWrite)
@@ -71,6 +74,14 @@ struct FIslandData
 	// Store a reference voxel for this island
 	UPROPERTY()
 	FIntVector ReferenceVoxel;
+
+	// Add a UID to make tracking possible across time
+	UPROPERTY()
+	FGuid PersistentUID;
+
+	//	Island Name
+	UPROPERTY()
+	FString IslandName;
 };
 
 struct FIslandMeshData

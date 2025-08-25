@@ -92,7 +92,6 @@ struct FBrushSample
     uint8   Op;        // 0 add/union, 1 subtract/diff, 2 smin...
 };
 
-
 UCLASS(Blueprintable)
 class DIGGERPROUNREAL_API ADiggerManager : public AActor
 {
@@ -131,6 +130,12 @@ public:
  * Optionally returns the full set of enhanced islands for direct use.
  */
     TArray<FIslandData> DetectUnifiedIslands();
+    void DuplicateIslandAtLocation(const FName& SourceIslandID, const FVector& TargetLocation);
+
+    FVector CalculateIslandCenter(const TArray<FIntVector>& Voxels);
+    void RotateIslandByID(const FName& IslandID, const FRotator& Rotation);
+
+    FString GenerateIslandHash(const TArray<FIntVector>& Voxels) const;
     
     void RemoveUnifiedIslandVoxels(const FIslandData& Island);
 
@@ -143,13 +148,22 @@ public:
     void DebugBrushPlacement(const FVector& ClickPosition);
     void DebugDrawVoxelAtWorldPositionFast(const FVector& WorldPosition, const FLinearColor& BoxColor, float Duration,
                                            float Thickness);
-    void DebugDrawVoxelAtWorldPosition(const FVector& WorldPosition, FColor BoxColor, float Duration, float Thickness);
 
-    void DrawDiagonalDebugVoxels(FIntVector ChunkCoords);
     void DrawDiagonalDebugVoxelsFast(FIntVector ChunkCoords);
     void AddDebugVoxelInstance(const FVector& WorldPosition, const FColor& Color);
-    void RemoveIslandByReferenceVoxel(const FIntVector& ReferenceVoxel);
-    FIslandData* FindIslandByReferenceVoxel(const FIntVector& ReferenceVoxel);
+    void RemoveIslandByVoxel(const FIntVector& Voxel);
+
+
+    UFUNCTION(BlueprintCallable, Category = "Digger|Islands", DisplayName = "Find Island by Voxel")
+    FIslandData FindIslandByVoxel_BP(const FIntVector& Voxel);
+
+    UFUNCTION(BlueprintCallable, Category = "Digger|Islands", DisplayName = "Find Island by ID")
+    FIslandData FindIslandByID_BP(const FName& IslandID);
+
+    FIslandData* FindIsland(const FIntVector& Voxel);
+    FIslandData* FindIsland(const FName& IslandID);
+
+
     void HighlightIslandByReferenceVoxel(const FIntVector& ReferenceVoxel);
     void ConvertIslandByReferenceVoxelToActor(const FIntVector& ReferenceVoxel, bool bEnablePhysics);
     UStaticMesh* ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName);
@@ -169,6 +183,9 @@ public:
     void RemoveIslandVoxels(const FIslandData& Island);
     void ClearAllIslandActors();
     void DestroyIslandActor(AIslandActor* IslandActor);
+    void RemoveIslandByID(const FName& IslandID);
+    void HighlightIslandByID(const FName& IslandID);
+    void ConvertIslandToStaticMesh(const FName& IslandID, bool bEnablePhysics);
 
     template<typename TIn, typename TOut>
     TArray<TOut> ConvertArray(const TArray<TIn>& InArray)
@@ -326,7 +343,7 @@ public:
         const FString& AssetName,
         const FIslandMeshData& MeshData
     );
-    void ConvertIslandByReferenceVoxelToStaticMesh(const FIntVector& ReferenceVoxel, bool bEnablePhysics);
+    void ConvertIslandByVoxelToStaticMesh(const FIntVector& ReferenceVoxel, bool bEnablePhysics);
 
     UFUNCTION(BlueprintCallable, CallInEditor, Category = "Islands")
     AStaticMeshActor* SpawnPhysicsIsland(UStaticMesh* StaticMesh, FVector Location = FVector::ZeroVector)
@@ -393,7 +410,7 @@ public:
     // Use this to adjust voxel alignment if necessary for debugging.
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Debug Settings")
     FVector DebugVisualizationOffset = FVector(-1600);
-
+    
     
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
     int32 ChunkSize = 32;  // Number of grid squares per chunk
@@ -467,7 +484,12 @@ public:
 
     // Cached Islands Map
     UPROPERTY()
-    TMap<FIntVector, FIslandData> IslandLookupMap;
+    TMap<FName, FIslandData> IslandIDMap;
+    
+    UPROPERTY()
+    TMap<FIntVector, FName> VoxelToIslandIDMap;
+    
+    //TMap<FIntVector, FIslandData> IslandLookupMap;
 
 
     // Cache map from proxy pointer to boolean flag (just for example—can be more complex if needed later)

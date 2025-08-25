@@ -402,12 +402,19 @@ bool FDiggerEdModeToolkit::GetBrushIsFilled()
 
 void FDiggerEdModeToolkit::AddIsland(const FIslandData& Island)
 {
+    if (Island.IslandID != NAME_None)
+    {
+        IslandIDs.Add(Island.IslandID);
+    }
+    else
     if (DiggerDebug::Islands)
-        UE_LOG(LogTemp, Error, TEXT("AddIsland called on toolkit!"));
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Attempted to add island with invalid ID."));
+    }
 
-    IslandReferenceVoxels.Add(Island.ReferenceVoxel);
     RebuildIslandGrid();
 }
+
 
 
 //Helper Methods
@@ -4237,30 +4244,31 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, floa
     );
 }
 
+// Island Methods
+
+FName FDiggerEdModeToolkit::GetSelectedIslandID() const
+{
+    if (SelectedIslandIndex != INDEX_NONE && IslandIDs.IsValidIndex(SelectedIslandIndex))
+    {
+        return IslandIDs[SelectedIslandIndex];
+    }
+
+    return NAME_None;
+}
+
+
 void FDiggerEdModeToolkit::OnConvertToPhysicsActorClicked()
 {
-    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Add Physics to Selected Island button pressed."));
+    const FName IslandID = GetSelectedIslandID();
+    if (IslandID == NAME_None) return;
 
-    if (SelectedIslandIndex != INDEX_NONE && IslandReferenceVoxels.IsValidIndex(SelectedIslandIndex))
+    if (ADiggerManager* LocalManager = GetDiggerManager())
     {
-        const FIntVector RefVoxel = IslandReferenceVoxels[SelectedIslandIndex];
+        LocalManager->ConvertIslandToStaticMesh(IslandID, true);
 
-        ADiggerManager* LocalManager = GetDiggerManager();
-        if (LocalManager)
+        if (DiggerDebug::Islands)
         {
-            FIslandData* Island = LocalManager->FindIslandByReferenceVoxel(RefVoxel);
-            if (Island)
-            {
-                LocalManager->ConvertIslandByReferenceVoxelToStaticMesh(RefVoxel, true);;
-
-                if (DiggerDebug::Islands)
-                    UE_LOG(LogTemp, Log, TEXT("Island Location: %s, Reference Voxel: %s"), 
-                        *Island->Location.ToString(), *RefVoxel.ToString());
-            }
-            else
-            {
-                UE_LOG(LogTemp, Warning, TEXT("No island found for reference voxel %s"), *RefVoxel.ToString());
-            }
+            UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Conversion triggered for IslandID: %s"), *IslandID.ToString());
         }
     }
 }
@@ -4268,51 +4276,47 @@ void FDiggerEdModeToolkit::OnConvertToPhysicsActorClicked()
 
 void FDiggerEdModeToolkit::OnConvertToSceneActorClicked()
 {
-    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Create Static Mesh from Island button pressed."));
+    const FName IslandID = GetSelectedIslandID();
+    if (IslandID == NAME_None) return;
 
-    if (SelectedIslandIndex != INDEX_NONE && IslandReferenceVoxels.IsValidIndex(SelectedIslandIndex))
+    if (ADiggerManager* LocalManager = GetDiggerManager())
     {
-        const FIntVector RefVoxel = IslandReferenceVoxels[SelectedIslandIndex];
+        LocalManager->ConvertIslandToStaticMesh(IslandID, false);
 
-        ADiggerManager* LocalManager = GetDiggerManager();
-        if (LocalManager)
+        if (DiggerDebug::Islands)
         {
-            FIslandData* Island = LocalManager->FindIslandByReferenceVoxel(RefVoxel);
-            if (Island)
-            {
-                LocalManager->ConvertIslandByReferenceVoxelToStaticMesh(RefVoxel, false);;
-
-                if (DiggerDebug::Islands)
-                    UE_LOG(LogTemp, Log, TEXT("Island Location: %s, Reference Voxel: %s"),
-                        *Island->Location.ToString(), *RefVoxel.ToString());
-            }
-            else
-            {
-                UE_LOG(LogTemp, Warning, TEXT("No island found for reference voxel %s"), *RefVoxel.ToString());
-            }
+            UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Static mesh conversion triggered for IslandID: %s"), *IslandID.ToString());
         }
     }
 }
 
 
-
 // For removing the selected island from the voxel grid and the island list in the UI
 void FDiggerEdModeToolkit::OnRemoveIslandClicked()
 {
-    if (SelectedIslandIndex != INDEX_NONE && IslandReferenceVoxels.IsValidIndex(SelectedIslandIndex))
+    const FName IslandID = GetSelectedIslandID();
+    if (IslandID == NAME_None) return;
+
+    if (ADiggerManager* LocalManager = GetDiggerManager())
     {
-        const FIntVector RefVoxel = IslandReferenceVoxels[SelectedIslandIndex];
-
-        ADiggerManager* LocalManager = GetDiggerManager();
-        if (LocalManager)
-        {
-            LocalManager->RemoveIslandByReferenceVoxel(RefVoxel);
-        }
-
-        IslandReferenceVoxels.RemoveAt(SelectedIslandIndex);
-        SelectedIslandIndex = INDEX_NONE;
-        RebuildIslandGrid();
+        LocalManager->RemoveIslandByID(IslandID);
     }
+
+    IslandIDs.Remove(IslandID);
+    SelectedIslandIndex = INDEX_NONE;
+    RebuildIslandGrid();
+
+    if (DiggerDebug::Islands)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Removed island %s and rebuilt grid."), *IslandID.ToString());
+    }
+}
+
+FIslandData* FDiggerEdModeToolkit::GetSelectedIsland()
+{
+    const FName IslandID = GetSelectedIslandID();
+    Manager = GetDiggerManager();
+    return (Manager && IslandID != NAME_None) ? Manager->FindIsland(IslandID) : nullptr;
 }
 
 
@@ -4374,36 +4378,6 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                     return FReply::Handled();
                 })
             ]
-            /*
-             *+ SHorizontalBox::Slot().AutoWidth().Padding(2)
-[
-    SNew(SButton)
-    .Text(FText::FromString("Simulate Physics"))
-    .OnClicked_Lambda([]() -> FReply
-    {
-        //if (GEditor)
-        //{
-        //    GEditor->RequestStartSimulation();
-        //}
-        UE_LOG(LogTemp, Warning, TEXT("Start Simulation button pressed."));
-        return FReply::Handled();
-    })
-]
-            + SHorizontalBox::Slot().AutoWidth().Padding(2)
-[
-    SNew(SButton)
-    .Text(FText::FromString("Stop Simulation"))
-    .OnClicked_Lambda([]() -> FReply
-    {
-       // if (GEditor)
-       // {
-       //     GEditor->RequestEndSimulation();
-       // }
-       UE_LOG(LogTemp, Warning, TEXT("Stop Simulation button pressed."));
-        return FReply::Handled();
-    })
-]*/
-
             + SHorizontalBox::Slot().AutoWidth().Padding(2)
             [
                 SNew(SButton)
@@ -4433,9 +4407,75 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
                 .IsEnabled_Lambda([this]() { return SelectedIslandIndex != INDEX_NONE; })
                 .OnClicked_Lambda([this]() -> FReply
                 {
-                    /* Duplicate logic here */
+                    GhostIslandID = GetSelectedIslandID();
+                    bIsGhostPreviewActive = true;
+                    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Ghost preview activated for island %s"), *GhostIslandID.ToString());
                     return FReply::Handled();
                 })
+
+            ]
+        ]
+
+        // Island Details Menu (Stats / Rename / Rotate / Duplicate)
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 4, 8, 4)
+        [
+            SNew(SVerticalBox)
+            .Visibility_Lambda([this]() {
+                return SelectedIslandIndex != INDEX_NONE ? EVisibility::Visible : EVisibility::Collapsed;
+            })
+
+            + SVerticalBox::Slot().AutoHeight().Padding(2)
+            [
+                SNew(SExpandableArea)
+                .AreaTitle(FText::FromString("Island Details"))
+                .InitiallyCollapsed(false)
+                .BodyContent()
+                [
+                    SNew(SVerticalBox)
+                    + SVerticalBox::Slot().AutoHeight().Padding(2)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]() {
+                            const FIslandData* Island = GetSelectedIsland();
+                            return Island ? FText::FromString(FString::Printf(TEXT("Island ID: %s"), *Island->IslandID.ToString())) : FText::FromString("Island ID: None");
+                        })
+                    ]
+                    + SVerticalBox::Slot().AutoHeight().Padding(2)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]() {
+                            const FIslandData* Island = GetSelectedIsland();
+                            return Island ? FText::FromString(FString::Printf(TEXT("Voxel Count: %d"), Island->VoxelCount)) : FText::FromString("Voxel Count: 0");
+                        })
+                    ]
+                    + SVerticalBox::Slot().AutoHeight().Padding(2)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]() {
+                            const FIslandData* Island = GetSelectedIsland();
+                            return Island ? FText::FromString(FString::Printf(TEXT("Center: %s"), *Island->Location.ToString())) : FText::FromString("Center: N/A");
+                        })
+                    ]
+                    + SVerticalBox::Slot().AutoHeight().Padding(2)
+                    [
+                        SNew(SEditableTextBox)
+                        .Text_Lambda([this]() {
+                            const FIslandData* Island = GetSelectedIsland();
+                            return Island ? FText::FromString(Island->IslandName) : FText::FromString("");
+                        })
+                        .OnTextCommitted_Lambda([this](const FText& NewText, ETextCommit::Type CommitType)
+                        {
+                            FIslandData* Island = GetSelectedIsland();
+                            if (Island)
+                            {
+                                Island->IslandName = NewText.ToString();
+                                UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Island renamed to: %s"), *Island->IslandName);
+                            }
+                        })
+                    ]
+                ]
             ]
         ]
 
@@ -4488,7 +4528,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
             ]
         ]
     ];
-} 
+}
 
 
 
@@ -4750,30 +4790,11 @@ void FDiggerEdModeToolkit::ClearIslands()
     if (DiggerDebug::Islands)
         UE_LOG(LogTemp, Warning, TEXT("ClearIslands called on toolkit: %p"), this);
 
-    // Safety check (though 'this' is always valid in non-static context)
-    if (!this)
-    {
-        if (DiggerDebug::Islands || DiggerDebug::Error)
-        UE_LOG(LogTemp, Error, TEXT("ClearIslands: Invalid 'this' pointer!"));
-        return;
-    }
-
-    // Clear the reference voxel list
-    if (DiggerDebug::Islands)
-    UE_LOG(LogTemp, Warning, TEXT("ClearIslands: About to empty IslandReferenceVoxels array (current size: %d)"), IslandReferenceVoxels.Num());
-
-    IslandReferenceVoxels.Empty();
-    if (DiggerDebug::Islands)
-    UE_LOG(LogTemp, Warning, TEXT("ClearIslands: IslandReferenceVoxels.Empty() succeeded"));
-
+    IslandIDs.Empty();
     SelectedIslandIndex = INDEX_NONE;
-
-    if (DiggerDebug::Islands)
-    UE_LOG(LogTemp, Warning, TEXT("ClearIslands: About to call RebuildIslandGrid"));
     RebuildIslandGrid();
-    if (DiggerDebug::Islands)
-    UE_LOG(LogTemp, Warning, TEXT("ClearIslands: RebuildIslandGrid completed"));
 }
+
 
 
 
@@ -4801,9 +4822,9 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()
 {
     TSharedRef<SVerticalBox> GridBox = SNew(SVerticalBox);
 
-    for (int32 Index = 0; Index < IslandReferenceVoxels.Num(); ++Index)
+    for (int32 Index = 0; Index < IslandIDs.Num(); ++Index)
     {
-        const FIntVector& RefVoxel = IslandReferenceVoxels[Index];
+        const FName& IslandID = IslandIDs[Index];
 
         GridBox->AddSlot().AutoHeight().Padding(2)
         [
@@ -4811,27 +4832,26 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()
             + SHorizontalBox::Slot().AutoWidth().Padding(2)
             [
                 SNew(SButton)
-                .Text(FText::FromString(FString::Printf(TEXT("Island %d"), Index)))
+                .Text(FText::FromString(IslandID.ToString()))
                 .OnClicked_Lambda([this, Index]() -> FReply
                 {
                     SelectedIslandIndex = Index;
 
-                    const FIntVector& RefVoxel = IslandReferenceVoxels[Index];
+                    const FName& IslandID = IslandIDs[Index];
                     ADiggerManager* Manager = GetDiggerManager();
                     if (Manager)
                     {
-                        Manager->HighlightIslandByReferenceVoxel(RefVoxel);
+                        Manager->HighlightIslandByID(IslandID);
                     }
 
                     if (DiggerDebug::Islands)
                     {
-                        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Island button clicked: Index %d, RefVoxel %s"),
-                               Index, *RefVoxel.ToString());
+                        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Island button clicked: Index %d, IslandID %s"),
+                               Index, *IslandID.ToString());
                     }
 
                     return FReply::Handled();
                 })
-
             ]
         ];
     }
@@ -4839,11 +4859,12 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()
     if (DiggerDebug::Islands)
     {
         UE_LOG(LogTemp, Log, TEXT("[DiggerPro] MakeIslandGridWidget: Built grid with %d islands"),
-               IslandReferenceVoxels.Num());
+               IslandIDs.Num());
     }
 
     return GridBox;
 }
+
 
 
 
