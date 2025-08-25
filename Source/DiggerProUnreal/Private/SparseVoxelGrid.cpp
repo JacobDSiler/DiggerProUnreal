@@ -109,15 +109,14 @@ namespace VoxelGPU
 // ---------------------------------------------------------------------------------------------------------------------
 
 USparseVoxelGrid::USparseVoxelGrid()
-	: DiggerManager(nullptr)
-	, ParentChunk(nullptr)
-	, World(nullptr)
-	, ParentChunkCoordinates(0, 0, 0)
-	, TerrainGridSize(0)
-	, Subdivisions(0)
-	, ChunkSize(0)
-	, DebugRenderOffset(FVector::ZeroVector)
-	, bBorderIsDirty(false)
+        : DiggerManager(nullptr)
+        , ParentChunk(nullptr)
+        , World(nullptr)
+        , ParentChunkCoordinates(0, 0, 0)
+        , TerrainGridSize(0)
+        , Subdivisions(0)
+        , ChunkSize(0)
+        , bBorderIsDirty(false)
 {
 }
 
@@ -1004,7 +1003,7 @@ FIslandData USparseVoxelGrid::DetectIsland(float SDFThreshold, const FIntVector&
 		}
 		Center /= IslandVoxels.Num();
 
-		Island.Location       = Center + DebugRenderOffset;
+                   Island.Location       = Center;
 		Island.VoxelCount     = IslandVoxels.Num();
 		Island.ReferenceVoxel = IslandVoxels[0];
 		Island.Voxels         = IslandVoxels;
@@ -1078,7 +1077,7 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
 		Center /= FMath::Max(1, IslandVoxels.Num());
 
 		FIslandData Island;
-		Island.Location       = Center + DebugRenderOffset;
+                   Island.Location       = Center;
 		Island.VoxelCount     = IslandVoxels.Num();
 		Island.ReferenceVoxel = IslandVoxels[0];
 		Island.Voxels         = IslandVoxels;
@@ -1147,10 +1146,8 @@ void USparseVoxelGrid::RenderVoxels()
 		const FIntVector& Local = V.Key;
 		const float SDF = V.Value.SDFValue;
 
-		const FIntVector Global = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(ChunkCoords, Local);
-		const FVector WorldP = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(Global);
-		const FVector Center = WorldP + DebugRenderOffset;
-		const FVector VoxelCenter = Center + FVector(FVoxelConversion::LocalVoxelSize / 2.0f);
+                const FIntVector Global = FVoxelConversion::ChunkAndLocalToGlobalVoxel_MinCornerAligned(ChunkCoords, Local);
+                const FVector VoxelCenter = FVoxelConversion::GlobalVoxelToWorld(Global);
 
 		if (SDF >  0.0f) Air.Add(VoxelCenter);
 		else if (SDF < 0.0f) Solid.Add(VoxelCenter);
