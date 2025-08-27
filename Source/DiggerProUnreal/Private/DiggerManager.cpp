@@ -1906,7 +1906,8 @@ void ADiggerManager::HighlightIslandByID(const FName& IslandID)
         Transform.SetLocation(WorldPos);
         Transform.SetScale3D(Scale * 1.3f);
 
-        VoxelDebugMesh->AddInstance(Transform);
+        // Use world-space transform so highlight matches island position
+        VoxelDebugMesh->AddInstanceWorldSpace(Transform);
         DebugCount++;
     }
 
@@ -1915,7 +1916,8 @@ void ADiggerManager::HighlightIslandByID(const FName& IslandID)
     CenterTransform.SetLocation(Island->Location);
     CenterTransform.SetScale3D(FVector(3.0f));
 
-    VoxelDebugMesh->AddInstance(CenterTransform);
+    // Add island center marker using world-space transform
+    VoxelDebugMesh->AddInstanceWorldSpace(CenterTransform);
     DebugCount++;
 
     UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Island.Location debug box at: %s"), *Island->Location.ToString());
