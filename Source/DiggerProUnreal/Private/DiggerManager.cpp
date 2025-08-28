@@ -17,6 +17,8 @@
 // Mesh/StaticMesh
 #include "ProceduralMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshActor.h"
+#include "Components/StaticMeshComponent.h"
 #include "MeshDescription.h"
 #include "StaticMeshAttributes.h"
 #include "StaticMeshOperations.h"
@@ -1521,12 +1523,6 @@ void ADiggerManager::ConvertIslandToStaticMesh(const FName& IslandID, bool bEnab
         return;
     }
 
-    // Offset vertices so mesh is centered at origin
-    for (FVector& Vertex : MeshData.Vertices)
-    {
-        Vertex -= MeshData.MeshOrigin;
-    }
-
     // Save mesh as asset
     FString AssetName = FString::Printf(TEXT("Island_%s_StaticMesh"), *IslandID.ToString());
     UStaticMesh* SavedMesh = SaveIslandMeshAsStaticMesh(AssetName, MeshData);
@@ -1543,24 +1539,32 @@ void ADiggerManager::ConvertIslandToStaticMesh(const FName& IslandID, bool bEnab
     Island->Location = MeshData.MeshOrigin;
 
     AStaticMeshActor* MeshActor = GetWorld()->SpawnActor<AStaticMeshActor>(
-        AStaticMeshActor::StaticClass(),
         Island->Location,
         FRotator::ZeroRotator,
         SpawnParams
     );
 
-    if (MeshActor && MeshActor->GetStaticMeshComponent())
+    if (MeshActor)
     {
-        MeshActor->SetActorLabel(FString::Printf(TEXT("IslandActor_%s"), *IslandID.ToString()));
-        MeshActor->GetStaticMeshComponent()->SetStaticMesh(SavedMesh);
-        MeshActor->GetStaticMeshComponent()->SetMobility(EComponentMobility::Movable);
-        MeshActor->GetStaticMeshComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-        MeshActor->GetStaticMeshComponent()->SetCollisionObjectType(ECC_PhysicsBody);
-
-        if (bEnablePhysics)
+        UStaticMeshComponent* SMComp = MeshActor->GetStaticMeshComponent();
+        if (SMComp)
         {
-            MeshActor->GetStaticMeshComponent()->SetSimulatePhysics(true);
-            MeshActor->GetStaticMeshComponent()->SetEnableGravity(true);
+            MeshActor->SetActorLabel(FString::Printf(TEXT("IslandActor_%s"), *IslandID.ToString()));
+            SMComp->SetStaticMesh(SavedMesh);
+            SMComp->SetMobility(EComponentMobility::Movable);
+            SMComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+            SMComp->SetCollisionObjectType(ECC_PhysicsBody);
+            SMComp->RegisterComponent();
+            SMComp->MarkRenderStateDirty();
+
+            if (bEnablePhysics)
+            {
+                SMComp->SetSimulatePhysics(true);
+                SMComp->SetEnableGravity(true);
+            }
+
+            int32 CompCount = MeshActor->GetComponentsByClass(UStaticMeshComponent::StaticClass()).Num();
+            UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Spawned mesh actor %s with %d StaticMeshComponents"), *MeshActor->GetName(), CompCount);
         }
     }
 
@@ -1796,7 +1800,16 @@ FIslandMeshData ADiggerManager::GenerateIslandMeshFromStoredData(const FIslandDa
         Result.Normals
     );
 
-    Result.MeshOrigin = IslandWorldCenter;
+    // Recenter vertices around true mesh pivot
+    FBox BoundsBefore(Result.Vertices);
+    FVector Pivot = BoundsBefore.GetCenter();
+    for (FVector& V : Result.Vertices)
+    {
+        V -= Pivot;
+    }
+    FBox BoundsAfter(Result.Vertices);
+
+    Result.MeshOrigin = Pivot;
     Result.bValid = (Result.Vertices.Num() > 0 && Result.Triangles.Num() > 0);
 
     if (!Result.bValid)
@@ -1812,9 +1825,13 @@ FIslandMeshData ADiggerManager::GenerateIslandMeshFromStoredData(const FIslandDa
     }
     else
     {
-        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Mesh generation complete for island %s. Origin: %s | Vertices: %d | Triangles: %d"),
+        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Mesh generation complete for island %s. Pivot: %s | BoundsBefore Min %s Max %s | BoundsAfter Min %s Max %s | Vertices: %d | Triangles: %d"),
             *IslandData.IslandID.ToString(),
-            *IslandWorldCenter.ToString(),
+            *Pivot.ToString(),
+            *BoundsBefore.Min.ToString(),
+            *BoundsBefore.Max.ToString(),
+            *BoundsAfter.Min.ToString(),
+            *BoundsAfter.Max.ToString(),
             Result.Vertices.Num(),
             Result.Triangles.Num() / 3);
     }
