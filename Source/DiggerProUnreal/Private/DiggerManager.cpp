@@ -3521,7 +3521,7 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
             const FIntVector& LocalIndex = VoxelPair.Key;
             const FVoxelData& Data = VoxelPair.Value;
 
-            FIntVector GlobalIndex = FVoxelConversion::ChunkAndLocalToGlobalVoxel_MinCornerAligned(ChunkCoords, LocalIndex);
+            FIntVector GlobalIndex = FVoxelConversion::ChunkAndLocalToGlobalVoxel(ChunkCoords, LocalIndex);
 
             UnifiedVoxelData.Add(GlobalIndex, Data);
             AllPhysicalVoxelInstances.Add(FVoxelInstance(GlobalIndex, ChunkCoords, LocalIndex));

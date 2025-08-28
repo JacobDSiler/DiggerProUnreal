@@ -1100,7 +1100,7 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
 	        FVoxelInstance Instance;
         	Instance.ChunkCoords = ChunkCoords;
         	Instance.LocalVoxel = LocalVoxel;
-        	Instance.GlobalVoxel = FVoxelConversion::ChunkAndLocalToGlobalVoxel_MinCornerAligned(ChunkCoords, LocalVoxel);
+        	Instance.GlobalVoxel = FVoxelConversion::ChunkAndLocalToGlobalVoxel(ChunkCoords, LocalVoxel);
             
         	TempInstances.Add(Instance);
         	
