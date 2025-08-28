@@ -17,6 +17,8 @@
 // Mesh/StaticMesh
 #include "ProceduralMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshActor.h"
+#include "Components/StaticMeshComponent.h"
 #include "MeshDescription.h"
 #include "StaticMeshAttributes.h"
 #include "StaticMeshOperations.h"
@@ -86,7 +88,8 @@ class FDiggerEdMode;
 class MeshDescriptors;
 class StaticMeshAttributes;
 
-
+// Offset applied to all island world positions to correct misalignment
+static const FVector WORLD_ISLAND_OFFSET(-1600.f, -1600.f, -1600.f);
 
 
 static UHoleShapeLibrary* LoadDefaultHoleLibrary()
@@ -1520,12 +1523,6 @@ void ADiggerManager::ConvertIslandToStaticMesh(const FName& IslandID, bool bEnab
         return;
     }
 
-    // Offset vertices so mesh is centered at origin
-    for (FVector& Vertex : MeshData.Vertices)
-    {
-        Vertex -= MeshData.MeshOrigin;
-    }
-
     // Save mesh as asset
     FString AssetName = FString::Printf(TEXT("Island_%s_StaticMesh"), *IslandID.ToString());
     UStaticMesh* SavedMesh = SaveIslandMeshAsStaticMesh(AssetName, MeshData);
@@ -1542,24 +1539,32 @@ void ADiggerManager::ConvertIslandToStaticMesh(const FName& IslandID, bool bEnab
     Island->Location = MeshData.MeshOrigin;
 
     AStaticMeshActor* MeshActor = GetWorld()->SpawnActor<AStaticMeshActor>(
-        AStaticMeshActor::StaticClass(),
         Island->Location,
         FRotator::ZeroRotator,
         SpawnParams
     );
 
-    if (MeshActor && MeshActor->GetStaticMeshComponent())
+    if (MeshActor)
     {
-        MeshActor->SetActorLabel(FString::Printf(TEXT("IslandActor_%s"), *IslandID.ToString()));
-        MeshActor->GetStaticMeshComponent()->SetStaticMesh(SavedMesh);
-        MeshActor->GetStaticMeshComponent()->SetMobility(EComponentMobility::Movable);
-        MeshActor->GetStaticMeshComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-        MeshActor->GetStaticMeshComponent()->SetCollisionObjectType(ECC_PhysicsBody);
-
-        if (bEnablePhysics)
+        UStaticMeshComponent* SMComp = MeshActor->GetStaticMeshComponent();
+        if (SMComp)
         {
-            MeshActor->GetStaticMeshComponent()->SetSimulatePhysics(true);
-            MeshActor->GetStaticMeshComponent()->SetEnableGravity(true);
+            MeshActor->SetActorLabel(FString::Printf(TEXT("IslandActor_%s"), *IslandID.ToString()));
+            SMComp->SetStaticMesh(SavedMesh);
+            SMComp->SetMobility(EComponentMobility::Movable);
+            SMComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+            SMComp->SetCollisionObjectType(ECC_PhysicsBody);
+            SMComp->RegisterComponent();
+            SMComp->MarkRenderStateDirty();
+
+            if (bEnablePhysics)
+            {
+                SMComp->SetSimulatePhysics(true);
+                SMComp->SetEnableGravity(true);
+            }
+
+            int32 CompCount = MeshActor->GetComponentsByClass(UStaticMeshComponent::StaticClass()).Num();
+            UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Spawned mesh actor %s with %d StaticMeshComponents"), *MeshActor->GetName(), CompCount);
         }
     }
 
@@ -1719,7 +1724,7 @@ AIslandActor* ADiggerManager::SpawnIslandActorWithMeshData(
         TArray<FVector> LocalVertices = MeshData.Vertices;
         for (FVector& Vertex : LocalVertices)
         {
-            Vertex -= SpawnLocation * 2;
+            Vertex -= SpawnLocation;
         }
 
         IslandActor->ProcMesh->CreateMeshSection_LinearColor(
@@ -1784,6 +1789,7 @@ FIslandMeshData ADiggerManager::GenerateIslandMeshFromStoredData(const FIslandDa
         IslandWorldCenter += FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel);
     }
     IslandWorldCenter /= InstanceCount;
+    IslandWorldCenter += WORLD_ISLAND_OFFSET;
 
     MarchingCubes->GenerateMeshFromGrid(
         ExtractedGrid,
@@ -1794,7 +1800,16 @@ FIslandMeshData ADiggerManager::GenerateIslandMeshFromStoredData(const FIslandDa
         Result.Normals
     );
 
-    Result.MeshOrigin = IslandWorldCenter;
+    // Recenter vertices around true mesh pivot
+    FBox BoundsBefore(Result.Vertices);
+    FVector Pivot = BoundsBefore.GetCenter();
+    for (FVector& V : Result.Vertices)
+    {
+        V -= Pivot;
+    }
+    FBox BoundsAfter(Result.Vertices);
+
+    Result.MeshOrigin = Pivot;
     Result.bValid = (Result.Vertices.Num() > 0 && Result.Triangles.Num() > 0);
 
     if (!Result.bValid)
@@ -1804,15 +1819,19 @@ FIslandMeshData ADiggerManager::GenerateIslandMeshFromStoredData(const FIslandDa
 
         for (const auto& Pair : IslandData.VoxelDataMap)
         {
-            FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Pair.Key);
+            FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Pair.Key) + WORLD_ISLAND_OFFSET;
             DrawDebugBox(GetWorld(), WorldPos, FVector(VoxelSize * 0.5f), FColor::Red, false, 10.0f);
         }
     }
     else
     {
-        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Mesh generation complete for island %s. Origin: %s | Vertices: %d | Triangles: %d"),
+        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Mesh generation complete for island %s. Pivot: %s | BoundsBefore Min %s Max %s | BoundsAfter Min %s Max %s | Vertices: %d | Triangles: %d"),
             *IslandData.IslandID.ToString(),
-            *IslandWorldCenter.ToString(),
+            *Pivot.ToString(),
+            *BoundsBefore.Min.ToString(),
+            *BoundsBefore.Max.ToString(),
+            *BoundsAfter.Min.ToString(),
+            *BoundsAfter.Max.ToString(),
             Result.Vertices.Num(),
             Result.Triangles.Num() / 3);
     }
@@ -1890,8 +1909,8 @@ void ADiggerManager::HighlightIslandByID(const FName& IslandID)
     int32 DebugCount = 0;
     for (const FVoxelInstance& Instance : Island->VoxelInstances)
     {
-        // ✅ Use global voxel position for world alignment
-        FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel);
+        // ✅ Use global voxel position for world alignment and apply world offset
+        FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel) + WORLD_ISLAND_OFFSET;
 
         if (DebugCount < 3)
         {
@@ -1906,7 +1925,8 @@ void ADiggerManager::HighlightIslandByID(const FName& IslandID)
         Transform.SetLocation(WorldPos);
         Transform.SetScale3D(Scale * 1.3f);
 
-        VoxelDebugMesh->AddInstance(Transform);
+        // Use world-space transform so highlight matches island position
+        VoxelDebugMesh->AddInstanceWorldSpace(Transform);
         DebugCount++;
     }
 
@@ -1915,7 +1935,8 @@ void ADiggerManager::HighlightIslandByID(const FName& IslandID)
     CenterTransform.SetLocation(Island->Location);
     CenterTransform.SetScale3D(FVector(3.0f));
 
-    VoxelDebugMesh->AddInstance(CenterTransform);
+    // Add island center marker using world-space transform
+    VoxelDebugMesh->AddInstanceWorldSpace(CenterTransform);
     DebugCount++;
 
     UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Island.Location debug box at: %s"), *Island->Location.ToString());
@@ -3539,7 +3560,7 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
         EnhancedIsland.IslandID = FName(*FString::Printf(TEXT("Island_%s"), *Hash));
         EnhancedIsland.IslandName = FString::Printf(TEXT("Island %d"), FinalIslands.Num());
         EnhancedIsland.PersistentUID = FGuid::NewGuid();
-        EnhancedIsland.Location = DedupIsland.Location;
+        EnhancedIsland.Location = DedupIsland.Location + WORLD_ISLAND_OFFSET;
         EnhancedIsland.ReferenceVoxel = DedupIsland.ReferenceVoxel;
 
         TSet<FIntVector> IslandGlobalVoxels(DedupIsland.Voxels);
