@@ -86,7 +86,8 @@ class FDiggerEdMode;
 class MeshDescriptors;
 class StaticMeshAttributes;
 
-
+// Offset applied to all island world positions to correct misalignment
+static const FVector WORLD_ISLAND_OFFSET(-1600.f, -1600.f, -1600.f);
 
 
 static UHoleShapeLibrary* LoadDefaultHoleLibrary()
@@ -1719,7 +1720,7 @@ AIslandActor* ADiggerManager::SpawnIslandActorWithMeshData(
         TArray<FVector> LocalVertices = MeshData.Vertices;
         for (FVector& Vertex : LocalVertices)
         {
-            Vertex -= SpawnLocation * 2;
+            Vertex -= SpawnLocation;
         }
 
         IslandActor->ProcMesh->CreateMeshSection_LinearColor(
@@ -1784,6 +1785,7 @@ FIslandMeshData ADiggerManager::GenerateIslandMeshFromStoredData(const FIslandDa
         IslandWorldCenter += FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel);
     }
     IslandWorldCenter /= InstanceCount;
+    IslandWorldCenter += WORLD_ISLAND_OFFSET;
 
     MarchingCubes->GenerateMeshFromGrid(
         ExtractedGrid,
@@ -1804,7 +1806,7 @@ FIslandMeshData ADiggerManager::GenerateIslandMeshFromStoredData(const FIslandDa
 
         for (const auto& Pair : IslandData.VoxelDataMap)
         {
-            FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Pair.Key);
+            FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Pair.Key) + WORLD_ISLAND_OFFSET;
             DrawDebugBox(GetWorld(), WorldPos, FVector(VoxelSize * 0.5f), FColor::Red, false, 10.0f);
         }
     }
@@ -1890,8 +1892,8 @@ void ADiggerManager::HighlightIslandByID(const FName& IslandID)
     int32 DebugCount = 0;
     for (const FVoxelInstance& Instance : Island->VoxelInstances)
     {
-        // ✅ Use global voxel position for world alignment
-        FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel);
+        // ✅ Use global voxel position for world alignment and apply world offset
+        FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel) + WORLD_ISLAND_OFFSET;
 
         if (DebugCount < 3)
         {
@@ -3541,7 +3543,7 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
         EnhancedIsland.IslandID = FName(*FString::Printf(TEXT("Island_%s"), *Hash));
         EnhancedIsland.IslandName = FString::Printf(TEXT("Island %d"), FinalIslands.Num());
         EnhancedIsland.PersistentUID = FGuid::NewGuid();
-        EnhancedIsland.Location = DedupIsland.Location;
+        EnhancedIsland.Location = DedupIsland.Location + WORLD_ISLAND_OFFSET;
         EnhancedIsland.ReferenceVoxel = DedupIsland.ReferenceVoxel;
 
         TSet<FIntVector> IslandGlobalVoxels(DedupIsland.Voxels);
