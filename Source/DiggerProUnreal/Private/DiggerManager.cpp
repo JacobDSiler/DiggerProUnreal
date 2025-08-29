@@ -88,8 +88,6 @@ class FDiggerEdMode;
 class MeshDescriptors;
 class StaticMeshAttributes;
 
-// Offset applied to all island world positions to correct misalignment
-static const FVector WORLD_ISLAND_OFFSET(-1600.f, -1600.f, -1600.f);
 
 
 static UHoleShapeLibrary* LoadDefaultHoleLibrary()
@@ -1720,16 +1718,10 @@ AIslandActor* ADiggerManager::SpawnIslandActorWithMeshData(
 
     if (IslandActor && IslandActor->ProcMesh)
     {
-        // Offset mesh vertices relative to actor origin
-        TArray<FVector> LocalVertices = MeshData.Vertices;
-        for (FVector& Vertex : LocalVertices)
-        {
-            Vertex -= SpawnLocation;
-        }
 
         IslandActor->ProcMesh->CreateMeshSection_LinearColor(
             0,
-            LocalVertices,
+            MeshData.Vertices,
             MeshData.Triangles,
             MeshData.Normals,
             {}, {}, {}, true
@@ -1909,8 +1901,9 @@ void ADiggerManager::HighlightIslandByID(const FName& IslandID)
     int32 DebugCount = 0;
     for (const FVoxelInstance& Instance : Island->VoxelInstances)
     {
-        // ✅ Use global voxel position for world alignment and apply world offset
-        FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel) + WORLD_ISLAND_OFFSET;
+
+        // Use global voxel position for world alignment
+        FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel);
 
         if (DebugCount < 3)
         {
