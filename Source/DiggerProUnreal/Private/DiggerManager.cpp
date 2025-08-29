@@ -78,6 +78,11 @@
 #include "Components/DirectionalLightComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SpotLightComponent.h"
+#include "DiggerProUnreal/Materials/DiggerMaterialTypes.h"
+#include "Materials/MaterialInstanceDynamic.h"
+
+// Digger Material Manager
+
 
 class ADynamicLightActor;
 class Editor;
@@ -116,6 +121,134 @@ static UHoleShapeLibrary* CreateTransientHoleLibrary()
 }
 
 
+// Digger Material Management
+void ADiggerManager::SetTargetRenderComponent(UPrimitiveComponent* InComponent, int32 InMaterialElementIndex)
+{
+    TargetRenderComponent = InComponent;
+    MaterialElementIndex = InMaterialElementIndex;
+}
+
+void ADiggerManager::ApplyMaterialProfile(UDiggerMaterialProfile* Profile)
+{
+    if (!TargetRenderComponent.IsValid())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Digger] ApplyMaterialProfile: No TargetRenderComponent set."));
+        return;
+    }
+
+    ApplyMaterialProfileToComponent(Profile, TargetRenderComponent.Get(), MaterialElementIndex);
+}
+
+void ADiggerManager::ApplyMaterialProfileToComponent(UDiggerMaterialProfile* Profile, UPrimitiveComponent* TargetComponent, int32 ElementIndex)
+{
+    if (!Profile || !TargetComponent)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Digger] ApplyMaterialProfileToComponent: Invalid args (Profile:%p, Target:%p)"), Profile, TargetComponent);
+        return;
+    }
+
+    UMaterialInstanceDynamic* MID = GetOrCreateMID(TargetComponent, ElementIndex);
+    if (!MID)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Digger] ApplyMaterialProfileToComponent: Failed to create/find MID."));
+        return;
+    }
+
+    PushProfileParamsToMID(Profile, MID, /*MaxLayers*/ 12);
+}
+
+/** Helper: load/cached master, create or fetch MID bound to TargetComponent + ElementIndex. */
+UMaterialInstanceDynamic* ADiggerManager::GetOrCreateMID(UPrimitiveComponent* TargetComponent, int32 ElementIndex)
+{
+    if (!TargetComponent) return nullptr;
+
+    // If we already have a MID cached for this component, reuse it.
+    if (TObjectPtr<UMaterialInstanceDynamic>* Found = MIDCache.Find(TargetComponent))
+    {
+        return Found->Get(); // returns UMaterialInstanceDynamic*
+    }
+
+    // Resolve master material
+    UMaterialInterface* Master =
+        MasterMaterial.IsValid() ? MasterMaterial.Get()
+                                 : (MasterMaterial.IsNull() ? nullptr : MasterMaterial.LoadSynchronous());
+
+    if (!Master)
+    {
+        // Fallback to the component’s current material
+        Master = TargetComponent->GetMaterial(ElementIndex);
+    }
+    if (!Master) return nullptr;
+
+    // Create & assign MID
+    UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Master, this);
+    if (!MID) return nullptr;
+
+    TargetComponent->SetMaterial(ElementIndex, MID);
+    MIDCache.Add(TargetComponent, MID);
+    return MID;
+}
+
+
+/** Build param name: "Layer{N}_Suffix" with N being 1-based layer index. */
+FName ADiggerManager::LayerParam(const int32 LayerOneBased, const TCHAR* Suffix)
+{
+    // Example: Layer3_BaseColor, Layer5_Enabled
+    FString Name = FString::Printf(TEXT("Layer%d_%s"), LayerOneBased, Suffix);
+    return FName(*Name);
+}
+
+
+/** Push all parameters from the profile into the MID, clamping extra layers off. */
+void ADiggerManager::PushProfileParamsToMID(UDiggerMaterialProfile* Profile, UMaterialInstanceDynamic* MID, int32 MaxLayers)
+{
+    if (!Profile || !MID) return;
+
+    // Global toggles
+    MID->SetScalarParameterValue(TEXT("UseTriplanar"), Profile->bUseTriplanar ? 1.0f : 0.0f);
+
+    const int32 Used = FMath::Min(MaxLayers, Profile->Layers.Num());
+
+    // Enable configured layers
+    for (int32 i = 0; i < Used; ++i)
+    {
+        const int32 L1 = i + 1;
+        const FDiggerLayerParams& L = Profile->Layers[i];
+
+        MID->SetScalarParameterValue(LayerParam(L1, TEXT("Enabled")), L.bEnabled ? 1.0f : 0.0f);
+
+        if (L.TextureSet.IsValid())
+        {
+            if (UTexture2D* BC = L.TextureSet->BaseColor.LoadSynchronous())
+            {
+                MID->SetTextureParameterValue(LayerParam(L1, TEXT("BaseColor")), BC);
+            }
+            if (UTexture2D* N = L.TextureSet->Normal.LoadSynchronous())
+            {
+                MID->SetTextureParameterValue(LayerParam(L1, TEXT("Normal")), N);
+            }
+            if (UTexture2D* ORM = L.TextureSet->ORM.LoadSynchronous())
+            {
+                MID->SetTextureParameterValue(LayerParam(L1, TEXT("ORM")), ORM);
+            }
+        }
+
+        MID->SetScalarParameterValue(LayerParam(L1, TEXT("Tiling")),        L.Tiling);
+        MID->SetScalarParameterValue(LayerParam(L1, TEXT("MinHeight")),     L.MinHeight);
+        MID->SetScalarParameterValue(LayerParam(L1, TEXT("MaxHeight")),     L.MaxHeight);
+        MID->SetScalarParameterValue(LayerParam(L1, TEXT("NoiseAmp")),      L.NoiseAmplitude);
+        MID->SetScalarParameterValue(LayerParam(L1, TEXT("NoiseFreq")),     L.NoiseFrequency);
+        MID->SetScalarParameterValue(LayerParam(L1, TEXT("EdgeSharpness")), L.EdgeSharpness);
+        MID->SetScalarParameterValue(LayerParam(L1, TEXT("Seed")),          L.Seed);
+    }
+
+    // Explicitly disable any remaining layers up to MaxLayers (avoids old values lingering)
+    for (int32 i = Used; i < MaxLayers; ++i)
+    {
+        const int32 L1 = i + 1;
+        MID->SetScalarParameterValue(LayerParam(L1, TEXT("Enabled")), 0.0f);
+    }
+}
 
 
 //New Multi Save Files System

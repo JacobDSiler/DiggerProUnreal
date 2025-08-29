@@ -31,7 +31,6 @@
 #include "VoxelBrushTypes.h"
 
 
-
 #include "DiggerManager.generated.h"
 
 
@@ -212,7 +211,8 @@ public:
 
     // NEW (stub): will be broadcast once after routing a brush across chunks
     FOnBrushFinished OnBrushFinished;
-    
+
+
     void SpawnLight(const FBrushStroke& Stroke);
     void InitializeBrushShapes();
     UVoxelBrushShape* GetActiveBrushShape(EVoxelBrushType BrushType) const;
@@ -230,6 +230,45 @@ public:
 
     TArray<FIslandData> DetectUnifiedIslands();
     void RemoveUnifiedIslandVoxels(const FIslandData& Island);
+
+
+    
+    UFUNCTION(BlueprintCallable, Category="Digger|Materials")
+    void ApplyMaterialProfileToComponent(UDiggerMaterialProfile* Profile, UPrimitiveComponent* TargetComponent, int32 ElementIndex);
+
+    // (Optionally keep a convenience wrapper for your default component)
+    UFUNCTION(BlueprintCallable, Category="Digger|Materials")
+    void ApplyMaterialProfile(UDiggerMaterialProfile* Profile);
+
+    /** Optionally expose this so the editor UI can set which component to target by default. */
+    UFUNCTION(BlueprintCallable, Category="Digger|Materials")
+    void SetTargetRenderComponent(UPrimitiveComponent* InComponent, int32 InMaterialElementIndex = 0);
+
+protected:
+    /** Master material to instance at runtime. This must point at your M_SedimentMaster. */
+    UPROPERTY(EditAnywhere, Category="Digger|Materials")
+    TSoftObjectPtr<UMaterialInterface> MasterMaterial;
+
+    /** Default component to receive the MID (your voxel mesh, landscape proxy, etc.). */
+    UPROPERTY(VisibleAnywhere, Category="Digger|Materials")
+    TWeakObjectPtr<UPrimitiveComponent> TargetRenderComponent;
+
+    /** Which material slot on the component to use. */
+    UPROPERTY(EditAnywhere, Category="Digger|Materials")
+    int32 MaterialElementIndex = 0;
+
+    /** Cached MID per (component, element). This avoids recreating every call. */
+    UPROPERTY(Transient)
+    TMap<TWeakObjectPtr<UPrimitiveComponent>, TObjectPtr<UMaterialInstanceDynamic>> MIDCache;
+
+
+
+private:
+    UMaterialInstanceDynamic* GetOrCreateMID(UPrimitiveComponent* TargetComponent, int32 ElementIndex);
+    static FName LayerParam(int32 LayerOneBased, const TCHAR* Suffix);
+    void PushProfileParamsToMID(UDiggerMaterialProfile* Profile, UMaterialInstanceDynamic* MID, int32 MaxLayers = 12);
+
+public:
 
     FCriticalSection UpdateChunksCriticalSection;
 

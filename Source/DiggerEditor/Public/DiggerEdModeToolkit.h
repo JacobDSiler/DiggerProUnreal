@@ -15,7 +15,9 @@
 #include "FLightBrushTypes.h"
 #include "SocketIOLobbyManager.h"   
 #include "Widgets/Layout/SSeparator.h"
+#include "DiggerProUnreal/Materials/DiggerMaterialTypes.h" 
 #include "DiggerEdModeToolkit.generated.h" // This MUST be the last include
+
 
 
 
@@ -123,7 +125,7 @@ private:
 	int32 CurrentActiveUsers = 0;          // From runtime check if you have one
 	FString LicenseEmail;
 	FString LicenseKey;
-
+	
 
 
 	// UI builders/handlers
@@ -138,6 +140,28 @@ private:
 	void SaveLicenseToConfig() const;
 	void ApplyTierCapsFromLicense();
 
+	// ——— Material Manager ———
+
+	TWeakObjectPtr<UDiggerMaterialProfile> ActiveMaterialProfile;
+
+	// UI helpers
+	TSharedRef<SWidget> MakeDMMHeaderRow();
+	TSharedRef<SWidget> MakeDMMBody();
+	TSharedRef<SWidget> MakeLayerListHeader();
+	TSharedRef<SWidget> MakeLayerListBody();
+
+	// Actions
+	FReply OnDMMHeaderClicked();
+	FReply OnAddLayerClicked();
+	FReply OnRemoveLayerClicked(int32 LayerIndex);
+	FReply OnMoveLayerUpClicked(int32 LayerIndex);
+	FReply OnMoveLayerDownClicked(int32 LayerIndex);
+	FReply OnQuickApplyClicked();
+
+	// Data ops
+	void EnsureActiveProfile();
+	UDiggerMaterialProfile* GetMutableProfile() const;
+	
 	// ── Navigation UI State ──
 
 	FEditorViewportClient*  CachedViewportClient = nullptr;
@@ -454,6 +478,7 @@ private:
 	ADiggerManager* GetDiggerManager();
 //SubSubSections
 	TSharedRef<SWidget> MakeIslandGridWidget();
+	TSharedRef<SWidget> MakeMaterialManagerSection();
 	TSharedRef<SWidget> MakeDebugCheckbox(const FString& Label, bool* FlagPtr);
 	TSharedRef<SWidget> MakeAngleButton(float Angle, float& Target, const FString& Label);
     TSharedRef<SWidget> MakeAngleButton(double Angle, double& Target, const FString& Label);
@@ -706,8 +731,9 @@ private:
 	
 	// Collapsible Menu Bools
 
-	
-	bool bShowBrushShapeSection = false; // Add to FDiggerEdModeToolkit
+
+	bool bShowMaterialManagerSection = true;
+	bool bShowBrushShapeSection = false; 
 	bool bShowProcgenArcanaImporter = false;
 	bool bShowSaveLoadSection = false;
 	bool bShowLobbySection = false;

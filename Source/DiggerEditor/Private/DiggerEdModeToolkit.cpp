@@ -90,6 +90,9 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Widgets/Notifications/SProgressBar.h"
 #include "Widgets/Text/STextBlock.h"
+// Digger Material Manager
+#include "DiggerProUnreal/Materials/DiggerMaterialTypes.h"
+#include "Selection.h"
 
 #define LOCTEXT_NAMESPACE "FDiggerEdModeToolkit"
 
@@ -145,8 +148,15 @@ FDiggerEdModeToolkit::FDiggerEdModeToolkit()
     RebuildCustomBrushGrid();
 }
 
-// FDiggerEdModeToolkit::Init
 
+void FDiggerEdModeToolkit::EnsureActiveProfile()
+{
+    // if (!ActiveMaterialProfile.IsValid())
+    {
+        // TODO: You can auto-select a default asset here by path, or leave null.
+        // For now, do nothing. The UI will show a hint.
+    }
+}
 
 void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
 {
@@ -194,7 +204,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     [
         SNew(SExpandableArea)
         .AreaTitle(FText::FromString(TEXT("── Brush Tools ──")))
-        .InitiallyCollapsed(false)
+        .InitiallyCollapsed(true) // TODO: make the open/closed menu states persist accross sessions optionallly for the user.
         .BodyContent()
         [
             SNew(SVerticalBox)
@@ -230,6 +240,10 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             [
                 MakeIslandsSection()
             ]
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+            [
+                MakeMaterialManagerSection()
+            ]
         ]
     ]
 
@@ -258,7 +272,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         [
             SNew(SExpandableArea)
             .AreaTitle(FText::FromString(TEXT("── Export & Data ──")))
-            .InitiallyCollapsed(false)
+            .InitiallyCollapsed(true)
             .BodyContent()
             [
                 SNew(SVerticalBox)
@@ -389,6 +403,274 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
 }
 
 
+// Digger Material Manager
+
+UDiggerMaterialProfile* FDiggerEdModeToolkit::GetMutableProfile() const
+{
+    return ActiveMaterialProfile.Get();
+}
+
+FReply FDiggerEdModeToolkit::OnDMMHeaderClicked()
+{
+    bShowMaterialManagerSection = !bShowMaterialManagerSection;
+    return FReply::Handled();
+}
+
+FReply FDiggerEdModeToolkit::OnAddLayerClicked()
+{
+    if (UDiggerMaterialProfile* P = GetMutableProfile())
+    {
+        P->Modify();
+        P->Layers.AddDefaulted();
+        return FReply::Handled();
+    }
+    return FReply::Unhandled();
+}
+
+FReply FDiggerEdModeToolkit::OnRemoveLayerClicked(int32 LayerIndex)
+{
+    if (UDiggerMaterialProfile* P = GetMutableProfile())
+    {
+        if (P->Layers.IsValidIndex(LayerIndex))
+        {
+            P->Modify();
+            P->Layers.RemoveAt(LayerIndex);
+            return FReply::Handled();
+        }
+    }
+    return FReply::Unhandled();
+}
+
+FReply FDiggerEdModeToolkit::OnMoveLayerUpClicked(int32 LayerIndex)
+{
+    if (UDiggerMaterialProfile* P = GetMutableProfile())
+    {
+        if (P->Layers.IsValidIndex(LayerIndex) && LayerIndex > 0)
+        {
+            P->Modify();
+            P->Layers.Swap(LayerIndex, LayerIndex - 1);
+            return FReply::Handled();
+        }
+    }
+    return FReply::Unhandled();
+}
+
+FReply FDiggerEdModeToolkit::OnMoveLayerDownClicked(int32 LayerIndex)
+{
+    if (UDiggerMaterialProfile* P = GetMutableProfile())
+    {
+        if (P->Layers.IsValidIndex(LayerIndex) && LayerIndex < P->Layers.Num() - 1)
+        {
+            P->Modify();
+            P->Layers.Swap(LayerIndex, LayerIndex + 1);
+            return FReply::Handled();
+        }
+    }
+    return FReply::Unhandled();
+}
+
+FReply FDiggerEdModeToolkit::OnQuickApplyClicked()
+{
+    // TODO: find your ADiggerManager in-world or via selection
+    UDiggerMaterialProfile* Profile = GetMutableProfile();
+    if (!Profile) return FReply::Unhandled();
+
+    // Example: apply to a selected ADiggerManager
+    if (GEditor)
+    {
+        for (FSelectionIterator It(GEditor->GetSelectedActorIterator()); It; ++It)
+        {
+            if (ADiggerManager* DM = Cast<ADiggerManager>(*It))
+            {
+                DM->ApplyMaterialProfile(Profile);
+                break;
+            }
+        }
+    }
+    return FReply::Handled();
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDMMHeaderRow()
+{
+    return SNew(SButton)
+        .OnClicked(this, &FDiggerEdModeToolkit::OnDMMHeaderClicked)
+        [
+            SNew(STextBlock)
+            .Text_Lambda([this]()
+            {
+                return FText::FromString(
+                    bShowMaterialManagerSection
+                    ? TEXT("▼ Digger Material Manager")
+                    : TEXT("► Digger Material Manager")
+                );
+            })
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+        ];
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeLayerListHeader()
+{
+    return SNew(SHorizontalBox)
+    + SHorizontalBox::Slot().AutoWidth().Padding(2)
+    [
+        SNew(SButton)
+        .Text(LOCTEXT("DMM_AddLayer", "Add Layer"))
+        .OnClicked(this, &FDiggerEdModeToolkit::OnAddLayerClicked)
+    ]
+    + SHorizontalBox::Slot().AutoWidth().Padding(2)
+    [
+        SNew(SButton)
+        .Text(LOCTEXT("DMM_QuickApply", "Quick-Apply to Selection"))
+        .OnClicked(this, &FDiggerEdModeToolkit::OnQuickApplyClicked)
+        .ToolTipText(LOCTEXT("DMM_QuickApply_TT", "Apply the active profile to the selected Digger Manager"))
+    ];
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeLayerListBody()
+{
+    EnsureActiveProfile();
+
+    UDiggerMaterialProfile* Profile = GetMutableProfile();
+
+    if (!Profile)
+    {
+        return SNew(STextBlock)
+            .Text(LOCTEXT("DMM_NoProfile", "No Material Profile selected.\n(TODO: Add profile picker here)"));
+    }
+
+    TSharedRef<SVerticalBox> VBox = SNew(SVerticalBox);
+
+    // Profile mode toggle (read-only label for now)
+    VBox->AddSlot().AutoHeight().Padding(2)
+    [
+        SNew(STextBlock)
+        .Text(FText::FromString(
+            Profile->Mode == EDiggerMaterialMode::VolumetricMeshes
+            ? TEXT("Mode: Volumetric Meshes")
+            : TEXT("Mode: Landscape Blend")))
+    ];
+
+    // Layers
+    for (int32 i = 0; i < Profile->Layers.Num(); ++i)
+    {
+        FDiggerLayerParams& L = Profile->Layers[i];
+
+        VBox->AddSlot().AutoHeight().Padding(2)
+        [
+            SNew(SBorder)
+            .Padding(FMargin(6))
+            [
+                SNew(SVerticalBox)
+
+                // Row: enable, name, move/remove
+                + SVerticalBox::Slot().AutoHeight().Padding(0,2)
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot().AutoWidth().Padding(2)
+                    [
+                        SNew(SCheckBox)
+                        .IsChecked_Lambda([&L]() { return L.bEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+                        .OnCheckStateChanged_Lambda([&L](ECheckBoxState State)
+                        {
+                            L.bEnabled = (State == ECheckBoxState::Checked);
+                        })
+                        .Content()
+                        [
+                            SNew(STextBlock).Text(FText::FromString(TEXT("Enabled")))
+                        ]
+                    ]
+                    + SHorizontalBox::Slot().FillWidth(1.0f).Padding(2)
+                    [
+                        SNew(SEditableTextBox)
+                        .Text_Lambda([&L]() { return FText::FromString(L.LayerName); })
+                        .OnTextCommitted_Lambda([&L](const FText& NewText, ETextCommit::Type)
+                        {
+                            L.LayerName = NewText.ToString();
+                        })
+                    ]
+                    + SHorizontalBox::Slot().AutoWidth().Padding(2)
+                    [
+                        SNew(SButton)
+                        .Text(FText::FromString(TEXT("▲")))
+                        .OnClicked_Lambda([this, i]()
+                        {
+                            return OnMoveLayerUpClicked(i);
+                        })
+                    ]
+                    + SHorizontalBox::Slot().AutoWidth().Padding(2)
+                    [
+                        SNew(SButton)
+                        .Text(FText::FromString(TEXT("▼")))
+                        .OnClicked_Lambda([this, i]()
+                        {
+                            return OnMoveLayerDownClicked(i);
+                        })
+                    ]
+                    + SHorizontalBox::Slot().AutoWidth().Padding(2)
+                    [
+                        SNew(SButton)
+                        .Text(FText::FromString(TEXT("Remove")))
+                        .OnClicked_Lambda([this, i]()
+                        {
+                            return OnRemoveLayerClicked(i);
+                        })
+                    ]
+                ]
+
+                // TODO: Texture set picker (object picker widget) and scalar params
+                + SVerticalBox::Slot().AutoHeight().Padding(0,4)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("(TextureSet picker + parameters scaffold here)")))
+                ]
+            ]
+        ];
+    }
+
+    return VBox;
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDMMBody()
+{
+    return SNew(SVerticalBox)
+
+    + SVerticalBox::Slot().AutoHeight().Padding(8,4)
+    [
+        MakeLayerListHeader()
+    ]
+
+    + SVerticalBox::Slot().AutoHeight().Padding(8,4)
+    [
+        MakeLayerListBody()
+    ];
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeMaterialManagerSection()
+{
+    return SNew(SVerticalBox)
+
+    // Header Button (Fold/Unfold)
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        MakeDMMHeaderRow()
+    ]
+
+    // Collapsible Section
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SVerticalBox)
+        .Visibility_Lambda([this]()
+        {
+            return bShowMaterialManagerSection ? EVisibility::Visible : EVisibility::Collapsed;
+        })
+
+        // MAIN BODY
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            MakeDMMBody()
+        ]
+    ];
+}
 
 
 
