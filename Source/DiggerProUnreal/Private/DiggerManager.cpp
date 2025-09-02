@@ -17,8 +17,6 @@
 // Mesh/StaticMesh
 #include "ProceduralMeshComponent.h"
 #include "Engine/StaticMesh.h"
-#include "Engine/StaticMeshActor.h"
-#include "Components/StaticMeshComponent.h"
 #include "MeshDescription.h"
 #include "StaticMeshAttributes.h"
 #include "StaticMeshOperations.h"
@@ -88,6 +86,8 @@ class FDiggerEdMode;
 class MeshDescriptors;
 class StaticMeshAttributes;
 
+// Offset applied to all island world positions to correct misalignment
+static const FVector WORLD_ISLAND_OFFSET(-1600.f, -1600.f, -1600.f);
 
 
 static UHoleShapeLibrary* LoadDefaultHoleLibrary()
@@ -1510,10 +1510,11 @@ void ADiggerManager::ConvertIslandToStaticMesh(const FName& IslandID, bool bEnab
     FIslandData* Island = FindIsland(IslandID);
     if (!Island)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] ConvertIslandToStaticMesh: Island ID %s not found."), *IslandID.ToString());
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] ConvertIslandToStaticMesh: Island %s not found."), *IslandID.ToString());
         return;
     }
 
+    // 1) Generate: verts are LOCAL around 0; MeshOrigin is WORLD center
     FIslandMeshData MeshData = GenerateIslandMeshFromStoredData(*Island);
     if (!MeshData.bValid)
     {
@@ -1521,8 +1522,8 @@ void ADiggerManager::ConvertIslandToStaticMesh(const FName& IslandID, bool bEnab
         return;
     }
 
-    // Save mesh as asset
-    FString AssetName = FString::Printf(TEXT("Island_%s_StaticMesh"), *IslandID.ToString());
+    // 2) Save to static mesh asset
+    const FString AssetName = FString::Printf(TEXT("Island_%s_StaticMesh"), *IslandID.ToString());
     UStaticMesh* SavedMesh = SaveIslandMeshAsStaticMesh(AssetName, MeshData);
     if (!SavedMesh)
     {
@@ -1530,45 +1531,48 @@ void ADiggerManager::ConvertIslandToStaticMesh(const FName& IslandID, bool bEnab
         return;
     }
 
-    // Spawn static mesh actor
+    // 3) Spawn exactly one StaticMeshActor at world origin = MeshOrigin
     FActorSpawnParameters SpawnParams;
     SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
     Island->Location = MeshData.MeshOrigin;
 
     AStaticMeshActor* MeshActor = GetWorld()->SpawnActor<AStaticMeshActor>(
+        AStaticMeshActor::StaticClass(),
         Island->Location,
         FRotator::ZeroRotator,
         SpawnParams
     );
 
-    if (MeshActor)
+    if (!MeshActor)
     {
-        UStaticMeshComponent* SMComp = MeshActor->GetStaticMeshComponent();
-        if (SMComp)
+        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] Failed to spawn StaticMeshActor for island %s"),
+            *IslandID.ToString());
+        return;
+    }
+
+    UStaticMeshComponent* SMC = MeshActor->GetStaticMeshComponent();
+    if (SMC)
+    {
+        MeshActor->SetActorLabel(FString::Printf(TEXT("IslandActor_%s"), *IslandID.ToString()));
+        SMC->SetStaticMesh(SavedMesh);
+        SMC->SetMobility(EComponentMobility::Movable);
+        SMC->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+        SMC->SetCollisionObjectType(ECC_PhysicsBody);
+        SMC->MarkRenderStateDirty();
+
+        if (bEnablePhysics)
         {
-            MeshActor->SetActorLabel(FString::Printf(TEXT("IslandActor_%s"), *IslandID.ToString()));
-            SMComp->SetStaticMesh(SavedMesh);
-            SMComp->SetMobility(EComponentMobility::Movable);
-            SMComp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-            SMComp->SetCollisionObjectType(ECC_PhysicsBody);
-            SMComp->RegisterComponent();
-            SMComp->MarkRenderStateDirty();
-
-            if (bEnablePhysics)
-            {
-                SMComp->SetSimulatePhysics(true);
-                SMComp->SetEnableGravity(true);
-            }
-
-            int32 CompCount = MeshActor->GetComponentsByClass(UStaticMeshComponent::StaticClass()).Num();
-            UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Spawned mesh actor %s with %d StaticMeshComponents"), *MeshActor->GetName(), CompCount);
+            SMC->SetSimulatePhysics(true);
+            SMC->SetEnableGravity(true);
+            SMC->RecreatePhysicsState();
         }
     }
 
-    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Spawned static mesh actor for island %s at location %s"),
+    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Spawned StaticMeshActor for island %s at %s"),
         *IslandID.ToString(), *Island->Location.ToString());
 }
+
 
 
 void ADiggerManager::UpdateAllDirtyChunks()
@@ -1718,10 +1722,16 @@ AIslandActor* ADiggerManager::SpawnIslandActorWithMeshData(
 
     if (IslandActor && IslandActor->ProcMesh)
     {
+        // Offset mesh vertices relative to actor origin
+        TArray<FVector> LocalVertices = MeshData.Vertices;
+        for (FVector& Vertex : LocalVertices)
+        {
+            Vertex -= SpawnLocation;
+        }
 
         IslandActor->ProcMesh->CreateMeshSection_LinearColor(
             0,
-            MeshData.Vertices,
+            LocalVertices,
             MeshData.Triangles,
             MeshData.Normals,
             {}, {}, {}, true
@@ -1747,6 +1757,32 @@ AIslandActor* ADiggerManager::SpawnIslandActorWithMeshData(
 }
 
 
+static void Debug_IslandSDFStats(const FIslandData& Island)
+{
+    int32 Neg=0, Pos=0, Zer=0;
+    float MinS=FLT_MAX, MaxS=-FLT_MAX;
+
+    FIntVector MinI(INT_MAX), MaxI(INT_MIN);
+
+    int32 n = 0;
+    for (const auto& Pair : Island.VoxelDataMap)
+    {
+        const FIntVector G = Pair.Key;
+        const float S = Pair.Value.SDFValue;
+        MinS = FMath::Min(MinS, S);
+        MaxS = FMath::Max(MaxS, S);
+        if (S < 0) ++Neg; else if (S > 0) ++Pos; else ++Zer;
+
+        MinI.X = FMath::Min(MinI.X, G.X); MinI.Y = FMath::Min(MinI.Y, G.Y); MinI.Z = FMath::Min(MinI.Z, G.Z);
+        MaxI.X = FMath::Max(MaxI.X, G.X); MaxI.Y = FMath::Max(MaxI.Y, G.Y); MaxI.Z = FMath::Max(MaxI.Z, G.Z);
+
+        if (++n <= 5)
+            UE_LOG(LogTemp, Warning, TEXT("[IslandSDF] Sample G:%s S:%.3f"), *G.ToString(), S);
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("[IslandSDF] Count:%d Neg:%d Pos:%d Zer:%d  Range[%.3f..%.3f]  GMin:%s GMax:%s"),
+        Island.VoxelDataMap.Num(), Neg, Pos, Zer, MinS, MaxS, *MinI.ToString(), *MaxI.ToString());
+}
 
 
 
@@ -1754,7 +1790,10 @@ AIslandActor* ADiggerManager::SpawnIslandActorWithMeshData(
 FIslandMeshData ADiggerManager::GenerateIslandMeshFromStoredData(const FIslandData& IslandData)
 {
     FIslandMeshData Result;
-
+    
+    //  Check out the island data.
+    Debug_IslandSDFStats(IslandDatae);
+    
     const int32 InstanceCount = IslandData.VoxelInstances.Num();
     const int32 VoxelDataCount = IslandData.VoxelDataMap.Num();
 
@@ -1792,16 +1831,7 @@ FIslandMeshData ADiggerManager::GenerateIslandMeshFromStoredData(const FIslandDa
         Result.Normals
     );
 
-    // Recenter vertices around true mesh pivot
-    FBox BoundsBefore(Result.Vertices);
-    FVector Pivot = BoundsBefore.GetCenter();
-    for (FVector& V : Result.Vertices)
-    {
-        V -= Pivot;
-    }
-    FBox BoundsAfter(Result.Vertices);
-
-    Result.MeshOrigin = Pivot;
+    Result.MeshOrigin = IslandWorldCenter;
     Result.bValid = (Result.Vertices.Num() > 0 && Result.Triangles.Num() > 0);
 
     if (!Result.bValid)
@@ -1817,13 +1847,9 @@ FIslandMeshData ADiggerManager::GenerateIslandMeshFromStoredData(const FIslandDa
     }
     else
     {
-        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Mesh generation complete for island %s. Pivot: %s | BoundsBefore Min %s Max %s | BoundsAfter Min %s Max %s | Vertices: %d | Triangles: %d"),
+        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Mesh generation complete for island %s. Origin: %s | Vertices: %d | Triangles: %d"),
             *IslandData.IslandID.ToString(),
-            *Pivot.ToString(),
-            *BoundsBefore.Min.ToString(),
-            *BoundsBefore.Max.ToString(),
-            *BoundsAfter.Min.ToString(),
-            *BoundsAfter.Max.ToString(),
+            *IslandWorldCenter.ToString(),
             Result.Vertices.Num(),
             Result.Triangles.Num() / 3);
     }
@@ -1901,9 +1927,8 @@ void ADiggerManager::HighlightIslandByID(const FName& IslandID)
     int32 DebugCount = 0;
     for (const FVoxelInstance& Instance : Island->VoxelInstances)
     {
-
-        // Use global voxel position for world alignment
-        FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel);
+        // ✅ Use global voxel position for world alignment and apply world offset
+        FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel) + WORLD_ISLAND_OFFSET;
 
         if (DebugCount < 3)
         {
@@ -3531,7 +3556,7 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
             const FIntVector& LocalIndex = VoxelPair.Key;
             const FVoxelData& Data = VoxelPair.Value;
 
-            FIntVector GlobalIndex = FVoxelConversion::ChunkAndLocalToGlobalVoxel(ChunkCoords, LocalIndex);
+            FIntVector GlobalIndex = FVoxelConversion::ChunkAndLocalToGlobalVoxel_MinCornerAligned(ChunkCoords, LocalIndex);
 
             UnifiedVoxelData.Add(GlobalIndex, Data);
             AllPhysicalVoxelInstances.Add(FVoxelInstance(GlobalIndex, ChunkCoords, LocalIndex));
