@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "DiggerDebug.h"
@@ -50,3 +50,4 @@ public:
 		return nullptr;
 	}
 };
+

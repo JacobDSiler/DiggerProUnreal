@@ -1,4 +1,4 @@
-#include "VoxelLogManager.h"
+﻿#include "VoxelLogManager.h"
 
 TMap<FString, FString> VoxelLogManager::AggregatedLogs;
 
@@ -31,3 +31,4 @@ void VoxelLogManager::FlushAll()
     }
     AggregatedLogs.Empty();
 }
+

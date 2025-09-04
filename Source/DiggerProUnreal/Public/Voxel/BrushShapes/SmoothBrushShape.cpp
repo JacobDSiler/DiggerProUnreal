@@ -1,4 +1,4 @@
-#include "SmoothBrushShape.h"
+﻿#include "SmoothBrushShape.h"
 
 #include "FBrushStroke.h"
 #include "VoxelConversion.h"
@@ -42,3 +42,4 @@ bool USmoothBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStro
 	const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
 	return DistanceSq <= RadiusSq;
 }
+

@@ -1,4 +1,4 @@
-// ProcgenArcana Header File.
+﻿// ProcgenArcana Header File.
 #pragma once
 
 #include "CoreMinimal.h"
@@ -369,3 +369,4 @@ private:
     UPROPERTY()
     FString CachedSVGContent;
 };
+

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "FLightBrushTypes.h"
@@ -18,3 +18,4 @@ public:
 	// For DiggerEditor module to set current state
 	static void SetEditorModeActive(bool bActive);
 };
+

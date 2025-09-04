@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "StaticMeshResources.h"
@@ -12,3 +12,4 @@ public:
 	static bool LoadSDFBrushFromFile(const FString& FilePath, FCustomSDFBrush& OutBrush);
 	static bool GenerateSDFBrushFromStaticMesh(UStaticMesh* Mesh, const FTransform& MeshTransform, float InVoxelSize, FCustomSDFBrush& OutBrush);
 };
+

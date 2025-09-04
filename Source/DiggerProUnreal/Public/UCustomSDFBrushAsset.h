@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
@@ -21,3 +21,4 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="SDF")
     FVector OriginOffset;
 };
+

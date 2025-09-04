@@ -1,4 +1,4 @@
-#include "CubeBrushShape.h"
+﻿#include "CubeBrushShape.h"
 
 #include "FBrushStroke.h"
 #include "VoxelConversion.h"
@@ -117,3 +117,4 @@ bool UCubeBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke
 
     return Distance <= 0.0f;
 }
+

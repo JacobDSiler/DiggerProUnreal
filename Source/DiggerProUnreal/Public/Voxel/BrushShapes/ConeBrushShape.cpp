@@ -1,4 +1,4 @@
-#include "ConeBrushShape.h"
+﻿#include "ConeBrushShape.h"
 
 #include "FBrushStroke.h"
 #include "VoxelConversion.h"

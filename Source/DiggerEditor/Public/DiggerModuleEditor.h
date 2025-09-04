@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
@@ -9,3 +9,4 @@ public:
     virtual void StartupModule() override;
     virtual void ShutdownModule() override;
 };
+

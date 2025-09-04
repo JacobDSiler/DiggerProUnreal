@@ -1,10 +1,8 @@
 #include "VoxelConversion.h"
-#include "Diggermanager.h"
 
-// Initialize static members with default values
-int32   FVoxelConversion::ChunkSize = 8;
-int32   FVoxelConversion::Subdivisions = 4;
-float   FVoxelConversion::TerrainGridSize = 100.0f;
-float   FVoxelConversion::LocalVoxelSize = FVoxelConversion::TerrainGridSize / FVoxelConversion::Subdivisions;
-FVector FVoxelConversion::Origin = FVector::ZeroVector;
-float FVoxelConversion::ChunkWorldSize = ChunkSize * TerrainGridSize;
+// single, authoritative definitions
+int32  FVoxelConversion::ChunkSize       = 8;
+int32  FVoxelConversion::Subdivisions    = 4;
+float  FVoxelConversion::TerrainGridSize = 100.f;
+float  FVoxelConversion::LocalVoxelSize  = 25.f; // overwritten in InitFromConfig
+FVector FVoxelConversion::Origin         = FVector::ZeroVector;

@@ -1,4 +1,4 @@
-#include "VoxelChunk.h"
+﻿#include "VoxelChunk.h"
 
 #include "DiggerDebug.h"
 #include "DiggerManager.h"
@@ -66,7 +66,7 @@ void UVoxelChunk::ReportVoxelModification(const FVoxelModificationReport& Report
 	// Per-chunk broadcast
 	OnVoxelsModified.Broadcast(Report);
 
-	// OPTIONAL: temporary backward-compat forwarding to manager’s global event.
+	// OPTIONAL: temporary backward-compat forwarding to managerâ€™s global event.
 	// Remove this once you fully migrate listeners to per-chunk subscriptions.
 	if (ADiggerManager* Mgr = GetDiggerManager())
 	{
@@ -868,7 +868,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     FThreadSafeCounter VoxelsAddedCounter;
 
     // Get chunk origin and voxel size - cache these values
-    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
+    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld_Min(ChunkCoordinates);
     const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
     const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
     const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
@@ -1084,7 +1084,7 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
         return;
     }
 
-    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
+    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld_Min(ChunkCoordinates);
     const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
     const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
     const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
@@ -1505,66 +1505,7 @@ FVector UVoxelChunk::CalculateBrushBounds(const FBrushStroke& Stroke) const
 
 
 
-
-// --- Smooth/Sharpen Fix ---
-void UVoxelChunk::ApplySmoothBrush(const FVector& Center, float Radius, bool bDig, int NumIterations)
-{
-	TArray<FIntVector> VoxelsToSmooth;
-	FIntVector CenterVoxel = FVoxelConversion::WorldToLocalVoxel(Center);
-	int32 VoxelRadius = FMath::CeilToInt(Radius / FVoxelConversion::LocalVoxelSize);
-
-	for (int32 X = CenterVoxel.X - VoxelRadius; X <= CenterVoxel.X + VoxelRadius; ++X)
-		for (int32 Y = CenterVoxel.Y - VoxelRadius; Y <= CenterVoxel.Y + VoxelRadius; ++Y)
-			for (int32 Z = CenterVoxel.Z - VoxelRadius; Z <= CenterVoxel.Z + VoxelRadius; ++Z)
-			{
-				FVector Pos = FVoxelConversion::LocalVoxelToWorld(FIntVector(X, Y, Z));
-				if (FVector::Dist(Pos, Center) <= Radius)
-				{
-					VoxelsToSmooth.Add(FIntVector(X, Y, Z));
-				}
-			}
-
-	TMap<FIntVector, float> CurrentSDF;
-	for (const FIntVector& Voxel : VoxelsToSmooth)
-	{
-		CurrentSDF.Add(Voxel, SparseVoxelGrid->GetVoxel(Voxel.X, Voxel.Y, Voxel.Z));
-	}
-
-	for (int Iter = 0; Iter < NumIterations; ++Iter)
-	{
-		TMap<FIntVector, float> NextSDF;
-		for (const FIntVector& Voxel : VoxelsToSmooth)
-		{
-			float Sum = 0.f;
-			int Count = 0;
-			for (int dx = -1; dx <= 1; ++dx)
-				for (int dy = -1; dy <= 1; ++dy)
-					for (int dz = -1; dz <= 1; ++dz)
-					{
-						FIntVector N = Voxel + FIntVector(dx, dy, dz);
-						float V = CurrentSDF.Contains(N) ? CurrentSDF[N] : SparseVoxelGrid->GetVoxel(N.X, N.Y, N.Z);
-						Sum += V;
-						++Count;
-					}
-
-			float Avg = Sum / Count;
-			float CenterVal = CurrentSDF[Voxel];
-
-			float Result = bDig ? CenterVal + (CenterVal - Avg) * 0.5f : FMath::Lerp(CenterVal, Avg, 0.5f);
-			NextSDF.Add(Voxel, Result);
-		}
-		CurrentSDF = NextSDF;
-	}
-
-	for (const auto& Pair : CurrentSDF)
-	{
-		SetVoxel(Pair.Key.X, Pair.Key.Y, Pair.Key.Z, Pair.Value, bDig);
-	}
-	MarkDirty();
-}
-
-
-
+//Deprecated? // Date: 03/09/2025
 float UVoxelChunk::ComputeSDFValue(float NormalizedDist, bool bDig, float TransitionStart, float TransitionEnd)
 {
     if (bDig)
@@ -1679,3 +1620,4 @@ void UVoxelChunk::GenerateMesh() const
 	}
 
 }
+

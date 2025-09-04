@@ -1,4 +1,4 @@
-// ADynamicHole.h
+﻿// ADynamicHole.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -67,3 +67,4 @@ public:
 		this->DiggerManager = InDiggerManager;
 	}
 };
+

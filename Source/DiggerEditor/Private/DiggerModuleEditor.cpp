@@ -1,4 +1,4 @@
-#include "DiggerModuleEditor.h"
+﻿#include "DiggerModuleEditor.h"
 #include "Modules/ModuleManager.h"
 #include "EditorModeRegistry.h"
 #include "DiggerEdMode.h"
@@ -27,3 +27,4 @@ void FDiggerEditorModule::ShutdownModule()
 #undef LOCTEXT_NAMESPACE
 
 IMPLEMENT_MODULE(FDiggerEditorModule, DiggerEditor)
+

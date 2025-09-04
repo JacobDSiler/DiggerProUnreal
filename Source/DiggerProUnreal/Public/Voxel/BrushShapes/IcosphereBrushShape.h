@@ -1,4 +1,4 @@
-// IcosphereBrushShape.h
+﻿// IcosphereBrushShape.h
 #pragma once
 
 #include "VoxelBrushShape.h"

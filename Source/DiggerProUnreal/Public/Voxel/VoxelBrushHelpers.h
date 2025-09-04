@@ -1,4 +1,4 @@
-// In a header, e.g. VoxelBrushHelpers.h
+﻿// In a header, e.g. VoxelBrushHelpers.h
 #pragma once
 
 #include "VoxelConversion.h"
@@ -120,4 +120,5 @@ inline void SetDigShellVoxels_Generic(
         }
     }
 }
+
 

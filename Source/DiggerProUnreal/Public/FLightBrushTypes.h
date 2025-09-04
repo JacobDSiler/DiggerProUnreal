@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 UENUM(BlueprintType)
 enum class ELightBrushType : uint8
@@ -23,3 +23,4 @@ FORCEINLINE FString GetLightTypeName(ELightBrushType LightType)
 		return TEXT("Unknown Light Type");
 	}
 }
+

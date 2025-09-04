@@ -1,4 +1,4 @@
-#include "CapsuleBrushShape.h"
+﻿#include "CapsuleBrushShape.h"
 
 #include "FBrushStroke.h"
 #include "VoxelConversion.h"
@@ -81,3 +81,4 @@ bool UCapsuleBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStr
     const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
     return DistanceSq <= RadiusSq;
 }
+

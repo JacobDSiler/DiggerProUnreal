@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "VoxelBrushShape.h"
 #include "CapsuleBrushShape.generated.h"

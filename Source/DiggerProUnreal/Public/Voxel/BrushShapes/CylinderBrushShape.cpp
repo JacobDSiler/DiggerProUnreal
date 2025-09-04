@@ -1,4 +1,4 @@
-#include "CylinderBrushShape.h"
+﻿#include "CylinderBrushShape.h"
 
 #include "FBrushStroke.h"
 #include "VoxelConversion.h"

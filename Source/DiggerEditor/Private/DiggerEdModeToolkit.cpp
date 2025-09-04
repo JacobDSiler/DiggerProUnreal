@@ -1,4 +1,4 @@
-// DiggerEdModeToolkit.cpp
+﻿// DiggerEdModeToolkit.cpp
 
 #include "DiggerEdModeToolkit.h"
 #include "DiggerEdMode.h"
@@ -95,7 +95,7 @@ FDiggerEdModeToolkit::FDiggerEdModeToolkit()
     , SocketIOLobbyManager(nullptr)
 {
 #if WITH_SOCKETIO
-    // Create the LobbyManager UObject once, root it so GC won’t kill it
+    // Create the LobbyManager UObject once, root it so GC wonâ€™t kill it
     SocketIOLobbyManager = NewObject<USocketIOLobbyManager>(GetTransientPackage());
     SocketIOLobbyManager->AddToRoot();
 #endif
@@ -178,11 +178,11 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
 
     ToolkitWidget = SNew(SVerticalBox)
 
-    // ── Brush Tools ── (collapsible)
+    // â”€â”€ Brush Tools â”€â”€ (collapsible)
     + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
     [
         SNew(SExpandableArea)
-        .AreaTitle(FText::FromString(TEXT("── Brush Tools ──")))
+        .AreaTitle(FText::FromString(TEXT("â”€â”€ Brush Tools â”€â”€")))
         .InitiallyCollapsed(false)
         .BodyContent()
         [
@@ -198,11 +198,11 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         ]
     ]
 
-    // ── Environment ── (collapsible)
+    // â”€â”€ Environment â”€â”€ (collapsible)
     + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
     [
         SNew(SExpandableArea)
-        .AreaTitle(FText::FromString(TEXT("── Environment ──")))
+        .AreaTitle(FText::FromString(TEXT("â”€â”€ Environment â”€â”€")))
         .InitiallyCollapsed(false)
         .BodyContent()
         [
@@ -214,11 +214,11 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         ]
     ]
 
-    // ── Additional Tools ── (collapsible)
+    // â”€â”€ Additional Tools â”€â”€ (collapsible)
     + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
     [
         SNew(SExpandableArea)
-        .AreaTitle(FText::FromString(TEXT("── Additional Tools ──")))
+        .AreaTitle(FText::FromString(TEXT("â”€â”€ Additional Tools â”€â”€")))
         .InitiallyCollapsed(true)
         .BodyContent()
         [
@@ -234,11 +234,11 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         ]
     ]
 
-    // ── Export & Data ── (collapsible)
+    // â”€â”€ Export & Data â”€â”€ (collapsible)
     + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
     [
         SNew(SExpandableArea)
-        .AreaTitle(FText::FromString(TEXT("── Export & Data ──")))
+        .AreaTitle(FText::FromString(TEXT("â”€â”€ Export & Data â”€â”€")))
         .InitiallyCollapsed(false)
         .BodyContent()
         [
@@ -258,7 +258,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     + SVerticalBox::Slot().AutoHeight().Padding(4)
     [
         SNew(SExpandableArea)
-        .AreaTitle(FText::FromString("🔧 Developer Settings"))
+        .AreaTitle(FText::FromString("ðŸ”§ Developer Settings"))
         .InitiallyCollapsed(true)
         .BodyContent()
         [
@@ -486,8 +486,8 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeCustomBrushSection()
             {
                 return FText::FromString(
                     bShowCustomBrushSection
-                    ? TEXT("▼ Custom Brushes")
-                    : TEXT("► Custom Brushes")
+                    ? TEXT("â–¼ Custom Brushes")
+                    : TEXT("â–º Custom Brushes")
                 );
             })
             .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
@@ -521,7 +521,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeCustomBrushSection()
             .VAlign(VAlign_Center)
             [
                 SNew(STextBlock)
-                .Text(FText::FromString(TEXT("⚠")))
+                .Text(FText::FromString(TEXT("âš ")))
                 .Font(FAppStyle::GetFontStyle("PropertyWindow.LargeFont"))
                 .ColorAndOpacity(FSlateColor(FLinearColor(1.f, 0.8f, 0.2f)))
             ]
@@ -774,7 +774,7 @@ void FDiggerEdModeToolkit::RebuildCustomBrushGrid()
                             .VAlign(VAlign_Center)
                             [
                                 SNew(STextBlock)
-                                .Text(FText::FromString(TEXT("✕")))
+                                .Text(FText::FromString(TEXT("âœ•")))
                                 .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
                                 .ColorAndOpacity(FLinearColor::White)
                             ]
@@ -844,7 +844,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeQuickSetButtons(
     {
         // Use plain degree symbol as a literal character
         FText DisplayText = bIsAngle
-            ? FText::FromString(FString::Printf(TEXT("%.0f°"), Value))
+            ? FText::FromString(FString::Printf(TEXT("%.0fÂ°"), Value))
             : FText::AsNumber(Value);
 
         Box->AddSlot()
@@ -874,7 +874,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeQuickSetButtons(
                 if (*TargetForMirror < 0) *TargetForMirror += 360.0f;
                 return FReply::Handled();
             })
-            .ToolTipText(FText::FromString("Mirror (add 180°)"))
+            .ToolTipText(FText::FromString("Mirror (add 180Â°)"))
             [
                 SNew(STextBlock)
                 .Font(DefaultFont)
@@ -1002,7 +1002,7 @@ void FDiggerEdModeToolkit::SetTemporaryDigOverride(TOptional<bool> Override)
 // - QuickSetValues: Array of values for quick-set buttons.
 // - ResetValue: Value to set when "Reset" is pressed.
 // - Step: Step size for numeric entry (default 1.0f).
-// - bIsAngle: true for angle (adds Mirror, °), false for number.
+// - bIsAngle: true for angle (adds Mirror, Â°), false for number.
 // - TargetForMirror: reference to the value for Mirror (only used if bIsAngle).
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeLabeledSliderRow(
     const FText& Label,
@@ -1178,8 +1178,8 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
                 {
                     return FText::FromString(
                         bShowBrushShapeSection
-                        ? TEXT("▼ Brush Shape & Parameters")
-                        : TEXT("► Brush Shape & Parameters")
+                        ? TEXT("â–¼ Brush Shape & Parameters")
+                        : TEXT("â–º Brush Shape & Parameters")
                     );
                 })
                 .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
@@ -1712,8 +1712,8 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
             {
                 return FText::FromString(
                     bShowSaveLoadSection
-                    ? TEXT("▼ Chunk Serialization")
-                    : TEXT("► Chunk Serialization")
+                    ? TEXT("â–¼ Chunk Serialization")
+                    : TEXT("â–º Chunk Serialization")
                 );
             })
             .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
@@ -2064,8 +2064,8 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBuildExportSection()
             {
                 return FText::FromString(
                     bShowBuildSettings
-                    ? TEXT("▼ Build/Export Settings")
-                    : TEXT("► Build/Export Settings")
+                    ? TEXT("â–¼ Build/Export Settings")
+                    : TEXT("â–º Build/Export Settings")
                 );
             })
             .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
@@ -2285,8 +2285,8 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeLobbySection()
                 {
                     return FText::FromString(
                         bShowLobbySection
-                        ? TEXT("▼ DiggerConnect")
-                        : TEXT("► DiggerConnect")
+                        ? TEXT("â–¼ DiggerConnect")
+                        : TEXT("â–º DiggerConnect")
                     );
                 })
                 .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
@@ -2379,7 +2379,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeNetworkingHelpWidget()
             SNew(SButton)
             .OnClicked_Lambda([DownloadProgress]() -> FReply
             {
-                // …existing HTTP + ZipUtility download logic…
+                // â€¦existing HTTP + ZipUtility download logicâ€¦
                 return FReply::Handled();
             })
             [
@@ -2515,7 +2515,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeNetworkingWidget()
                   .FillWidth(1.0f)
                 [
                     SAssignNew(LobbyNameTextBox, SEditableTextBox)
-                    .HintText(FText::FromString("Enter lobby name…"))
+                    .HintText(FText::FromString("Enter lobby nameâ€¦"))
                 ]
 
                 + SHorizontalBox::Slot()
@@ -2550,7 +2550,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeNetworkingWidget()
                   .FillWidth(1.0f)
                 [
                     SAssignNew(LobbyIdTextBox, SEditableTextBox)
-                    .HintText(FText::FromString("Enter lobby ID…"))
+                    .HintText(FText::FromString("Enter lobby IDâ€¦"))
                 ]
 
                 + SHorizontalBox::Slot()
@@ -2634,7 +2634,7 @@ void FDiggerEdModeToolkit::SaveLicenseToConfig() const
 
 void FDiggerEdModeToolkit::ApplyTierCapsFromLicense()
 {
-    // Placeholder logic — replace with your real verification result
+    // Placeholder logic â€” replace with your real verification result
     // Keep Free defaults if key is empty
     if (LicenseKey.IsEmpty())
     {
@@ -2890,8 +2890,8 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeProcgenArcanaImporterWidget()
                 {
                     return FText::FromString(
                         bShowProcgenArcanaImporter
-                        ? TEXT("▼ Cave Import (ProcgenArcana)")
-                        : TEXT("► Cave Import (ProcgenArcana)")
+                        ? TEXT("â–¼ Cave Import (ProcgenArcana)")
+                        : TEXT("â–º Cave Import (ProcgenArcana)")
                     );
                 })
                 .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
@@ -4342,8 +4342,8 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
             {
                 return FText::FromString(
                     bShowIslandsSection
-                    ? TEXT("▼ Islands")
-                    : TEXT("► Islands")
+                    ? TEXT("â–¼ Islands")
+                    : TEXT("â–º Islands")
                 );
             })
             .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
@@ -4679,7 +4679,7 @@ FReply FDiggerEdModeToolkit::ShowLoginModal()
 
     // build simple username prompt
     UsernameTextBox = SNew(SEditableTextBox)
-        .HintText(LOCTEXT("UsernameHint", "Enter username…"));
+        .HintText(LOCTEXT("UsernameHint", "Enter usernameâ€¦"));
 
     LoginWindow = SNew(SWindow)
         .Title(LOCTEXT("LoginWindowTitle", "Login"))
@@ -4730,7 +4730,7 @@ void FDiggerEdModeToolkit::ShutdownNetworking()
 {
   /*  if (WebSocket.IsValid())
     {
-        UE_LOG(LogTemp, Log, TEXT("🔌 Disconnecting from Digger Network Server"));
+        UE_LOG(LogTemp, Log, TEXT("ðŸ”Œ Disconnecting from Digger Network Server"));
         WebSocket->Close();
         WebSocket.Reset();
     }
@@ -4905,7 +4905,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeMirrorButton(float& Target, const 
             if (Target < 0) Target += 360.0f;
             return FReply::Handled();
         })
-        .ToolTipText(FText::FromString("Mirror (add 180°)"))
+        .ToolTipText(FText::FromString("Mirror (add 180Â°)"))
         .ContentPadding(FMargin(2,0));
 }
 
@@ -4918,7 +4918,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeMirrorButton(double& Target, const
             if (Target < 0) Target += 360.0f;
             return FReply::Handled();
         })
-        .ToolTipText(FText::FromString("Mirror (add 180°)"))
+        .ToolTipText(FText::FromString("Mirror (add 180Â°)"))
         .ContentPadding(FMargin(2,0));
 }
 
@@ -5971,3 +5971,4 @@ FEdMode* FDiggerEdModeToolkit::GetEditorMode() const { return GLevelEditorModeTo
 TSharedPtr<SWidget> FDiggerEdModeToolkit::GetInlineContent() const { return ToolkitWidget; }
 
 #undef LOCTEXT_NAMESPACE
+

@@ -1,4 +1,4 @@
-#include "DynamicLightActor.h"
+﻿#include "DynamicLightActor.h"
 #include "Engine/World.h"
 #include "Components/SceneComponent.h"
 #if WITH_EDITOR
@@ -48,10 +48,10 @@ void ADynamicLightActor::InitializeFromBrush(const FBrushStroke& BrushStroke)
 	CachedColor     = BrushStroke.LightColor;
 	CachedAngle     = BrushStroke.BrushAngle;
 
-	// Remap your UI ranges → usable engine ranges (tweak to taste)
-	// Strength: 0–1  → Intensity
-	// Radius:   0–256→ 0–5000cm
-	// Falloff:  0–1  → 100–5000cm (treat as attenuation span)
+	// Remap your UI ranges â†’ usable engine ranges (tweak to taste)
+	// Strength: 0â€“1  â†’ Intensity
+	// Radius:   0â€“256â†’ 0â€“5000cm
+	// Falloff:  0â€“1  â†’ 100â€“5000cm (treat as attenuation span)
 	const float Strength01 = FMath::Clamp(BrushStroke.BrushStrength, 0.f, 1.f);
 	const float Radius01   = FMath::Clamp(BrushStroke.BrushRadius / 256.f, 0.f, 1.f);
 	const float Falloff01  = FMath::Clamp(BrushStroke.BrushFalloff, 0.f, 1.f);
@@ -74,7 +74,7 @@ void ADynamicLightActor::InitializeFromBrush(const FBrushStroke& BrushStroke)
 	}
 
 	CachedRadius  = FMath::Lerp(50.f, 5000.f, Radius01);            // attenuation radius
-	CachedFalloff = FMath::Lerp(100.f, 5000.f, Falloff01);          // we’ll map to attenuation as well
+	CachedFalloff = FMath::Lerp(100.f, 5000.f, Falloff01);          // weâ€™ll map to attenuation as well
 
 	// Put the ACTOR at the brush transform so chunk tracking uses the actor transform
 	const FVector  WorldPos = BrushStroke.BrushPosition + BrushStroke.BrushOffset;
@@ -157,7 +157,7 @@ void ADynamicLightActor::CreateOrUpdateLightComponent()
 		Spot->SetInnerConeAngle(FMath::Clamp(CachedAngle * 0.7f, 0.0f, 89.0f));
 		Spot->SetOuterConeAngle(FMath::Clamp(CachedAngle,        1.0f, 89.0f));
 		Spot->SetSourceRadius(8.f);
-		// Direction is actor’s forward; component uses relative (0) so it follows actor rotation
+		// Direction is actorâ€™s forward; component uses relative (0) so it follows actor rotation
 		Spot->SetRelativeRotation(FRotator::ZeroRotator);
 	}
 	else if (UDirectionalLightComponent* Dir = Cast<UDirectionalLightComponent>(LightComponent))
@@ -198,5 +198,6 @@ void ADynamicLightActor::InitLight(ELightBrushType LightType)
 	CachedType = LightType;
 	CreateOrUpdateLightComponent();
 }
+
 
 

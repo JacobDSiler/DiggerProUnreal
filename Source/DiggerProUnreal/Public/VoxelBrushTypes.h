@@ -1,4 +1,4 @@
-// VoxelBrushTypes.h
+﻿// VoxelBrushTypes.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -23,4 +23,5 @@ enum class EVoxelBrushType : uint8 {
 	Stairs,
 	Light
 };
+
 

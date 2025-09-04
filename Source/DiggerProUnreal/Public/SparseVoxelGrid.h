@@ -1,4 +1,4 @@
-// SparseVoxelGrid.h
+﻿// SparseVoxelGrid.h
 // Header that matches the CPU-first/GPU-ready SparseVoxelGrid.cpp you provided.
 
 #pragma once

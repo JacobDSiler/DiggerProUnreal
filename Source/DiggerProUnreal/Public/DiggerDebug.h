@@ -1,4 +1,4 @@
-// DiggerDebug.h
+﻿// DiggerDebug.h
 
 #pragma once
 
@@ -32,3 +32,4 @@ namespace DiggerDebug
 	inline bool Seams = false;
 	inline bool InstancedDebug = false;
 }
+

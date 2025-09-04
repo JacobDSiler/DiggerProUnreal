@@ -1,4 +1,4 @@
-// ConeBrushShape.h
+﻿// ConeBrushShape.h
 #pragma once
 
 #include "VoxelBrushShape.h"

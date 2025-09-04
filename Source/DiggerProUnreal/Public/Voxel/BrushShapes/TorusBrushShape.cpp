@@ -1,4 +1,4 @@
-#include "TorusBrushShape.h"
+﻿#include "TorusBrushShape.h"
 
 #include "FBrushStroke.h"
 #include "VoxelConversion.h"
@@ -74,4 +74,5 @@ bool UTorusBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStrok
 {
     return Super::IsWithinBounds(WorldPos, Stroke);
 }
+
 

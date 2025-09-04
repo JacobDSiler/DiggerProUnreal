@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "FVoxelData.generated.h"
@@ -15,3 +15,4 @@ struct FVoxelData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel")
 	float SDFValue = 1.0f;
 };
+

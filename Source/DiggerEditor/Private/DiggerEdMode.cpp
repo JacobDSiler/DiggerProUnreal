@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "DiggerEdMode.h"
 #include "DiggerEditorAccess.h"
@@ -15,14 +15,6 @@
 //#include "ScopedTransaction.h"
 #include "VoxelConversion.h"
 
-// Duplicate the definitions here for the Editor module
-int32   FVoxelConversion::ChunkSize = 8;
-int32   FVoxelConversion::Subdivisions = 4;
-float   FVoxelConversion::TerrainGridSize = 100.0f;
-float   FVoxelConversion::LocalVoxelSize = FVoxelConversion::TerrainGridSize / FVoxelConversion::Subdivisions;
-FVector FVoxelConversion::Origin = FVector::ZeroVector;
-float   FVoxelConversion::ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::TerrainGridSize;
-
 #define LOCTEXT_NAMESPACE "DiggerEditorMode"
 
 const FEditorModeID FDiggerEdMode::EM_DiggerEdModeId = TEXT("EM_DiggerEdMode");
@@ -38,7 +30,6 @@ void FDiggerEdMode::DeselectAllSceneActors()
 }
 
 // forward
-// forward
 static ADiggerManager* FindExistingManager(UWorld* World)
 {
     if (!World) return nullptr;
@@ -46,7 +37,7 @@ static ADiggerManager* FindExistingManager(UWorld* World)
     return nullptr;
 }
 
-// Create a minimal transient library so painting never crashes if you don’t have one yet
+// Create a minimal transient library so painting never crashes if you donâ€™t have one yet
 static UObject* CreateTransientHoleShapeLibrary()
 {
 #if WITH_EDITOR
@@ -106,6 +97,17 @@ void FDiggerEdMode::Enter()
 
     // New: make sure a manager + library exist so the mode can paint safely
     EnsureDiggerPrereqs();
+
+    if (ADiggerManager* Mgr = FindDiggerManager())
+    {
+        // Pull authoritative numbers from the runtime
+        FVoxelConversion::InitFromConfig(
+            Mgr->ChunkSize,
+            Mgr->Subdivisions,
+            Mgr->TerrainGridSize,
+            /*Origin*/ FVector::ZeroVector // or a project-specific origin if you use one
+        );
+    }
 }
 
 
@@ -348,7 +350,7 @@ void FDiggerEdMode::UpdateGhostPreview(const FVector& CursorWorldLocation)
 
         for (const FVoxelInstance& Instance : Island->VoxelInstances)
         {
-            FVector WorldPos = FVoxelConversion::MinCornerVoxelToWorld(Instance.ChunkCoords, Instance.LocalVoxel);
+            FVector WorldPos = FVoxelConversion::ChunkVoxelToWorldCenter_Min(Instance.ChunkCoords, Instance.LocalVoxel);
             WorldPos += Offset;
 
             FTransform Transform;
@@ -603,3 +605,4 @@ ADiggerManager* FDiggerEdMode::FindDiggerManager()
 }
 
 #undef LOCTEXT_NAMESPACE
+

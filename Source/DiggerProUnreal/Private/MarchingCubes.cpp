@@ -1,4 +1,4 @@
-#include "MarchingCubes.h"
+﻿#include "MarchingCubes.h"
 #include "DiggerManager.h"
 #include "VoxelChunk.h"
 #include "SparseVoxelGrid.h"
@@ -394,7 +394,7 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 	
     // Use FVoxelConversion to get the chunk's world position
     FIntVector ChunkCoords = ChunkPtr->GetChunkCoordinates();
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
+    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld_Min(ChunkCoords);
     
 	float VoxelSize = FVoxelConversion::LocalVoxelSize; // Use the consistent voxel size
 
@@ -446,7 +446,7 @@ void UMarchingCubes::GenerateMeshSyncronous(const UVoxelChunk* ChunkPtr)
 	
 	// Use FVoxelConversion to get the chunk's world position
 	FIntVector ChunkCoords = ChunkPtr->GetChunkCoordinates();
-	FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
+	FVector ChunkOrigin = FVoxelConversion::ChunkToWorld_Min(ChunkCoords);
     
 	float VoxelSize = FVoxelConversion::LocalVoxelSize; // Use the consistent voxel size
 
@@ -469,7 +469,7 @@ void UMarchingCubes::GenerateMeshSyncronous(const UVoxelChunk* ChunkPtr)
 
 
 float UMarchingCubes::GetSafeSDFValue(const FIntVector& Position) const {
-	if (!FVoxelConversion::IsValidVoxelIndex(Position)) { 
+	if (!FVoxelConversion::IsValidLocalIndex_Min(Position)) { 
 		return 1.0f; // Default  outside bounds
 	}
     
@@ -610,379 +610,144 @@ void UMarchingCubes::FindRimVertices(
 
 void UMarchingCubes::GenerateMeshFromGrid(
     USparseVoxelGrid* InVoxelGrid,
-    const FVector& Origin,
+    const FVector& /*OriginUnused*/,
     float VoxelSize,
     TArray<FVector>& OutVertices,
     TArray<int32>& OutTriangles,
-    TArray<FVector>& OutNormals
-)
+    TArray<FVector>& OutNormals)
 {
-    if (!InVoxelGrid) {
-        UE_LOG(LogTemp, Error, TEXT("Invalid VoxelGrid in GenerateMeshFromGrid!"));
+    OutVertices.Reset();
+    OutTriangles.Reset();
+    OutNormals.Reset();
+
+    if (!InVoxelGrid)
+    {
+        UE_LOG(LogTemp, Error, TEXT("MC: VoxelGrid is null"));
         return;
     }
 
-    // INITIALIZE HEIGHT CACHE FIRST - This runs on the game thread before any parallel processing
-    if (!IsHeightCacheValid(Origin, VoxelSize))
+    // ---- 1) Find GLOBAL-voxel bounds of the sparse set ----
+    const TMap<FIntVector, FVoxelData>& Map = InVoxelGrid->VoxelData;
+    if (Map.Num() == 0) return;
+
+    FIntVector MinG( INT_MAX,  INT_MAX,  INT_MAX);
+    FIntVector MaxG(-INT_MAX, -INT_MAX, -INT_MAX);
+    for (const auto& KV : Map)
     {
-        InitializeHeightCache(Origin, VoxelSize);
+        const FIntVector& G = KV.Key;
+        MinG.X = FMath::Min(MinG.X, G.X);  MaxG.X = FMath::Max(MaxG.X, G.X);
+        MinG.Y = FMath::Min(MinG.Y, G.Y);  MaxG.Y = FMath::Max(MaxG.Y, G.Y);
+        MinG.Z = FMath::Min(MinG.Z, G.Z);  MaxG.Z = FMath::Max(MaxG.Z, G.Z);
     }
 
-    // WorldSpaceOffset for proper alignment for center aligned chunk schema.
-    FVector TotalOffset = FVector(FVoxelConversion::LocalVoxelSize * 0.25F - FVoxelConversion::ChunkWorldSize * 0.5f);
-    
-    int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const FIntVector Samples = MaxG - MinG + FIntVector(1,1,1);
+    if (Samples.X < 2 || Samples.Y < 2 || Samples.Z < 2) return;
 
-    if (IsDebugging()) {
-        DrawDebugBox(
-            DiggerManager->GetSafeWorld(),
-            Origin + FVector(N * VoxelSize * 0.5f),
-            FVector(N * VoxelSize * 0.5f),
-            FQuat::Identity,
-            FColor::Blue,
-            false,
-            10.0f,
-            0,
-            2.0f
-        );
-    }
-
-    TMap<FVector, int32> VertexCache;
-
-    // Pre-compute height values for the entire chunk using our robust cache
-    TArray<float> HeightValues;
-    HeightValues.SetNumZeroed(N * N);
-    
-    for (int32 x = 0; x < N; ++x) {
-        for (int32 y = 0; y < N; ++y) {
-            FVector WorldPos = Origin + FVector(x * VoxelSize, y * VoxelSize, 0);
-            HeightValues[y * N + x] = GetCachedHeight(WorldPos);
-        }
-    }
-
-    // Track cells with explicit voxels for debugging
-    TArray<FIntVector> CellsWithExplicitVoxels;
-    TArray<FIntVector> BelowTerrainCellsWithAirVoxels;
-
-    // First pass: Identify cells with air voxels below terrain
-    TSet<FIntVector> CellsWithAirVoxelsBelowTerrain;
-    
-    for (int32 x = 0; x < N; ++x)
-    for (int32 y = 0; y < N; ++y)
+    // ---- 2) Helpers ----
+    auto CornerOff = [](int32 i)->FIntVector
     {
-        float TerrainHeight = HeightValues[y * N + x];
-        
-        for (int32 z = 0; z < N; ++z)
+        static const FIntVector Off[8] = {
+            {0,0,0},{1,0,0},{1,1,0},{0,1,0},
+            {0,0,1},{1,0,1},{1,1,1},{0,1,1}
+        };
+        return Off[i];
+    };
+
+    auto GetHeight = [&](const FVector& W){ return GetCachedHeight(W); };
+
+    // ---- 3) March cells in GLOBAL-voxel space ----
+    TMap<FVector,int32> VertexCache;
+
+    for (int32 cx=0; cx<Samples.X-1; ++cx)
+    for (int32 cy=0; cy<Samples.Y-1; ++cy)
+    for (int32 cz=0; cz<Samples.Z-1; ++cz)
+    {
+        const FIntVector CellBase = MinG + FIntVector(cx,cy,cz);
+
+        FVector CornerWS[8];
+        float   CornerSDF[8];
+
+        for (int32 i=0;i<8;++i)
         {
-            float MinZ = Origin.Z + z * VoxelSize;
-            float MaxZ = MinZ + VoxelSize;
-            bool bBelowTerrain = MaxZ < TerrainHeight;
-            
-            if (!bBelowTerrain) continue;
-            
-            // Check if this cell has any explicit air voxels below terrain
-            for (int32 i = 0; i < 8; i++) {
-                FIntVector CornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
-                if (InVoxelGrid->VoxelData.Contains(CornerCoords)) {
-                    float SDFValue = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
-                    if (SDFValue > 0) { // Air voxel
-                        CellsWithAirVoxelsBelowTerrain.Add(FIntVector(x, y, z));
-                        break;
-                    }
-                }
+            const FIntVector G = CellBase + CornerOff(i);
+
+            // WORLD position of this lattice point (center of the voxel index)
+            CornerWS[i] = FVoxelConversion::GlobalVoxelCenterToWorld(G);
+
+            if (const FVoxelData* V = InVoxelGrid->GetVoxelData(G))
+            {
+                CornerSDF[i] = V->SDFValue;
+            }
+            else
+            {
+                // Undefined → infer from landscape: air above, solid below
+                const float H = GetHeight(CornerWS[i]);
+                CornerSDF[i] = (CornerWS[i].Z < H) ? FVoxelConversion::SDF_SOLID
+                                                   : FVoxelConversion::SDF_AIR;
             }
         }
-    }
 
-    // Second pass: Process all cells and generate mesh
-    for (int32 x = 0; x < N; ++x)
-    for (int32 y = 0; y < N; ++y)
-    {
-        // Get terrain height for this column using our cached value
-        float TerrainHeight = HeightValues[y * N + x];
-        
-        for (int32 z = 0; z < N; ++z)
+        int32 CubeIndex = 0;
+        for (int32 i=0;i<8;++i)
+            if (CornerSDF[i] > 0) CubeIndex |= (1<<i);
+        if (CubeIndex == 0 || CubeIndex == 255) continue;
+
+        for (int32 i=0; TriangleConnectionTable[CubeIndex][i] != -1; i+=3)
         {
-            // Quick check if cell is entirely above terrain with no explicit voxels
-            float MinZ = Origin.Z + z * VoxelSize;
-            float MaxZ = MinZ + VoxelSize;
-            bool bBelowTerrain = MaxZ < TerrainHeight;
-            
-            // Check if this cell has any explicit voxels
-            bool bHasExplicitVoxels = false;
-            bool bHasAirVoxelsBelowTerrain = false;
-            
-            for (int32 i = 0; i < 8 && !bHasExplicitVoxels; i++) {
-                FIntVector CornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
-                if (InVoxelGrid->VoxelData.Contains(CornerCoords)) {
-                    bHasExplicitVoxels = true;
-                    
-                    // Check if this is an air voxel below terrain
-                    FVector CornerWorldPos = Origin + FVector(CornerCoords) * VoxelSize;
-                    // Use cached height for this check too
-                    float CornerTerrainHeight = GetCachedHeight(CornerWorldPos);
-                    if (CornerWorldPos.Z < CornerTerrainHeight) {
-                        float SDFValue = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
-                        if (SDFValue > 0) { // Air voxel
-                            bHasAirVoxelsBelowTerrain = true;
-                        }
-                    }
-                }
-            }
-            
-            // For debugging
-            if (bHasExplicitVoxels) {
-                CellsWithExplicitVoxels.Add(FIntVector(x, y, z));
-            }
-            
-            if (bBelowTerrain && bHasAirVoxelsBelowTerrain) {
-                BelowTerrainCellsWithAirVoxels.Add(FIntVector(x, y, z));
-            }
-            
-            // Check if we need to process this cell
-            bool bShouldProcess = false;
-            
-            // Process if it has explicit voxels
-            if (bHasExplicitVoxels) {
-                bShouldProcess = true;
-            }
-            // Process if it's below terrain and adjacent to a cell with air voxels
-            else if (bBelowTerrain) {
-                // Check if any adjacent cell has air voxels below terrain
-                for (int32 dx = -1; dx <= 1 && !bShouldProcess; dx++)
-                for (int32 dy = -1; dy <= 1 && !bShouldProcess; dy++)
-                for (int32 dz = -1; dz <= 1 && !bShouldProcess; dz++) {
-                    if (dx == 0 && dy == 0 && dz == 0) continue;
-                    
-                    FIntVector AdjacentCell(x + dx, y + dy, z + dz);
-                    if (AdjacentCell.X < 0 || AdjacentCell.Y < 0 || AdjacentCell.Z < 0 ||
-                        AdjacentCell.X >= N || AdjacentCell.Y >= N || AdjacentCell.Z >= N)
-                        continue;
-                        
-                    if (CellsWithAirVoxelsBelowTerrain.Contains(AdjacentCell)) {
-                        bShouldProcess = true;
-                    }
-                }
-            }
-            // Process if it's above terrain but not too far above
-            else if (MinZ <= TerrainHeight + VoxelSize) {
-                bShouldProcess = true;
-            }
-            
-            // Skip if we don't need to process this cell
-            if (!bShouldProcess) {
-                continue;
+            FVector tri[3];
+            for (int32 j=0;j<3;++j)
+            {
+                const int32 e  = TriangleConnectionTable[CubeIndex][i+j];
+                const int32 a  = EdgeConnection[e][0];
+                const int32 b  = EdgeConnection[e][1];
+
+                tri[j] = InterpolateVertex(
+                    CornerWS[a], CornerWS[b],
+                    CornerSDF[a], CornerSDF[b]);
+
+                tri[j] = ApplyLandscapeTransition(tri[j]); // if you use this
             }
 
-            FVector CellOrigin = Origin + FVector(x * VoxelSize, y * VoxelSize, z * VoxelSize);
-
-            FVector CornerWSPositions[8];
-            float CornerSDFValues[8];
-
-            for (int32 i = 0; i < 8; i++) {
-                FIntVector CornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
-                CornerWSPositions[i] = Origin + FVector(
-                    CornerCoords.X * VoxelSize,
-                    CornerCoords.Y * VoxelSize,
-                    CornerCoords.Z * VoxelSize
-                );
-                
-                // Handle voxel values
-                if (InVoxelGrid->VoxelData.Contains(CornerCoords))
+            for (int32 j=0;j<3;++j)
+            {
+                const FVector& V = tri[j];
+                if (int32* Idx = VertexCache.Find(V))
                 {
-                    // Use the explicit voxel value
-                    CornerSDFValues[i] = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
+                    OutTriangles.Add(*Idx);
                 }
                 else
                 {
-                    // For uninitialized voxels, check if they're below terrain using cached height
-                    FVector WorldPos = CornerWSPositions[i];
-                    float CornerTerrainHeight = GetCachedHeight(WorldPos);
-                    bool bCornerBelowTerrain = WorldPos.Z < CornerTerrainHeight;
-                    
-                    if (bCornerBelowTerrain)
-                    {
-                        // Default to solid for unset voxels below terrain
-                        CornerSDFValues[i] = -1.0f;
-                        
-                        // Check for nearby explicit air voxels that should create a surface
-                        bool bFoundNearbyAir = false;
-                        float MinDistanceToAir = FLT_MAX;
-                        
-                        // Search in a small radius around this corner
-                        const int32 SearchRadius = 2;
-                        const float MaxInfluenceDistance = SearchRadius * VoxelSize;
-                        
-                        for (int32 dx = -SearchRadius; dx <= SearchRadius; dx++)
-                        for (int32 dy = -SearchRadius; dy <= SearchRadius; dy++)
-                        for (int32 dz = -SearchRadius; dz <= SearchRadius; dz++)
-                        {
-                            if (dx == 0 && dy == 0 && dz == 0) continue;
-                            
-                            FIntVector SearchCoords = CornerCoords + FIntVector(dx, dy, dz);
-                            
-                            if (InVoxelGrid->VoxelData.Contains(SearchCoords))
-                            {
-                                float NearbySDFValue = InVoxelGrid->GetVoxel(SearchCoords.X, SearchCoords.Y, SearchCoords.Z);
-                                
-                                // If we find an explicit air voxel
-                                if (NearbySDFValue > 0)
-                                {
-                                    FVector NearbyWorldPos = Origin + FVector(SearchCoords) * VoxelSize;
-                                    float NearbyTerrainHeight = GetCachedHeight(NearbyWorldPos);
-                                    
-                                    // Check if this air voxel is also below terrain (creating a cavity)
-                                    if (NearbyWorldPos.Z < NearbyTerrainHeight)
-                                    {
-                                        float Distance = FVector(dx, dy, dz).Size() * VoxelSize;
-                                        if (Distance < MinDistanceToAir)
-                                        {
-                                            MinDistanceToAir = Distance;
-                                            bFoundNearbyAir = true;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // If we found nearby air voxels, create a gradient towards them
-                        if (bFoundNearbyAir && MinDistanceToAir < MaxInfluenceDistance)
-                        {
-                            // Alternative approach: Use a more aggressive transition
-                            CornerSDFValues[i] = (MinDistanceToAir < VoxelSize) ? 0.1f : -1.0f;
-                        }
-                    }
-                    else
-                    {
-                        // Above terrain - default to air
-                        CornerSDFValues[i] = 1.0f;
-                    }
-                }
-            }
-
-            if (IsDebugging()) {
-                // Only visualize cells with explicit voxels or below-terrain cells with air voxels
-                if (bHasExplicitVoxels || (bBelowTerrain && bHasAirVoxelsBelowTerrain)) {
-                    for (int32 i = 0; i < 8; ++i) {
-                        FColor PointColor = CornerSDFValues[i] > 0 ? FColor::Blue : FColor::Red;
-                        DrawDebugPoint(
-                            DiggerManager->GetWorld(),
-                            CornerWSPositions[i],
-                            5.0f,
-                            PointColor,
-                            false,
-                            10.0f
-                        );
-                    }
-                    
-                    // Draw cell bounds
-                    DrawDebugBox(
-                        DiggerManager->GetWorld(),
-                        CellOrigin + FVector(VoxelSize * 0.5f),
-                        FVector(VoxelSize * 0.5f),
-                        FQuat::Identity,
-                        FColor::Green,
-                        false,
-                        10.0f,
-                        0,
-                        1.0f
-                    );
-                }
-            }
-
-            // Calculate marching cubes index
-            TArray<float> SDFValues;
-            SDFValues.Append(CornerSDFValues, 8);
-            int32 CubeIndex = CalculateMarchingCubesIndex(SDFValues);
-
-            if (CubeIndex == 0 || CubeIndex == 255) {
-                continue;
-            }
-
-            // Generate triangles for this cube
-            for (int32 i = 0; TriangleConnectionTable[CubeIndex][i] != -1; i += 3) {
-                FVector TriangleVertices[3];
-                
-                for (int32 j = 0; j < 3; ++j) {
-                    int32 EdgeIndex = TriangleConnectionTable[CubeIndex][i + j];
-                    
-                    FVector InterpolatedVertex = InterpolateVertex(
-                        CornerWSPositions[EdgeConnection[EdgeIndex][0]],
-                        CornerWSPositions[EdgeConnection[EdgeIndex][1]],
-                        CornerSDFValues[EdgeConnection[EdgeIndex][0]],
-                        CornerSDFValues[EdgeConnection[EdgeIndex][1]]
-                    );
-                    
-                    TriangleVertices[j] = ApplyLandscapeTransition(InterpolatedVertex);
-                }
-
-                // Add vertices to mesh with proper offset
-                for (int32 j = 0; j < 3; ++j) {
-                    FVector FinalVertex = TriangleVertices[j] + TotalOffset;
-                    
-                    int32* CachedIndex = VertexCache.Find(FinalVertex);
-                    if (CachedIndex) {
-                        OutTriangles.Add(*CachedIndex);
-                    } else {
-                        int32 NewVertexIndex = OutVertices.Add(FinalVertex);
-                        VertexCache.Add(FinalVertex, NewVertexIndex);
-                        OutTriangles.Add(NewVertexIndex);
-                    }
+                    const int32 NewIdx = OutVertices.Add(V);
+                    VertexCache.Add(V, NewIdx);
+                    OutTriangles.Add(NewIdx);
                 }
             }
         }
     }
 
-    // CORRECTED SMOOTH NORMAL CALCULATION - FLIPPED FOR PROPER LIGHTING
-    OutNormals.SetNum(OutVertices.Num());
-    for (FVector& Normal : OutNormals) {
-        Normal = FVector::ZeroVector;
-    }
+    // ---- 4) Smooth normals (same as your current) ----
+    OutNormals.SetNumZeroed(OutVertices.Num());
+    for (int32 i=0;i<OutTriangles.Num(); i+=3)
+    {
+        const int32 i0 = OutTriangles[i+0];
+        const int32 i1 = OutTriangles[i+1];
+        const int32 i2 = OutTriangles[i+2];
 
-    // Accumulate face normals to vertices (area-weighted)
-    for (int32 i = 0; i < OutTriangles.Num(); i += 3) {
-        int32 I0 = OutTriangles[i];
-        int32 I1 = OutTriangles[i + 1];
-        int32 I2 = OutTriangles[i + 2];
-        
-        const FVector& V0 = OutVertices[I0];
-        const FVector& V1 = OutVertices[I1];
-        const FVector& V2 = OutVertices[I2];
-
-        // Calculate face normal with proper winding order
-        FVector Edge1 = V1 - V0;
-        FVector Edge2 = V2 - V0;
-        FVector FaceNormal = FVector::CrossProduct(Edge1, Edge2);
-        
-        // The magnitude represents twice the triangle area
-        float DoubleArea = FaceNormal.Size();
-        if (DoubleArea > SMALL_NUMBER)
+        const FVector e1 = OutVertices[i1] - OutVertices[i0];
+        const FVector e2 = OutVertices[i2] - OutVertices[i0];
+        const FVector fn = FVector::CrossProduct(e1, e2);
+        const float mag  = fn.Size();
+        if (mag > SMALL_NUMBER)
         {
-            // Normalize to get unit normal, then weight by area
-            FVector UnitNormal = FaceNormal / DoubleArea;
-            FVector WeightedNormal = UnitNormal * DoubleArea;
-            
-            // Accumulate to all three vertices
-            OutNormals[I0] += WeightedNormal;
-            OutNormals[I1] += WeightedNormal;
-            OutNormals[I2] += WeightedNormal;
+            const FVector unit = fn / mag;
+            const FVector w    = unit * mag;
+            OutNormals[i0] += -w; OutNormals[i1] += -w; OutNormals[i2] += -w;
         }
     }
-
-    // Normalize all vertex normals and FLIP them for proper lighting
-    for (FVector& Normal : OutNormals) {
-        Normal = Normal.GetSafeNormal();
-        
-        // FLIP normals to point outward for proper lighting
-        Normal = -Normal;
-    }
-
-    // Debug output
-    if (IsDebugging()) {
-        UE_LOG(LogTemp, Log, TEXT("Generated mesh: %d vertices, %d triangles, %d cells with explicit voxels, %d Fbelow-terrain cells with air"),
-               OutVertices.Num(), OutTriangles.Num() / 3, CellsWithExplicitVoxels.Num(), BelowTerrainCellsWithAirVoxels.Num());
-    }
+    for (FVector& n : OutNormals) n = (n).GetSafeNormal();
 }
+
+
 
 
 void UMarchingCubes::GenerateMeshFromGridSyncronous(
@@ -999,8 +764,10 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
         return;
     }
 
+    UE_LOG(LogTemp, Error, TEXT("SYNCRONOUS MESH GENERATION CALLED!"));
+	
     // WorldSpaceOffset for proper alignment for center aligned chunk schema.
-    FVector TotalOffset = FVector(FVoxelConversion::LocalVoxelSize * 0.25F - FVoxelConversion::ChunkWorldSize * 0.25f);
+    FVector TotalOffset = FVector(FVoxelConversion::LocalVoxelSize * 0.25F - FVoxelConversion::ChunkWorldSize() * 0.25f);
     
     int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
 
@@ -1575,12 +1342,12 @@ void UMarchingCubes::ClearSectionAndRebuildMesh(int32 SectionIndex, FIntVector C
 {
 	if (!DiggerManager) return;
 
-	// 🔄 Clear mesh section from DiggerManager if it exists
+	// ðŸ”„ Clear mesh section from DiggerManager if it exists
 	if (DiggerManager->ProceduralMesh->GetNumSections() > SectionIndex) {
 		DiggerManager->ProceduralMesh->ClearMeshSection(SectionIndex);
 	}
 
-	// 🎲 Rebuild new mesh for chunk
+	// ðŸŽ² Rebuild new mesh for chunk
 	// ---
 }
 
@@ -1754,3 +1521,4 @@ int32 UMarchingCubes::CalculateMarchingCubesIndex(const TArray<float>& CornerSDF
 	}
 	return CubeIndex;
 }
+

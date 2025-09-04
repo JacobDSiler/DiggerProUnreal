@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "SelectableBase.h"
@@ -44,3 +44,4 @@ private:
 	UPROPERTY(Transient)
 	ULightComponent* LightComponent = nullptr;
 };
+

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "VoxelEvents.generated.h"
@@ -32,3 +32,4 @@ struct DIGGERPROUNREAL_API FVoxelModificationReport
 
 /** Global multicast delegate used by chunks to report their voxel-edit summaries. */
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnVoxelsModified, const FVoxelModificationReport&);
+

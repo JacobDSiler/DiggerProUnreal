@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "DiggerProUnrealGameMode.h"
 #include "DiggerProUnrealCharacter.h"
@@ -13,3 +13,4 @@ ADiggerProUnrealGameMode::ADiggerProUnrealGameMode()
 		DefaultPawnClass = PlayerPawnBPClass.Class;
 	}*/
 }
+

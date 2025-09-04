@@ -1,4 +1,4 @@
-// SelectableBase.cpp
+﻿// SelectableBase.cpp
 #include "SelectableBase.h"
 #include "DiggerEditorAccess.h"
 

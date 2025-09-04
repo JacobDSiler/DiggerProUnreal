@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "DiggerProUnrealCharacter.h"
 #include "Camera/CameraComponent.h"
@@ -125,6 +125,7 @@ void ADiggerProUnrealCharacter::Look(const FInputActionValue& Value)
 		AddControllerPitchInput(LookAxisVector.Y);
 	}
 }
+
 
 
 

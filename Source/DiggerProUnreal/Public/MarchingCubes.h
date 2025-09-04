@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
@@ -197,3 +197,4 @@ public:
 		this->DiggerManager = SetDiggerManager;
 	}
 };
+

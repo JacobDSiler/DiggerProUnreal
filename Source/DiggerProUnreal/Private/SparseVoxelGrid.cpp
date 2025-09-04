@@ -1,4 +1,4 @@
-// SparseVoxelGrid.cpp
+﻿// SparseVoxelGrid.cpp
 // CPU-first implementation with a clean hook for future GPU hotswap.
 // - Keeps existing functionality and signatures.
 // - Adds backend toggle (cvar) and no-op GPU stubs so we can wire kernels later,
@@ -30,8 +30,7 @@
 #include "HAL/IConsoleManager.h" // for backend CVars
 
 // If you have FVoxelSDFHelper as a public header, keep it.
-// (Leaving your original absolute include as-is to avoid include path churn.)
-#include "C:\Users\serpe\Documents\Unreal Projects\DiggerProUnreal\Source\DiggerProUnreal\Public\Voxel\FVoxelSDFHelper.h"
+#include "C:\\Users\\serpe\\Documents\\Unreal Projects\\DiggerProUnreal\\Source\\DiggerProUnreal\\Public\\Voxel\\FVoxelSDFHelper.h"
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Runtime toggles & small helpers
@@ -47,14 +46,14 @@ static TAutoConsoleVariable<int32> CVarDiggerUseGPUVoxelOps(
 // Simple hardware check: require a valid RHI and compute shader support.
 static bool IsGPUAvailable()
 {
-        return (GDynamicRHI != nullptr);// && GRHISupportsComputeShaders;
+	return (GDynamicRHI != nullptr); // && GRHISupportsComputeShaders;
 }
 
 static FORCEINLINE bool UseGPUBackend()
 {
-        return !VoxelGPU::GForceCPU &&
-               CVarDiggerUseGPUVoxelOps.GetValueOnAnyThread() != 0 &&
-               IsGPUAvailable();
+	return !VoxelGPU::GForceCPU &&
+	       CVarDiggerUseGPUVoxelOps.GetValueOnAnyThread() != 0 &&
+	       IsGPUAvailable();
 }
 
 // SDF conventions
@@ -88,32 +87,30 @@ namespace
 
 namespace VoxelGPU
 {
-        static bool SetVoxel(USparseVoxelGrid* Grid, int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig)
-        {
-                // GPU path not implemented yet; ensure we execute the CPU path without
-                // re-entering this function.
-                FForceCPU Scope;
-                return Grid->SetVoxel(X, Y, Z, NewSDFValue, bDig);
-        }
+	static bool SetVoxel(USparseVoxelGrid* Grid, int32 X, int32 Y, int32 Z, float NewSDFValue, bool bDig)
+	{
+		FForceCPU Scope;
+		return Grid->SetVoxel(X, Y, Z, NewSDFValue, bDig);
+	}
 
-        static float GetVoxel(const USparseVoxelGrid* Grid, int32 X, int32 Y, int32 Z)
-        {
-                FForceCPU Scope;
-                return const_cast<USparseVoxelGrid*>(Grid)->GetVoxel(X, Y, Z);
-        }
+	static float GetVoxel(const USparseVoxelGrid* Grid, int32 X, int32 Y, int32 Z)
+	{
+		FForceCPU Scope;
+		return const_cast<USparseVoxelGrid*>(Grid)->GetVoxel(X, Y, Z);
+	}
 
-        static void RemoveVoxels(USparseVoxelGrid* Grid, const TArray<FIntVector>& VoxelsToRemove)
-        {
-                FForceCPU Scope;
-                Grid->RemoveVoxels(VoxelsToRemove);
-        }
+	static void RemoveVoxels(USparseVoxelGrid* Grid, const TArray<FIntVector>& VoxelsToRemove)
+	{
+		FForceCPU Scope;
+		Grid->RemoveVoxels(VoxelsToRemove);
+	}
 
-        static bool ExtractIslandAtPosition(USparseVoxelGrid* Grid, const FVector& WorldPosition,
-                USparseVoxelGrid*& OutGrid, TArray<FIntVector>& OutVoxels)
-        {
-                FForceCPU Scope;
-                return Grid->ExtractIslandAtPosition(WorldPosition, OutGrid, OutVoxels);
-        }
+	static bool ExtractIslandAtPosition(USparseVoxelGrid* Grid, const FVector& WorldPosition,
+		USparseVoxelGrid*& OutGrid, TArray<FIntVector>& OutVoxels)
+	{
+		FForceCPU Scope;
+		return Grid->ExtractIslandAtPosition(WorldPosition, OutGrid, OutVoxels);
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -122,13 +119,13 @@ namespace VoxelGPU
 
 USparseVoxelGrid::USparseVoxelGrid()
 	: DiggerManager(nullptr)
-	  , ParentChunk(nullptr)
-	  , World(nullptr)
-	  , ParentChunkCoordinates(0, 0, 0)
-	  , TerrainGridSize(0)
-	  , Subdivisions(0)
-	  , ChunkSize(0)
-	  , bBorderIsDirty(false)
+	, ParentChunk(nullptr)
+	, World(nullptr)
+	, ParentChunkCoordinates(0, 0, 0)
+	, TerrainGridSize(0)
+	, Subdivisions(0)
+	, ChunkSize(0)
+	, bBorderIsDirty(false)
 {
 }
 
@@ -281,8 +278,8 @@ bool USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
 	{
 		const float Current = Existing->SDFValue;
 		const float Blended = bDig
-			? FMath::Max(Current, NewSDFValue)   // digging → push toward AIR (positive)
-			: FMath::Min(Current, NewSDFValue);  // adding  → push toward SOLID (negative)
+			? FMath::Max(Current, NewSDFValue)   // digging -> push toward AIR (positive)
+			: FMath::Min(Current, NewSDFValue);  // adding  -> push toward SOLID (negative)
 
 		if (FMath::IsNearlyEqual(Current, Blended, SDF_THRESHOLD))
 		{
@@ -319,7 +316,6 @@ bool USparseVoxelGrid::SetVoxel(int32 X, int32 Y, int32 Z, float NewSDFValue, bo
 		ParentChunk->ReportVoxelModification(R);
 	}
 
-
 	// Border dirty hint for neighbor sync
 	const int32 VoxelsPerChunk = FMath::Max(1, ChunkSize * FMath::Max(1, Subdivisions));
 	if (IsBorderVoxel(Key, VoxelsPerChunk))
@@ -343,10 +339,9 @@ void USparseVoxelGrid::SetVoxelData(const TMap<FIntVector, FVoxelData>& InData)
 	}
 }
 
-
 const FVoxelData* USparseVoxelGrid::GetVoxelData(const FIntVector& Voxel) const
 {
-	// (Keeping existing lock strategy — we’ll move to RW locks when we change the header.)
+	// (Keeping existing lock strategy — we'll move to RW locks when we change the header.)
 	return VoxelData.Find(Voxel);
 }
 
@@ -380,7 +375,7 @@ float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z)
 	}
 
 	// Fallback to baked terrain via landscape height
-	const FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(FIntVector(X, Y, Z));
+	const FVector WorldPos = FVoxelConversion::GlobalVoxelCenterToWorld(FIntVector(X, Y, Z));
 	const float LandscapeHeight = EnsureDiggerManager()
 		? DiggerManager->GetLandscapeHeightAt(FVector(WorldPos.X, WorldPos.Y, 0))
 		: 0.f;
@@ -398,7 +393,7 @@ float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z) const
 		return Existing->SDFValue;
 	}
 
-	const FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(FIntVector(X, Y, Z));
+	const FVector WorldPos = FVoxelConversion::GlobalVoxelCenterToWorld(FIntVector(X, Y, Z));
 	const float LandscapeHeight = (const_cast<USparseVoxelGrid*>(this)->EnsureDiggerManager())
 		? const_cast<USparseVoxelGrid*>(this)->DiggerManager->GetLandscapeHeightAt(FVector(WorldPos.X, WorldPos.Y, 0))
 		: 0.f;
@@ -493,7 +488,6 @@ TMap<FIntVector, float> USparseVoxelGrid::GetAllVoxelsSDF() const
 	}
 	return Out;
 }
-
 
 bool USparseVoxelGrid::VoxelExists(int32 X, int32 Y, int32 Z) const
 {
@@ -605,7 +599,7 @@ void USparseVoxelGrid::RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove)
 			R.VoxelsDug        = VoxelsToRemove.Num(); // removal == dug
 			ParentChunk->ReportVoxelModification(R);
 		}
-		
+
 		return;
 	}
 
@@ -619,7 +613,7 @@ void USparseVoxelGrid::RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove)
 				AsyncTask(ENamedThreads::GameThread, [this, Voxel]()
 				{
 					DrawDebugBox(GetWorld(),
-						FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkCoordinates(), Voxel),
+						FVoxelConversion::ChunkVoxelToWorldCenter_Min(GetParentChunk()->GetChunkCoordinates(), Voxel),
 						FVector(FVoxelConversion::LocalVoxelSize / 2.0f),
 						FColor::Red, false, 5.0f);
 				});
@@ -656,7 +650,7 @@ void USparseVoxelGrid::RemoveSpecifiedVoxels(const TArray<FIntVector>& LocalVoxe
 			AsyncTask(ENamedThreads::GameThread, [this, Voxel]()
 			{
 				DrawDebugBox(GetWorld(),
-					FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkCoordinates(), Voxel),
+					FVoxelConversion::ChunkVoxelToWorldCenter_Min(GetParentChunk()->GetChunkCoordinates(), Voxel),
 					FVector(FVoxelConversion::LocalVoxelSize / 2.0f),
 					FColor::Red, false, 5.0f);
 			});
@@ -675,7 +669,7 @@ bool USparseVoxelGrid::RemoveVoxel(const FIntVector& LocalVoxel)
 		AsyncTask(ENamedThreads::GameThread, [this, LocalVoxel]()
 		{
 			DrawDebugBox(GetWorld(),
-				FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkCoordinates(), LocalVoxel),
+				FVoxelConversion::ChunkVoxelToWorldCenter_Min(GetParentChunk()->GetChunkCoordinates(), LocalVoxel),
 				FVector(FVoxelConversion::LocalVoxelSize / 2.0f),
 				FColor::Red, false, 5.0f);
 		});
@@ -692,12 +686,14 @@ bool USparseVoxelGrid::CollectIslandAtPosition(const FVector& Center, TArray<FIn
 {
 	OutVoxels.Empty();
 
-	// Convert world position to voxel space
-	const FIntVector StartVoxel = FVoxelConversion::WorldToLocalVoxel(Center);
+	// Convert world position to voxel space (local within parent chunk)
+	FIntVector StartChunk, StartVoxel;
+	FVoxelConversion::WorldToChunkAndLocal_Min(Center, StartChunk, StartVoxel);
 
 	if (DiggerDebug::Islands || DiggerDebug::Space)
 	{
-		UE_LOG(LogTemp, Display, TEXT("[Island] Extraction at position: %s → Voxel: %s"), *Center.ToString(), *StartVoxel.ToString());
+		UE_LOG(LogTemp, Display, TEXT("[Island] Extraction at position: %s -> Voxel(local) %s, Chunk %s"),
+			*Center.ToString(), *StartVoxel.ToString(), *StartChunk.ToString());
 	}
 
 	const float SDFThreshold = 0.0f;
@@ -822,7 +818,9 @@ bool USparseVoxelGrid::ExtractIslandAtPosition(const FVector& WorldPosition, USp
 	OutVoxels.Empty();
 	OutGrid = nullptr;
 
-	const FIntVector StartVoxel = FVoxelConversion::WorldToLocalVoxel(WorldPosition);
+	// World -> (chunk, local) and use local key for this grid
+	FIntVector StartChunk, StartVoxel;
+	FVoxelConversion::WorldToChunkAndLocal_Min(WorldPosition, StartChunk, StartVoxel);
 	const float SDFThreshold = 0.0f;
 
 	if (!IsValid(this) || VoxelData.IsEmpty())
@@ -950,7 +948,6 @@ bool USparseVoxelGrid::ExtractIslandAtPosition(const FVector& WorldPosition, USp
 		ParentChunk->ReportVoxelModification(R);
 	}
 
-
 	OutGrid = NewGrid;
 	return OutVoxels.Num() > 0;
 }
@@ -1015,7 +1012,7 @@ FIslandData USparseVoxelGrid::DetectIsland(float SDFThreshold, const FIntVector&
 	{
 		for (const FIntVector& Voxel : IslandVoxels)
 		{
-			Center += FVoxelConversion::ChunkVoxelToWorld(GetParentChunkCoordinates(), Voxel);
+			Center += FVoxelConversion::ChunkVoxelToWorldCenter_Min(GetParentChunkCoordinates(), Voxel);
 		}
 		Center /= IslandVoxels.Num();
 
@@ -1031,126 +1028,123 @@ FIslandData USparseVoxelGrid::DetectIsland(float SDFThreshold, const FIntVector&
 // Complete DetectIslands method with debug logging
 TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
 {
-    TArray<FIslandData> Islands;
-    TSet<FIntVector> Visited;
+	TArray<FIslandData> Islands;
+	TSet<FIntVector> Visited;
 
-    auto IsSolid = [this, SDFThreshold](const FIntVector& Voxel) -> bool
-    {
-        const FVoxelData* Data = VoxelData.Find(Voxel);
-        return Data && Data->SDFValue < SDFThreshold;
-    };
+	auto IsSolid = [this, SDFThreshold](const FIntVector& Voxel) -> bool
+	{
+		const FVoxelData* Data = VoxelData.Find(Voxel);
+		return Data && Data->SDFValue < SDFThreshold;
+	};
 
-    TArray<FIntVector> Directions;
-    Directions.Reserve(26);
-    for (int dx = -1; dx <= 1; ++dx)
-    for (int dy = -1; dy <= 1; ++dy)
-    for (int dz = -1; dz <= 1; ++dz)
-    {
-        if (dx != 0 || dy != 0 || dz != 0)
-        {
-            Directions.Add(FIntVector(dx, dy, dz));
-        }
-    }
+	TArray<FIntVector> Directions;
+	Directions.Reserve(26);
+	for (int dx = -1; dx <= 1; ++dx)
+	for (int dy = -1; dy <= 1; ++dy)
+	for (int dz = -1; dz <= 1; ++dz)
+	{
+		if (dx != 0 || dy != 0 || dz != 0)
+		{
+			Directions.Add(FIntVector(dx, dy, dz));
+		}
+	}
 
-    // Get chunk coordinates once
-    FIntVector ChunkCoords = GetParentChunkCoordinates();
-    UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] DetectIslands ChunkCoords: %s"), *ChunkCoords.ToString());
+	// Get chunk coordinates once
+	FIntVector ChunkCoords = GetParentChunkCoordinates();
+	UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] DetectIslands ChunkCoords: %s"), *ChunkCoords.ToString());
 
-    for (const auto& Pair : VoxelData)
-    {
-        const FIntVector& Seed = Pair.Key;
+	for (const auto& Pair : VoxelData)
+	{
+		const FIntVector& Seed = Pair.Key;
 
-        if (Visited.Contains(Seed) || !IsSolid(Seed))
-            continue;
+		if (Visited.Contains(Seed) || !IsSolid(Seed))
+			continue;
 
-        TArray<FIntVector> IslandVoxels;
-        TQueue<FIntVector> Queue;
+		TArray<FIntVector> IslandVoxels;
+		TQueue<FIntVector> Queue;
 
-        Queue.Enqueue(Seed);
-        Visited.Add(Seed);
-        IslandVoxels.Add(Seed);
+		Queue.Enqueue(Seed);
+		Visited.Add(Seed);
+		IslandVoxels.Add(Seed);
 
-        while (!Queue.IsEmpty())
-        {
-            FIntVector Current;
-            Queue.Dequeue(Current);
+		while (!Queue.IsEmpty())
+		{
+			FIntVector Current;
+			Queue.Dequeue(Current);
 
-            for (const FIntVector& Dir : Directions)
-            {
-                const FIntVector Neighbor = Current + Dir;
+			for (const FIntVector& Dir : Directions)
+			{
+				const FIntVector Neighbor = Current + Dir;
 
-                if (!Visited.Contains(Neighbor) && IsSolid(Neighbor))
-                {
-                    Queue.Enqueue(Neighbor);
-                    Visited.Add(Neighbor);
-                    IslandVoxels.Add(Neighbor);
-                }
-            }
-        }
+				if (!Visited.Contains(Neighbor) && IsSolid(Neighbor))
+				{
+					Queue.Enqueue(Neighbor);
+					Visited.Add(Neighbor);
+					IslandVoxels.Add(Neighbor);
+				}
+			}
+		}
 
-        // Calculate center using the SAME method as highlight function
-        FVector Center = FVector::ZeroVector;
-        TArray<FVoxelInstance> TempInstances;
-        TempInstances.Reserve(IslandVoxels.Num());
+		// Calculate center using the SAME method as highlight function
+		FVector Center = FVector::ZeroVector;
+		TArray<FVoxelInstance> TempInstances;
+		TempInstances.Reserve(IslandVoxels.Num());
 
-        // Debug the first few voxel conversions
-        int32 DebugCount = 0;
-        for (const FIntVector& LocalVoxel : IslandVoxels)
-        {
-	        FVoxelInstance Instance;
-        	Instance.ChunkCoords = ChunkCoords;
-        	Instance.LocalVoxel = LocalVoxel;
-        	Instance.GlobalVoxel = FVoxelConversion::ChunkAndLocalToGlobalVoxel(ChunkCoords, LocalVoxel);
-            
-        	TempInstances.Add(Instance);
-        	
+		// Debug the first few voxel conversions
+		int32 DebugCount = 0;
+		for (const FIntVector& LocalVoxel : IslandVoxels)
+		{
+			FVoxelInstance Instance;
+			Instance.ChunkCoords  = ChunkCoords;
+			Instance.LocalVoxel   = LocalVoxel;
+			Instance.GlobalVoxel  = FVoxelConversion::ChunkAndLocalToGlobalVoxel_Min(ChunkCoords, LocalVoxel);
 
-        	FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel);
-        	Center += WorldPos;
-        	
-        	
-            // Debug first 3 voxels
-            if (DebugCount < 3)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Detection Voxel %d:"), DebugCount);
-                UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   LocalVoxel: %s"), *LocalVoxel.ToString());
-                UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   GlobalVoxel: %s"), *Instance.GlobalVoxel.ToString());
-                UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   ExpectedWorldPos: %s"), *WorldPos.ToString());
-            }
-            DebugCount++;
-        }
-        Center /= FMath::Max(1, IslandVoxels.Num());
+			TempInstances.Add(Instance);
 
-        FIslandData Island;
-        Island.Location = Center;
-        Island.VoxelCount = IslandVoxels.Num();
-        Island.Voxels = IslandVoxels;
-        Island.VoxelInstances = TempInstances; // Use the instances we just created
+			FVector WorldPos = FVoxelConversion::GlobalVoxelCenterToWorld(Instance.GlobalVoxel);
+			Center += WorldPos;
 
-        // Convert reference voxel to global space
-        Island.ReferenceVoxel = TempInstances[0].GlobalVoxel; // Use the already converted value
-        
-        UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Detection calculated center: %s (from %d voxels)"), 
-               *Center.ToString(), IslandVoxels.Num());
-        
-        Islands.Add(Island);
-    }
+			// Debug first 3 voxels
+			if (DebugCount < 3)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Detection Voxel %d:"), DebugCount);
+				UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   LocalVoxel: %s"), *LocalVoxel.ToString());
+				UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   GlobalVoxel: %s"), *Instance.GlobalVoxel.ToString());
+				UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   ExpectedWorldPos: %s"), *WorldPos.ToString());
+			}
+			DebugCount++;
+		}
+		Center /= FMath::Max(1, IslandVoxels.Num());
+
+		FIslandData Island;
+		Island.Location      = Center;
+		Island.VoxelCount    = IslandVoxels.Num();
+		Island.Voxels        = IslandVoxels;
+		Island.VoxelInstances = TempInstances; // Use the instances we just created
+
+		// Convert reference voxel to global space
+		Island.ReferenceVoxel = TempInstances[0].GlobalVoxel; // Use the already converted value
+
+		UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Detection calculated center: %s (from %d voxels)"),
+			   *Center.ToString(), IslandVoxels.Num());
+
+		Islands.Add(Island);
+	}
 
 #if WITH_EDITOR
-    for (const auto& Pair : VoxelData)
-    {
-        const FIntVector& V = Pair.Key;
-        if (IsSolid(V) && !Visited.Contains(V))
-        {
-            if (DiggerDebug::Islands)
-            UE_LOG(LogTemp, VeryVerbose, TEXT("[IslandDetection] Missed solid voxel at %s"), *V.ToString());
-        }
-    }
+	for (const auto& Pair : VoxelData)
+	{
+		const FIntVector& V = Pair.Key;
+		if (IsSolid(V) && !Visited.Contains(V))
+		{
+			if (DiggerDebug::Islands)
+			UE_LOG(LogTemp, VeryVerbose, TEXT("[IslandDetection] Missed solid voxel at %s"), *V.ToString());
+		}
+	}
 #endif
 
-    return Islands;
+	return Islands;
 }
-
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Debug draw
@@ -1198,26 +1192,22 @@ void USparseVoxelGrid::RenderVoxels()
 		const float SDF = V.Value.SDFValue;
 
 		// Directly get voxel world center from chunk + local
-		const FVector WorldP = FVoxelConversion::ChunkVoxelToWorld(ChunkCoords, Local);
-
-		// Apply debug offset
-		const FVector VoxelCenter = WorldP;
+		const FVector WorldP = FVoxelConversion::ChunkVoxelToWorldCenter_Min(ChunkCoords, Local);
 
 		// Classify voxel
 		if (SDF > 0.0f)
 		{
-			Air.Add(VoxelCenter);
+			Air.Add(WorldP);
 		}
 		else if (SDF < 0.0f)
 		{
-			Solid.Add(VoxelCenter);
+			Solid.Add(WorldP);
 		}
 		else
 		{
-			Surface.Add(VoxelCenter);
+			Surface.Add(WorldP);
 		}
 	}
-
 
 	const FVector Extent(FVoxelConversion::LocalVoxelSize / 2.0f);
 

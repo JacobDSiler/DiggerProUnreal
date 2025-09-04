@@ -1,4 +1,4 @@
-#include "SphereBrushShape.h"
+﻿#include "SphereBrushShape.h"
 
 #include "FBrushStroke.h"
 #include "VoxelConversion.h"

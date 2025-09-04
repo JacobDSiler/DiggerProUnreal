@@ -1,4 +1,4 @@
-#include "PyramidBrushShape.h"
+﻿#include "PyramidBrushShape.h"
 
 #include "FBrushStroke.h"
 #include "VoxelConversion.h"
@@ -107,3 +107,4 @@ bool UPyramidBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStr
     const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
     return DistanceSq <= RadiusSq;
 }
+

@@ -1,4 +1,4 @@
-#include "DiggerEditorAccess.h"
+﻿#include "DiggerEditorAccess.h"
 
 FOnDiggerEditorModeChanged FDiggerEditorAccess::OnEditorModeChanged;
 static bool GDiggerModeActive = false;
@@ -16,3 +16,4 @@ void FDiggerEditorAccess::SetEditorModeActive(bool bActive)
 		OnEditorModeChanged.Broadcast(bActive);
 	}
 }
+

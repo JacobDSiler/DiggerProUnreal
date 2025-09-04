@@ -1,4 +1,4 @@
-
+﻿
 
 #include "DiggerProUnreal.h"
 #include "Modules/ModuleManager.h"
@@ -25,3 +25,4 @@ IMPLEMENT_MODULE(FDiggerProUnrealModule, DiggerProUnreal)
 // TODO: Confirm shader directory mapping works in packaged build
 //   -> Test in standalone + packaged game
 //   -> Adjust AddShaderSourceDirectoryMapping if needed for plugin vs project
+

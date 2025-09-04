@@ -1,4 +1,4 @@
-// PyramidBrushShape.h
+﻿// PyramidBrushShape.h
 #pragma once
 
 #include "VoxelBrushShape.h"

@@ -1,4 +1,4 @@
-#include "BrushAssetEditorUtils.h"
+﻿#include "BrushAssetEditorUtils.h"
 
 #include "DiggerDebug.h"
 #include "FCustomSDFBrush.h"
@@ -124,3 +124,4 @@ bool FBrushAssetEditorUtils::GenerateSDFBrushFromStaticMesh(UStaticMesh* Mesh, c
     return false;
 #endif
 }
+

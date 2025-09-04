@@ -1,4 +1,4 @@
-// DiggerEdModeToolkit.h
+﻿// DiggerEdModeToolkit.h
 #pragma once
 
 #include "CoreMinimal.h"
@@ -682,3 +682,4 @@ private:
 	void DeleteCustomBrush(int32 Index);
 	FString GetBrushDisplayName(const FCustomBrushEntry& Entry) const;
 };
+

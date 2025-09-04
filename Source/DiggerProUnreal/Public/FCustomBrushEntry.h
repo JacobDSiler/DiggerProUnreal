@@ -1,4 +1,4 @@
-// FCustomBrushEntry.h
+﻿// FCustomBrushEntry.h
 
 #pragma once
 
@@ -16,3 +16,4 @@ struct FCustomBrushEntry
     bool IsSDF() const { return !SDFBrushFilePath.IsEmpty(); }
     bool IsMesh() const { return Mesh.IsValid(); }
 };
+

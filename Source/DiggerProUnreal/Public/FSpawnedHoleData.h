@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "FHoleShape.h"
@@ -48,7 +48,7 @@ struct FSpawnedHoleData
 
 
 
-// 🔥 This must be outside of the struct definition:
+// ðŸ”¥ This must be outside of the struct definition:
 // Serialization for FSpawnedHoleData
 FORCEINLINE FArchive& operator<<(FArchive& Ar, FSpawnedHoleData& Hole)
 {

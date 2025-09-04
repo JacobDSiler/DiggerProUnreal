@@ -1,4 +1,4 @@
-#include "IcosphereBrushShape.h"
+﻿#include "IcosphereBrushShape.h"
 
 #include "FBrushStroke.h"
 #include "VoxelConversion.h"
@@ -103,3 +103,4 @@ bool UIcosphereBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushS
     const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
     return DistanceSq <= RadiusSq;
 }
+

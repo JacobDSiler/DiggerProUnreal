@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "FLightBrushTypes.h"
@@ -92,7 +92,7 @@ struct FSavedLightData
 				LightType = ELightBrushType::Directional;
 				LightColor = DirComp->GetLightColor();
 				Intensity = DirComp->Intensity;
-				// Directional lights don’t use Radius/Falloff/Angle
+				// Directional lights donâ€™t use Radius/Falloff/Angle
 			}
 		}
 	}
@@ -152,3 +152,4 @@ struct FSavedLightData
 		return NewLight;
 	}
 };
+

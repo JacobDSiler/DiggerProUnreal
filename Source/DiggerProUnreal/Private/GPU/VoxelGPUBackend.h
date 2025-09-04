@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 
@@ -34,3 +34,4 @@ namespace VoxelGPU
 	// Returns true if a GPU path actually ran. For now: always false (stub).
 	bool TryApplyBrushGPU(const UVoxelChunk* Chunk, const FBrushStroke& Stroke, const FBrushDispatchDesc& Desc);
 }
+

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <mutex>
 #include <queue>
@@ -106,13 +106,15 @@ public:
     // NEW (stub): will be broadcast once after routing a brush across chunks
     FOnBrushFinished OnBrushFinished;
 
+    void Debug_OffsetProbe(const FIslandData& Island);
+    
     UPROPERTY()
     UInstancedStaticMeshComponent* VoxelDebugMesh;
 
     void SpawnLight(const FBrushStroke& Stroke);
     void InitializeBrushShapes();
     UVoxelBrushShape* GetActiveBrushShape(EVoxelBrushType BrushType) const;
-    // Add this helper so callers don’t have to worry about init/fallback:
+    // Add this helper so callers donâ€™t have to worry about init/fallback:
     UVoxelBrushShape* GetBrushShapeForType(EVoxelBrushType BrushType);
 
     
@@ -486,7 +488,7 @@ public:
     //TMap<FIntVector, FIslandData> IslandLookupMap;
 
 
-    // Cache map from proxy pointer to boolean flag (just for example—can be more complex if needed later)
+    // Cache map from proxy pointer to boolean flag (just for exampleâ€”can be more complex if needed later)
     UPROPERTY()
     TMap<ALandscapeProxy*, bool> CachedLandscapeProxies;
 
@@ -628,7 +630,7 @@ private:
         return (W->WorldType == EWorldType::Game) || (W->WorldType == EWorldType::PIE);
     }
 
-    // “tiny” editor preview init vs full init
+    // â€œtinyâ€ editor preview init vs full init
     void InitEditorLightweight();   // very cheap
     void InitRuntimeHeavy();        // full system init
     void EditorDeferredInit();      // called when the actor is dropped (not while dragging)

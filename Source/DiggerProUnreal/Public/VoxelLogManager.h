@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <CoreMinimal.h>
 
@@ -17,3 +17,4 @@ public:
 private:
     static TMap<FString, FString> AggregatedLogs;
 };
+

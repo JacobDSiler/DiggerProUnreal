@@ -1,4 +1,4 @@
-#include "CustomSDFBrushFactory.h"
+﻿#include "CustomSDFBrushFactory.h"
 #include "UCustomSDFBrushAsset.h"
 #include "Misc/FileHelper.h"
 
@@ -48,3 +48,4 @@ UObject* UCustomSDFBrushFactory::FactoryCreateFile(UClass* InClass, UObject* InP
 
     return Asset;
 }
+

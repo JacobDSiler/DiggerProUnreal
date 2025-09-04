@@ -1,4 +1,4 @@
-// FCustomSDFBrush.h
+﻿// FCustomSDFBrush.h
 
 #pragma once
 
@@ -20,3 +20,4 @@ struct FCustomSDFBrush
         return X + Y * Dimensions.X + Z * Dimensions.X * Dimensions.Y;
     }
 };
+

@@ -1,4 +1,4 @@
-// DynamicHole.cpp
+﻿// DynamicHole.cpp
 
 #include "DynamicHole.h"
 #include "DiggerManager.h"
@@ -34,7 +34,7 @@ void ADynamicHole::OnConstruction(const FTransform& Xform)
 {
 	Super::OnConstruction(Xform);
 
-	// 📌 Assign World Outliner folder (Editor only)
+	// ðŸ“Œ Assign World Outliner folder (Editor only)
 #if WITH_EDITOR
 	const FName NewFolderPath = FName(TEXT("Digger/DynamicHoles"));
 #if ENGINE_MAJOR_VERSION >= 5
@@ -51,13 +51,13 @@ void ADynamicHole::OnConstruction(const FTransform& Xform)
 #endif
 #endif // WITH_EDITOR
 
-	// 📍 Track hole movement and update chunk registration
+	// ðŸ“ Track hole movement and update chunk registration
 	FVector HoleLocation = GetActorLocation();
-	CurrentChunkCoords = FVoxelConversion::WorldToChunk(HoleLocation);
+	CurrentChunkCoords = FVoxelConversion::WorldToChunk_Min(HoleLocation);
 
 	if (OwningChunk && PreviousChunkCoords != CurrentChunkCoords)
 	{
-		// Hole has moved — update chunk registration
+		// Hole has moved â€” update chunk registration
 		OwningChunk->RemoveHoleFromChunk(this);
 
 		OwningChunk = FindOwningChunk(CurrentChunkCoords);
@@ -99,7 +99,7 @@ void ADynamicHole::SetOwningChunk(UVoxelChunk* NewChunk)
 
 UVoxelChunk* ADynamicHole::FindOwningChunk(const FIntVector& ChunkCoords) const
 {
-	// Find the chunk using the coordinates (you can use WorldToChunk or a similar method)
+	// Find the chunk using the coordinates (you can use WorldToChunk_Min or a similar method)
 	if (!DiggerManager)
 		return nullptr;
 	
@@ -148,3 +148,4 @@ void ADynamicHole::SyncWithChunk()
 		OwningChunk->SaveHoleData(HoleLocation, HoleRotation, HoleScale);
 	}
 }
+

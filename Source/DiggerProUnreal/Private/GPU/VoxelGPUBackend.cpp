@@ -1,6 +1,6 @@
-#include "GPU/VoxelGPUBackend.h"
+﻿#include "GPU/VoxelGPUBackend.h"
 
-// Minimal shader plumbing — compiles, but does nothing yet
+// Minimal shader plumbing â€” compiles, but does nothing yet
 #include "GlobalShader.h"
 #include "ShaderPermutation.h"
 #include "ShaderParameterStruct.h"
@@ -32,13 +32,13 @@ public:
 	// TODO: Define dispatch dimensions based on voxel bounds
 	// FIntVector DispatchSize = ...;
 
-	// Keep this EMPTY for now to avoid UAV binding errors (the source .usf can exist but won’t be used)
+	// Keep this EMPTY for now to avoid UAV binding errors (the source .usf can exist but wonâ€™t be used)
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER(FVector3f, ChunkOriginWS)
 		SHADER_PARAMETER(float,     VoxelSize)
 		SHADER_PARAMETER(int32,     VoxelsPerSide)
 		SHADER_PARAMETER(int32,     bDig)
-		// When we wire real buffers, we’ll add:
+		// When we wire real buffers, weâ€™ll add:
 		// SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<float>, SDFOut)
 		// SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float>,   SDFIn)
 		// SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>,  ModifiedCount)
@@ -54,7 +54,7 @@ public:
 IMPLEMENT_GLOBAL_SHADER(FApplyBrushCS, "/DiggerProUnreal/Shaders/VoxelBrushCS.usf", "CSMain", SF_Compute);
 
 //-------------------------------------------------------------------------------------------------
-// Public API — stub that never dispatches (yet). Keeps compile green.
+// Public API â€” stub that never dispatches (yet). Keeps compile green.
 //-------------------------------------------------------------------------------------------------
 
 namespace VoxelGPU
@@ -62,7 +62,7 @@ namespace VoxelGPU
 	bool TryApplyBrushGPU(const UVoxelChunk* /*Chunk*/, const FBrushStroke& /*Stroke*/, const FBrushDispatchDesc& /*Desc*/)
 	{
 		// Stub: we return false so callers can fall back to CPU path.
-		// Once we wire the buffers, we’ll build an RDG pass here and dispatch.
+		// Once we wire the buffers, weâ€™ll build an RDG pass here and dispatch.
 		return false;
 	}
 
@@ -72,3 +72,4 @@ namespace VoxelGPU
 	}
 
 }
+

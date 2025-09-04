@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "VoxelInstance.generated.h"
@@ -29,4 +29,5 @@ struct FVoxelInstance
     UPROPERTY(BlueprintReadWrite)
     FIntVector LocalVoxel;
 };
+
 

@@ -1,4 +1,4 @@
-// FVoxelSDFHelper.h
+﻿// FVoxelSDFHelper.h
 #pragma once
 
 #include "VoxelConversion.h"
@@ -24,3 +24,4 @@ public:
         return bDig ? FVoxelConversion::SDF_AIR : FVoxelConversion::SDF_SOLID;
     }
 };
+

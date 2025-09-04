@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "LandscapeProxy.h"
@@ -202,3 +202,4 @@ private:
     UPROPERTY()
     UProceduralMeshComponent* ProceduralMeshComponent;
 };
+

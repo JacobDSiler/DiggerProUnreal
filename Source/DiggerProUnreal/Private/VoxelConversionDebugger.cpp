@@ -1,4 +1,4 @@
-#include "VoxelConversionDebugger.h"
+﻿#include "VoxelConversionDebugger.h"
 #include "DrawDebugHelpers.h"
 // Include your voxel conversion header
 #include "VoxelConversion.h"
@@ -21,16 +21,17 @@ void AVoxelConversionDebugger::TestPositionConversion(FVector WorldPosition)
            FVoxelConversion::LocalVoxelSize,
            *FVoxelConversion::Origin.ToString());
     
-    // Test WorldToChunk
-    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(WorldPosition);
-    UE_LOG(LogTemp, Warning, TEXT("WorldToChunk: %s"), *ChunkCoords.ToString());
+    // Test WorldToChunk_Min
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk_Min(WorldPosition);
+    UE_LOG(LogTemp, Warning, TEXT("WorldToChunk_Min: %s"), *ChunkCoords.ToString());
     
-    // Test ChunkToWorld
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
-    UE_LOG(LogTemp, Warning, TEXT("ChunkToWorld: %s"), *ChunkOrigin.ToString());
+    // Test ChunkToWorld_Min
+    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld_Min(ChunkCoords);
+    UE_LOG(LogTemp, Warning, TEXT("ChunkToWorld_Min: %s"), *ChunkOrigin.ToString());
     
     // Test WorldToLocalVoxel
-    FIntVector LocalVoxel = FVoxelConversion::WorldToLocalVoxel(WorldPosition);
+    FIntVector LocalVoxel, OutChunk;
+    FVoxelConversion::WorldToChunkAndLocal_Min(WorldPosition, LocalVoxel, OutChunk);
     UE_LOG(LogTemp, Warning, TEXT("WorldToLocalVoxel: %s"), *LocalVoxel.ToString());
     
     // Calculate global voxel coordinate for clarity
@@ -43,7 +44,7 @@ void AVoxelConversionDebugger::TestPositionConversion(FVector WorldPosition)
     UE_LOG(LogTemp, Warning, TEXT("Calculated Global Voxel: %s"), *GlobalVoxel.ToString());
     
     // Test round trip with LocalVoxelToWorld
-    FVector ReconstructedWorld = FVoxelConversion::LocalVoxelToWorld(GlobalVoxel);
+    FVector ReconstructedWorld = FVoxelConversion::GlobalVoxelCenterToWorld(GlobalVoxel);
     UE_LOG(LogTemp, Warning, TEXT("LocalVoxelToWorld: %s"), *ReconstructedWorld.ToString());
     
     // Calculate error
@@ -55,7 +56,7 @@ void AVoxelConversionDebugger::TestPositionConversion(FVector WorldPosition)
 
 void AVoxelConversionDebugger::VisualizeChunkBoundaries(FVector WorldPosition, float Duration)
 {
-    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(WorldPosition);
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk_Min(WorldPosition);
     
     // Draw the chunk containing the position
     DrawDebugChunk(ChunkCoords, Duration);
@@ -74,7 +75,7 @@ void AVoxelConversionDebugger::VisualizeChunkBoundaries(FVector WorldPosition, f
 
 void AVoxelConversionDebugger::DrawDebugChunk(const FIntVector& ChunkCoords, float Duration)
 {
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
+    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld_Min(ChunkCoords);
     float ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::TerrainGridSize;
     
     FVector Min = ChunkOrigin;
@@ -82,8 +83,8 @@ void AVoxelConversionDebugger::DrawDebugChunk(const FIntVector& ChunkCoords, flo
     
     // Draw chunk boundaries
     DrawDebugBox(GetWorld(), (Min + Max) * 0.5f, (Max - Min) * 0.5f, 
-        ChunkCoords == FVoxelConversion::WorldToChunk(GetActorLocation()) ? FQuat::Identity : FQuat::Identity,
-        ChunkCoords == FVoxelConversion::WorldToChunk(GetActorLocation()) ? FColor::Red : FColor::Yellow,
+        ChunkCoords == FVoxelConversion::WorldToChunk_Min(GetActorLocation()) ? FQuat::Identity : FQuat::Identity,
+        ChunkCoords == FVoxelConversion::WorldToChunk_Min(GetActorLocation()) ? FColor::Red : FColor::Yellow,
         false, Duration, 0, 2.0f);
 
     // Draw label for chunk coordinates
@@ -92,8 +93,9 @@ void AVoxelConversionDebugger::DrawDebugChunk(const FIntVector& ChunkCoords, flo
 
 void AVoxelConversionDebugger::VisualizeVoxelAtPosition(FVector WorldPosition, float Duration)
 {
-    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(WorldPosition);
-    FIntVector LocalVoxel = FVoxelConversion::WorldToLocalVoxel(WorldPosition);
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk_Min(WorldPosition);
+    FIntVector LocalVoxel, OutChunk;
+    FVoxelConversion::WorldToChunkAndLocal_Min(WorldPosition, LocalVoxel, OutChunk);
     
     // Calculate the center of the voxel
     int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
@@ -103,7 +105,7 @@ void AVoxelConversionDebugger::VisualizeVoxelAtPosition(FVector WorldPosition, f
         ChunkCoords.Z * VoxelsPerChunk + LocalVoxel.Z
     );
     
-    FVector VoxelCenter = FVoxelConversion::LocalVoxelToWorld(GlobalVoxel);
+    FVector VoxelCenter = FVoxelConversion::GlobalVoxelCenterToWorld(GlobalVoxel);
     float VoxelSize = FVoxelConversion::LocalVoxelSize;
     
     // Draw the voxel as a cube
@@ -121,8 +123,10 @@ void AVoxelConversionDebugger::VisualizeVoxelAtPosition(FVector WorldPosition, f
 void AVoxelConversionDebugger::TestRoundTripConversion(FVector WorldPosition)
 {
     // World -> Chunk + Local Voxel -> Global Voxel -> World
-    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(WorldPosition);
-    FIntVector LocalVoxel = FVoxelConversion::WorldToLocalVoxel(WorldPosition);
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk_Min(WorldPosition);
+    
+    FIntVector LocalVoxel, OutChunk;
+    FVoxelConversion::WorldToChunkAndLocal_Min(WorldPosition, LocalVoxel, OutChunk);
     
     int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
     FIntVector GlobalVoxel(
@@ -131,7 +135,7 @@ void AVoxelConversionDebugger::TestRoundTripConversion(FVector WorldPosition)
         ChunkCoords.Z * VoxelsPerChunk + LocalVoxel.Z
     );
     
-    FVector ReconstructedWorld = FVoxelConversion::LocalVoxelToWorld(GlobalVoxel);
+    FVector ReconstructedWorld = FVoxelConversion::GlobalVoxelCenterToWorld(GlobalVoxel);
     
     // Draw debug visualization
     DrawDebugSphere(GetWorld(), WorldPosition, 10.0f, 12, FColor::Red, false, 10.0f);

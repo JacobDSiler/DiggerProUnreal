@@ -1,4 +1,4 @@
-// SphereBrushShape.h
+﻿// SphereBrushShape.h
 #pragma once
 
 #include "VoxelBrushShape.h"
@@ -18,3 +18,4 @@ public:
     
     virtual bool IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const override;
 };
+

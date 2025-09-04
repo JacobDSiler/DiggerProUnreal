@@ -1,4 +1,4 @@
-#include "DiggerManager.h"
+﻿#include "DiggerManager.h"
 
 #include "CoreMinimal.h"
 
@@ -86,8 +86,6 @@ class FDiggerEdMode;
 class MeshDescriptors;
 class StaticMeshAttributes;
 
-// Offset applied to all island world positions to correct misalignment
-static const FVector WORLD_ISLAND_OFFSET(-1600.f, -1600.f, -1600.f);
 
 
 static UHoleShapeLibrary* LoadDefaultHoleLibrary()
@@ -966,8 +964,8 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
     FVector Min = BrushStroke.BrushPosition - FVector(SafetyPadding);
     FVector Max = BrushStroke.BrushPosition + FVector(SafetyPadding);
 
-    FIntVector MinChunk = FVoxelConversion::WorldToChunk(Min);
-    FIntVector MaxChunk = FVoxelConversion::WorldToChunk(Max);
+    FIntVector MinChunk = FVoxelConversion::WorldToChunk_Min(Min);
+    FIntVector MaxChunk = FVoxelConversion::WorldToChunk_Min(Max);
 
     for (int32 X = MinChunk.X; X <= MaxChunk.X; ++X)
     {
@@ -1027,8 +1025,9 @@ void ADiggerManager::SetVoxelAtWorldPosition(const FVector& WorldPos, float Valu
     }
 
     // Calculate chunk and voxel index
-    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(WorldPos);
-    FIntVector LocalVoxelIndex = FVoxelConversion::WorldToMinCornerVoxel(WorldPos);
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk_Min(WorldPos);
+    FIntVector OutChunk, LocalVoxelIndex;
+    FVoxelConversion::WorldToChunkAndLocal_Min(WorldPos, OutChunk, LocalVoxelIndex);
 
     // Try to get or create the chunk
     if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
@@ -1037,7 +1036,7 @@ void ADiggerManager::SetVoxelAtWorldPosition(const FVector& WorldPos, float Valu
 
         if (DiggerDebug::Space || DiggerDebug::Chunks)
         {
-            UE_LOG(LogTemp, Display, TEXT("[SetVoxelAtWorldPosition] WorldPos: %s → Chunk: %s, Voxel: %s, Value: %.2f"),
+            UE_LOG(LogTemp, Display, TEXT("[SetVoxelAtWorldPosition] WorldPos: %s â†’ Chunk: %s, Voxel: %s, Value: %.2f"),
                    *WorldPos.ToString(), *ChunkCoords.ToString(), *LocalVoxelIndex.ToString(), Value);
         }
     }
@@ -1093,11 +1092,11 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
     }
 
     // Compute chunk coordinates from world position
-    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(ClickPosition);
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk_Min(ClickPosition);
 
     if (DiggerDebug::Chunks || DiggerDebug::Space || DiggerDebug::Brush)
     {
-        UE_LOG(LogTemp, Display, TEXT("ClickPos: %s → ChunkCoords: %s"),
+        UE_LOG(LogTemp, Display, TEXT("ClickPos: %s â†’ ChunkCoords: %s"),
                *ClickPosition.ToString(), *ChunkCoords.ToString());
     }
 
@@ -1122,8 +1121,9 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
     FVector ChunkOrigin = ChunkCenter - ChunkExtent;
 
     FVector LocalInChunk = ClickPosition - ChunkOrigin;
-    FIntVector LocalVoxel = FVoxelConversion::WorldToLocalVoxel(ClickPosition);
-    FVector LocalVoxelToWorld = FVoxelConversion::LocalVoxelToWorld(LocalVoxel);
+    FIntVector OutChunk, LocalVoxel;
+    FVoxelConversion::WorldToChunkAndLocal_Min(ClickPosition, OutChunk, LocalVoxel);
+    FVector LocalVoxelToWorld = FVoxelConversion::ChunkVoxelToWorldCenter_Min(OutChunk, LocalVoxel);
 
     if (DiggerDebug::Space || DiggerDebug::Voxels || DiggerDebug::Chunks)
     {
@@ -1239,9 +1239,9 @@ void ADiggerManager::DebugDrawVoxelAtWorldPositionFast(const FVector& WorldPosit
 {
     FIntVector ChunkCoords;
     FIntVector VoxelIndex;
-    FVoxelConversion::WorldToChunkAndVoxel(WorldPosition, ChunkCoords, VoxelIndex);
+    FVoxelConversion::WorldToChunkAndLocal_Min(WorldPosition, ChunkCoords, VoxelIndex);
 
-    if (!FVoxelConversion::IsValidVoxelIndex(VoxelIndex))
+    if (!FVoxelConversion::IsValidLocalIndex_Min(VoxelIndex))
     {
         UE_LOG(LogTemp, Warning, TEXT("Invalid voxel index at world position %s: Chunk %s, VoxelIndex %s"),
             *WorldPosition.ToString(), *ChunkCoords.ToString(), *VoxelIndex.ToString());
@@ -1249,7 +1249,7 @@ void ADiggerManager::DebugDrawVoxelAtWorldPositionFast(const FVector& WorldPosit
     }
 
     // Get the voxel center in world space
-    FVector VoxelCenter = FVoxelConversion::MinCornerVoxelToWorld(ChunkCoords, VoxelIndex);
+    FVector VoxelCenter = FVoxelConversion::ChunkVoxelToWorldCenter_Min(ChunkCoords, VoxelIndex);
 
     // Draw using fast debug system
     if (auto* FastDebug = UFastDebugSubsystem::Get(this))
@@ -1277,7 +1277,7 @@ void ADiggerManager::DrawDiagonalDebugVoxelsFast(FIntVector ChunkCoords)
     const float DebugDuration = 30.0f;
     
     // Get the chunk center using the conversion method
-    FVector ChunkCenter = FVoxelConversion::ChunkToWorld(ChunkCoords);
+    FVector ChunkCenter = FVoxelConversion::ChunkToWorld_Min(ChunkCoords);
     FVector ChunkExtent = FVector(FVoxelConversion::ChunkSize * FVoxelConversion::TerrainGridSize / 2.0f);
     
     // Calculate the minimum corner based on the center and extent
@@ -1621,7 +1621,7 @@ void ADiggerManager::RemoveIslandVoxels(const FIslandData& Island)
         for (const FIntVector& GlobalVoxel : Island.Voxels)
         {
             FIntVector ChunkCoords, LocalVoxel;
-            FVoxelConversion::GlobalVoxelToChunkAndLocal(GlobalVoxel, ChunkCoords, LocalVoxel);
+            FVoxelConversion::GlobalVoxelToChunkAndLocal_Min(GlobalVoxel, ChunkCoords, LocalVoxel);
 
             UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
             if (!ChunkPtr || !*ChunkPtr) continue;
@@ -1784,78 +1784,83 @@ static void Debug_IslandSDFStats(const FIslandData& Island)
         Island.VoxelDataMap.Num(), Neg, Pos, Zer, MinS, MaxS, *MinI.ToString(), *MaxI.ToString());
 }
 
+// Chunk drift check
+void ADiggerManager::Debug_OffsetProbe(const FIslandData& Island)
+{
+    if (Island.VoxelInstances.Num() == 0) return;
+
+    const FVoxelInstance& I = Island.VoxelInstances[0];
+    const FVector W0 = FVoxelConversion::GlobalVoxelCenterToWorld(I.GlobalVoxel);
+    const FVector W1 = FVoxelConversion::ChunkVoxelToWorldCenter_Min(I.ChunkCoords, I.LocalVoxel);
+
+    const FVector D = W1 - W0;
+    const float   CWS = FVoxelConversion::ChunkWorldSize();
+
+    UE_LOG(LogTemp, Warning, TEXT("[Probe] W0=%s  W1=%s  Δ=%s  (Δ/CWS=%.3f,%.3f,%.3f)  CWS=%.1f"),
+        *W0.ToString(), *W1.ToString(), *D.ToString(),
+        D.X / CWS, D.Y / CWS, D.Z / CWS, CWS);
+}
 
 
 // We are using this GenerateIslandMeshFromStoredData! 25/08/2025
 FIslandMeshData ADiggerManager::GenerateIslandMeshFromStoredData(const FIslandData& IslandData)
 {
     FIslandMeshData Result;
-    
-    //  Check out the island data.
-    Debug_IslandSDFStats(IslandDatae);
-    
+
     const int32 InstanceCount = IslandData.VoxelInstances.Num();
     const int32 VoxelDataCount = IslandData.VoxelDataMap.Num();
-
     if (InstanceCount == 0 || VoxelDataCount == 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Island %s has no voxel instances (%d) or voxel data (%d)."),
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Island %s has no data (instances=%d, voxels=%d)."),
             *IslandData.IslandID.ToString(), InstanceCount, VoxelDataCount);
         return Result;
     }
 
-    USparseVoxelGrid* ExtractedGrid = NewObject<USparseVoxelGrid>();
-    ExtractedGrid->SetVoxelData(IslandData.VoxelDataMap);
-    ExtractedGrid->Initialize(nullptr);
+    USparseVoxelGrid* Grid = NewObject<USparseVoxelGrid>();
+    Grid->SetVoxelData(IslandData.VoxelDataMap);
+    Grid->Initialize(nullptr);
 
-    if (ExtractedGrid->GetAllVoxels().Num() == 0)
+    // 1) Compute WORLD pivot as the avg of GLOBAL-voxel centers → world
+    FVector WorldCenter(0,0,0);
+    for (const FVoxelInstance& Inst : IslandData.VoxelInstances)
     {
-        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] ExtractedGrid is empty after SetVoxelData."));
+        WorldCenter += FVoxelConversion::GlobalVoxelCenterToWorld(Inst.GlobalVoxel);
+    }
+    WorldCenter /= FMath::Max(1, InstanceCount);
+
+    // 2) Generate WORLD-SPACE mesh (mesher must NOT add any origin/offset)
+    TArray<FVector> WorldVerts;
+    TArray<int32>   Tris;
+    TArray<FVector> Normals;
+
+    const float VSize = FVoxelConversion::LocalVoxelSize;
+
+    // If your existing signature is (Grid, Origin, VSize, ...), pass ZeroVector.
+    // The mesher body (next section) ignores Origin and works entirely in global-voxel space.
+    MarchingCubes->GenerateMeshFromGrid(Grid, /*Origin*/ FVector::ZeroVector, VSize, WorldVerts, Tris, Normals);
+
+    if (WorldVerts.Num() == 0 || Tris.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Mesher returned empty for island %s"), *IslandData.IslandID.ToString());
         return Result;
     }
 
-    FVector IslandWorldCenter = FVector::ZeroVector;
-    for (const FVoxelInstance& Instance : IslandData.VoxelInstances)
+    // 3) Recentre to LOCAL around (0,0,0) for StaticMesh build
+    Result.Vertices.Reserve(WorldVerts.Num());
+    for (const FVector& V : WorldVerts)
     {
-        IslandWorldCenter += FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel);
+        Result.Vertices.Add(V - WorldCenter);
     }
-    IslandWorldCenter /= InstanceCount;
-    IslandWorldCenter += WORLD_ISLAND_OFFSET;
+    Result.Triangles = MoveTemp(Tris);
+    Result.Normals   = MoveTemp(Normals);
+    Result.MeshOrigin = WorldCenter;  // actor pivot in world
+    Result.bValid = true;
 
-    MarchingCubes->GenerateMeshFromGrid(
-        ExtractedGrid,
-        IslandWorldCenter,
-        VoxelSize,
-        Result.Vertices,
-        Result.Triangles,
-        Result.Normals
-    );
-
-    Result.MeshOrigin = IslandWorldCenter;
-    Result.bValid = (Result.Vertices.Num() > 0 && Result.Triangles.Num() > 0);
-
-    if (!Result.bValid)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Mesh generation failed for island %s. No vertices or triangles."),
-            *IslandData.IslandID.ToString());
-
-        for (const auto& Pair : IslandData.VoxelDataMap)
-        {
-            FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Pair.Key) + WORLD_ISLAND_OFFSET;
-            DrawDebugBox(GetWorld(), WorldPos, FVector(VoxelSize * 0.5f), FColor::Red, false, 10.0f);
-        }
-    }
-    else
-    {
-        UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Mesh generation complete for island %s. Origin: %s | Vertices: %d | Triangles: %d"),
-            *IslandData.IslandID.ToString(),
-            *IslandWorldCenter.ToString(),
-            Result.Vertices.Num(),
-            Result.Triangles.Num() / 3);
-    }
-
+    UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Mesh gen OK: verts=%d tris=%d origin=%s"),
+        Result.Vertices.Num(), Result.Triangles.Num()/3, *WorldCenter.ToString());
     return Result;
 }
+
 
 
 
@@ -1919,45 +1924,65 @@ void ADiggerManager::HighlightIslandByID(const FName& IslandID)
     FIslandData* Island = FindIsland(IslandID);
     if (!Island || !IsValid(VoxelDebugMesh)) return;
 
+    const FIslandData ConstIsland = *Island;
+    Debug_OffsetProbe(ConstIsland);
+
     VoxelDebugMesh->ClearInstances();
 
-    VoxelSize = FVoxelConversion::LocalVoxelSize;
-    const FVector Scale = FVector(VoxelSize / 100.0f);
+    const float VoxelSizeWS = FVoxelConversion::LocalVoxelSize;   // local, don't touch member
+    const FVector Scale = FVector(VoxelSizeWS / 100.f);
 
     int32 DebugCount = 0;
+    FVector AccumCenter = FVector::ZeroVector;
+
     for (const FVoxelInstance& Instance : Island->VoxelInstances)
     {
-        // ✅ Use global voxel position for world alignment and apply world offset
-        FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld(Instance.GlobalVoxel) + WORLD_ISLAND_OFFSET;
+        // ✅ Single source of truth: convert directly to world, no extra offsets
+        const FVector WorldPos = FVoxelConversion::GlobalVoxelCenterToWorld(Instance.GlobalVoxel);
 
         if (DebugCount < 3)
         {
-            UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Highlight Instance %d:"), DebugCount);
-            UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   ChunkCoords: %s"), *Instance.ChunkCoords.ToString());
-            UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   LocalVoxel: %s"), *Instance.LocalVoxel.ToString());
-            UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   GlobalVoxel: %s"), *Instance.GlobalVoxel.ToString());
-            UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   CalculatedWorldPos: %s"), *WorldPos.ToString());
+            UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Voxel %d  Chunk=%s  Local=%s  Global=%s  WorldPos=%s"),
+                DebugCount, *Instance.ChunkCoords.ToString(), *Instance.LocalVoxel.ToString(),
+                *Instance.GlobalVoxel.ToString(), *WorldPos.ToString());
         }
 
-        FTransform Transform;
-        Transform.SetLocation(WorldPos);
-        Transform.SetScale3D(Scale * 1.3f);
+        FTransform T; 
+        T.SetLocation(WorldPos);
+        T.SetScale3D(Scale * 1.3f);
 
-        // Use world-space transform so highlight matches island position
-        VoxelDebugMesh->AddInstanceWorldSpace(Transform);
-        DebugCount++;
+        // UE 5.3+: AddInstance with bWorldSpace=true; older: AddInstanceWorldSpace
+    #if (ENGINE_MAJOR_VERSION > 5) || (ENGINE_MAJOR_VERSION==5 && ENGINE_MINOR_VERSION>=3)
+        VoxelDebugMesh->AddInstance(T, /*bWorldSpace=*/true);
+    #else
+        VoxelDebugMesh->AddInstanceWorldSpace(T);
+    #endif
+
+        AccumCenter += WorldPos;
+        ++DebugCount;
     }
 
-    // ✅ Draw debug box at island center (mesh origin)
-    FTransform CenterTransform;
-    CenterTransform.SetLocation(Island->Location);
-    CenterTransform.SetScale3D(FVector(3.0f));
+    // Optional sanity: compare stored center with computed center
+    const FVector ComputedCenter = (Island->VoxelInstances.Num() > 0)
+        ? (AccumCenter / Island->VoxelInstances.Num())
+        : Island->Location;
 
-    // Add island center marker using world-space transform
-    VoxelDebugMesh->AddInstanceWorldSpace(CenterTransform);
-    DebugCount++;
+    // Center marker at the stored island location
+    FTransform CenterT;
+    CenterT.SetLocation(Island->Location);
+    CenterT.SetScale3D(FVector(3.f));
+#if (ENGINE_MAJOR_VERSION > 5) || (ENGINE_MAJOR_VERSION==5 && ENGINE_MINOR_VERSION>=3)
+    VoxelDebugMesh->AddInstance(CenterT, /*bWorldSpace=*/true);
+#else
+    VoxelDebugMesh->AddInstanceWorldSpace(CenterT);
+#endif
 
-    UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Island.Location debug box at: %s"), *Island->Location.ToString());
+    if (!ComputedCenter.Equals(Island->Location, 1.f))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Center mismatch: stored=%s  computed=%s  Δ=%.2f"),
+            *Island->Location.ToString(), *ComputedCenter.ToString(),
+            FVector::Dist(ComputedCenter, Island->Location));
+    }
 
     if (DiggerDebug::Islands)
     {
@@ -2865,7 +2890,7 @@ float ADiggerManager::GetSmartLandscapeHeightAt(const FVector& WorldPos, bool bF
 
     if (VerticalDifference <= HeightTolerance)
     {
-        // We're close enough — use precise sample
+        // We're close enough â€” use precise sample
         return GetLandscapeHeightAt(WorldPos);
     }
 
@@ -3152,7 +3177,7 @@ void ADiggerManager::DuplicateLandscape(ALandscapeProxy* Landscape)
                         for (int32 VoxelZ = 0; VoxelZ < ChunkVoxelCount; ++VoxelZ)
                         {
                             // Convert voxel coordinates to world space
-                            FVector WorldPosition = FVoxelConversion::LocalVoxelToWorld(FIntVector(VoxelX, VoxelY, VoxelZ));
+                            FVector WorldPosition = FVoxelConversion::GlobalVoxelCenterToWorld(FIntVector(VoxelX, VoxelY, VoxelZ));
 
                             // Calculate SDF value (distance from surface)
                             // Positive values are above the surface, negative values are below
@@ -3304,7 +3329,7 @@ void ADiggerManager::DebugDrawChunkSectionIDs()
         if (Chunk)
         {
             Chunk->GetSparseVoxelGrid()->RenderVoxels();
-            const FVector ChunkPosition = FVoxelConversion::ChunkToWorld(Chunk->GetChunkCoordinates());
+            const FVector ChunkPosition = FVoxelConversion::ChunkToWorld_Min(Chunk->GetChunkCoordinates());
             const FString SectionIDText = FString::Printf(TEXT("ID: %d"), Chunk->GetSectionIndex());
             DrawDebugString(GetSafeWorld(), ChunkPosition, SectionIDText, nullptr, FColor::Green, 5.0f, true);
         }
@@ -3338,7 +3363,7 @@ void ADiggerManager::ApplyBrush()
 
 UVoxelChunk* ADiggerManager::FindOrCreateNearestChunk(const FVector& Position)
 {
-    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(Position);
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk_Min(Position);
     UVoxelChunk** ExistingChunk = ChunkMap.Find(ChunkCoords);
     if (ExistingChunk && *ExistingChunk)
     {
@@ -3356,7 +3381,7 @@ UVoxelChunk* ADiggerManager::FindOrCreateNearestChunk(const FVector& Position)
         UVoxelChunk* Chunk = Entry.Value;
         if (!Chunk) continue;
 
-        FVector WorldPos = FVoxelConversion::ChunkToWorld(Chunk->GetChunkCoordinates());
+        FVector WorldPos = FVoxelConversion::ChunkToWorld_Min(Chunk->GetChunkCoordinates());
         float Distance = FVector::Dist(Position, WorldPos);
 
         if (Distance < MinDistance)
@@ -3371,7 +3396,7 @@ UVoxelChunk* ADiggerManager::FindOrCreateNearestChunk(const FVector& Position)
     if (!NearestChunk)
     {
         UE_LOG(LogTemp, Warning, TEXT("[FindOrCreateNearestChunk] Input Position (World): %s"), *Position.ToString());
-        ChunkCoords = FVoxelConversion::WorldToChunk(Position);
+        ChunkCoords = FVoxelConversion::WorldToChunk_Min(Position);
         UE_LOG(LogTemp, Warning, TEXT("[FindOrCreateNearestChunk] ChunkCoords: %s"), *ChunkCoords.ToString());
 
         
@@ -3389,7 +3414,7 @@ UVoxelChunk* ADiggerManager::FindOrCreateNearestChunk(const FVector& Position)
 
 UVoxelChunk* ADiggerManager::FindNearestChunk(const FVector& Position)
 {
-    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(Position);
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk_Min(Position);
     UVoxelChunk** ExistingChunk = ChunkMap.Find(ChunkCoords);
     if (ExistingChunk && *ExistingChunk)
     {
@@ -3401,7 +3426,7 @@ UVoxelChunk* ADiggerManager::FindNearestChunk(const FVector& Position)
     float MinDistance = FLT_MAX;
     for (auto& Entry : ChunkMap)
     {
-        FVector WorldPos = FVoxelConversion::ChunkToWorld(Entry.Value->GetChunkCoordinates());
+        FVector WorldPos = FVoxelConversion::ChunkToWorld_Min(Entry.Value->GetChunkCoordinates());
         float Distance = FVector::Dist(Position, WorldPos);
         if (Distance < MinDistance)
         {
@@ -3421,7 +3446,7 @@ void ADiggerManager::MarkNearbyChunksDirty(const FVector& CenterPosition, float 
 
     UE_LOG(LogTemp, Warning, TEXT("MarkNearbyChunksDirty: CenterPosition=%s, Radius=%f"), *CenterPosition.ToString(), Radius);
     UE_LOG(LogTemp, Warning, TEXT("FVoxelConversion: ChunkSize=%d, TerrainGridSize=%f, Origin=%s"), FVoxelConversion::ChunkSize, FVoxelConversion::TerrainGridSize, *FVoxelConversion::Origin.ToString());
-    FIntVector CenterChunkCoords = FVoxelConversion::WorldToChunk(CenterPosition);
+    FIntVector CenterChunkCoords = FVoxelConversion::WorldToChunk_Min(CenterPosition);
     UE_LOG(LogTemp, Warning, TEXT("WorldToChunk: CenterPosition=%s -> CenterChunkCoords=%s"), *CenterPosition.ToString(), *CenterChunkCoords.ToString());
 
 
@@ -3499,7 +3524,7 @@ void ADiggerManager::RotateIslandByID(const FName& IslandID, const FRotator& Rot
         // Step 4: Convert to chunk/local coordinates
         FIntVector NewChunkCoords;
         FIntVector NewLocalCoords;
-        FVoxelConversion::GlobalVoxelToChunkAndLocal(NewGlobal, NewChunkCoords, NewLocalCoords);
+        FVoxelConversion::GlobalVoxelToChunkAndLocal_Min(NewGlobal, NewChunkCoords, NewLocalCoords);
 
         // Step 5: Insert rotated voxel
         UVoxelChunk** TargetChunkPtr = ChunkMap.Find(NewChunkCoords);
@@ -3537,9 +3562,9 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
     IslandIDMap.Empty();
     VoxelToIslandIDMap.Empty();
 
-    // Step 1: Collect all voxel data and physical instances
-    TMap<FIntVector, FVoxelData> UnifiedVoxelData;
-    TArray<FVoxelInstance> AllPhysicalVoxelInstances;
+    // ---- Step 1: unify voxels to GLOBAL space ----
+    TMap<FIntVector, FVoxelData> UnifiedVoxelData;   // GLOBAL -> data
+    TArray<FVoxelInstance>       AllPhysical;        // coherent (Chunk, Local, Global)
 
     for (const auto& Pair : ChunkMap)
     {
@@ -3549,83 +3574,109 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
         USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid();
         if (!IsValid(Grid)) continue;
 
-        FIntVector ChunkCoords = Chunk->GetChunkCoordinates();
-
+        const FIntVector CC = Chunk->GetChunkCoordinates();
+        // Grid->GetAllVoxels() is LOCAL per-chunk
         for (const auto& VoxelPair : Grid->GetAllVoxels())
         {
-            const FIntVector& LocalIndex = VoxelPair.Key;
+            const FIntVector Local = VoxelPair.Key;     // LOCAL (0..VPC-1)
             const FVoxelData& Data = VoxelPair.Value;
 
-            FIntVector GlobalIndex = FVoxelConversion::ChunkAndLocalToGlobalVoxel_MinCornerAligned(ChunkCoords, LocalIndex);
+            const FIntVector Global = FVoxelConversion::ChunkAndLocalToGlobalVoxel_Min(CC, Local);
 
-            UnifiedVoxelData.Add(GlobalIndex, Data);
-            AllPhysicalVoxelInstances.Add(FVoxelInstance(GlobalIndex, ChunkCoords, LocalIndex));
+            UnifiedVoxelData.Add(Global, Data);
+
+            FVoxelInstance I;
+            I.ChunkCoords = CC;
+            I.LocalVoxel  = Local;
+            I.GlobalVoxel = Global;
+            AllPhysical.Add(I);
         }
     }
 
-    // Step 2: Detect deduplicated islands
-    USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
-    TempGrid->SetVoxelData(UnifiedVoxelData);
+    // ---- Step 2: deduplicate islands from GLOBAL-keyed grid ----
+    USparseVoxelGrid* Temp = NewObject<USparseVoxelGrid>(GetTransientPackage());
+    Temp->Initialize(nullptr);                  // sizes/origin from FVoxelConversion
+    Temp->SetVoxelData(UnifiedVoxelData);       // keys are GLOBAL indices
 
-    TArray<FIslandData> DeduplicatedIslands = TempGrid->DetectIslands(0.0f);
+    const TArray<FIslandData> DedupIslands = Temp->DetectIslands(0.0f);
     TArray<FIslandData> FinalIslands;
+    FinalIslands.Reserve(DedupIslands.Num());
 
-    // Step 3: Enhance islands with full physical instances and voxel data
-    for (const FIslandData& DedupIsland : DeduplicatedIslands)
+    // ---- Step 3: rebuild each island strictly from GLOBAL keys ----
+    for (const FIslandData& D : DedupIslands)
     {
-        FIslandData EnhancedIsland;
-        FString Hash = GenerateIslandHash(DedupIsland.Voxels);
-        EnhancedIsland.IslandID = FName(*FString::Printf(TEXT("Island_%s"), *Hash));
-        EnhancedIsland.IslandName = FString::Printf(TEXT("Island %d"), FinalIslands.Num());
-        EnhancedIsland.PersistentUID = FGuid::NewGuid();
-        EnhancedIsland.Location = DedupIsland.Location + WORLD_ISLAND_OFFSET;
-        EnhancedIsland.ReferenceVoxel = DedupIsland.ReferenceVoxel;
+        FIslandData Out;
+        Out.IslandID      = FName(*FString::Printf(TEXT("Island_%s"), *GenerateIslandHash(D.Voxels)));
+        Out.IslandName    = FString::Printf(TEXT("Island %d"), FinalIslands.Num());
+        Out.PersistentUID = FGuid::NewGuid();
 
-        TSet<FIntVector> IslandGlobalVoxels(DedupIsland.Voxels);
-        EnhancedIsland.VoxelCount = IslandGlobalVoxels.Num();
+        const TSet<FIntVector> GlobalSet(D.Voxels);   // must be GLOBAL indices
+        Out.VoxelCount = GlobalSet.Num();
 
-        TMap<FIntVector, FVoxelData> VoxelDataMap;
+        FVector CenterWS = FVector::ZeroVector;
+        TMap<FIntVector, FVoxelData> DataMap;
+        Out.Voxels.Reserve(Out.VoxelCount);
+        Out.VoxelInstances.Reserve(Out.VoxelCount);
 
-        for (const FVoxelInstance& Instance : AllPhysicalVoxelInstances)
+        const int32 VPC = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+
+        for (const FVoxelInstance& Src : AllPhysical)
         {
-            if (IslandGlobalVoxels.Contains(Instance.GlobalVoxel))
-            {
-                EnhancedIsland.VoxelInstances.Add(Instance);
-                EnhancedIsland.Voxels.Add(Instance.GlobalVoxel);
+            if (!GlobalSet.Contains(Src.GlobalVoxel)) continue;
 
-                const FVoxelData* Data = UnifiedVoxelData.Find(Instance.GlobalVoxel);
-                if (Data)
-                {
-                    VoxelDataMap.Add(Instance.GlobalVoxel, *Data);
-                }
+            // Coherent instance (Chunk/Local were built from Global earlier)
+            Out.VoxelInstances.Add(Src);
+            Out.Voxels.Add(Src.GlobalVoxel);
+
+            if (const FVoxelData* Dp = UnifiedVoxelData.Find(Src.GlobalVoxel))
+            {
+                DataMap.Add(Src.GlobalVoxel, *Dp);
             }
+
+            CenterWS += FVoxelConversion::GlobalVoxelCenterToWorld(Src.GlobalVoxel);
+
+            // Guard: Local must be in [0..VPC-1]
+            ensureMsgf(
+                Src.LocalVoxel.X >= 0 && Src.LocalVoxel.X < VPC &&
+                Src.LocalVoxel.Y >= 0 && Src.LocalVoxel.Y < VPC &&
+                Src.LocalVoxel.Z >= 0 && Src.LocalVoxel.Z < VPC,
+                TEXT("[DetectUnifiedIslands] Local out of range; mixed spaces for Global=%s, Local=%s, Chunk=%s"),
+                *Src.GlobalVoxel.ToString(), *Src.LocalVoxel.ToString(), *Src.ChunkCoords.ToString());
         }
 
-        EnhancedIsland.VoxelDataMap = VoxelDataMap;
+        Out.VoxelDataMap = MoveTemp(DataMap);
 
-        FinalIslands.Add(EnhancedIsland);
-        IslandIDMap.Add(EnhancedIsland.IslandID, EnhancedIsland);
-
-        for (const FVoxelInstance& Instance : EnhancedIsland.VoxelInstances)
+        if (Out.VoxelInstances.Num() > 0)
         {
-            VoxelToIslandIDMap.Add(Instance.GlobalVoxel, EnhancedIsland.IslandID);
+            Out.Location       = CenterWS / Out.VoxelInstances.Num();           // recompute from GLOBAL→world (center)
+            Out.ReferenceVoxel = Out.VoxelInstances[0].GlobalVoxel;             // GLOBAL index
+        }
+        else
+        {
+            Out.Location       = FVector::ZeroVector;
+            Out.ReferenceVoxel = FIntVector::ZeroValue;
+        }
+
+        // Indexing for lookups
+        FinalIslands.Add(Out);
+        IslandIDMap.Add(Out.IslandID, Out);
+        for (const FVoxelInstance& VI : Out.VoxelInstances)
+        {
+            VoxelToIslandIDMap.Add(VI.GlobalVoxel, Out.IslandID);
         }
     }
 
-    // Step 4: Broadcast islands to UI
+    // ---- Step 4: notify ----
     if (OnIslandsDetectionStarted.IsBound())
         OnIslandsDetectionStarted.Broadcast();
 
-    for (const FIslandData& Island : FinalIslands)
-    {
+    for (const FIslandData& I : FinalIslands)
         if (OnIslandDetected.IsBound())
-        {
-            OnIslandDetected.Broadcast(Island);
-        }
-    }
+            OnIslandDetected.Broadcast(I);
 
     return FinalIslands;
 }
+
 
 
 
@@ -3658,7 +3709,7 @@ void ADiggerManager::DuplicateIslandAtLocation(const FName& SourceIslandID, cons
 
         FIntVector NewChunkCoords;
         FIntVector NewLocalCoords;
-        FVoxelConversion::GlobalVoxelToChunkAndLocal(NewGlobal, NewChunkCoords, NewLocalCoords);
+        FVoxelConversion::GlobalVoxelToChunkAndLocal_Min(NewGlobal, NewChunkCoords, NewLocalCoords);
 
         UVoxelChunk** ChunkPtr = ChunkMap.Find(NewChunkCoords);
         if (!ChunkPtr || !IsValid(*ChunkPtr)) continue;
@@ -3737,7 +3788,7 @@ UVoxelChunk* ADiggerManager::GetOrCreateChunkAtChunk(const FIntVector& ChunkCoor
     FVoxelConversion::InitFromConfig(ChunkSize,Subdivisions,TerrainGridSize, GetActorLocation());
 
     if (DiggerDebug::Chunks)
-    UE_LOG(LogTemp, Warning, TEXT("➡️ Attempting chunk at coords: %s"), *ChunkCoords.ToString());
+    UE_LOG(LogTemp, Warning, TEXT("âž¡ï¸ Attempting chunk at coords: %s"), *ChunkCoords.ToString());
     
     if (UVoxelChunk** ExistingChunk = ChunkMap.Find(ChunkCoords))
     {
@@ -3785,7 +3836,7 @@ UVoxelChunk* ADiggerManager::GetOrCreateChunkAtCoordinates(const float& Proposed
 // Thin wrapper: converts world position to chunk coordinates
 UVoxelChunk* ADiggerManager::GetOrCreateChunkAtWorld(const FVector& WorldPosition)
 {
-    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(WorldPosition);
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk_Min(WorldPosition);
     return GetOrCreateChunkAtChunk(ChunkCoords);
 }
 
@@ -3937,7 +3988,7 @@ TSet<FIntVector> ADiggerManager::PerformCrossChunkFloodFill(const FIntVector& St
             
             // Convert global to local coordinates for this candidate chunk
             FIntVector LocalVoxel, OutChunkCoord;
-            FVoxelConversion::GlobalVoxelToChunkAndLocal(
+            FVoxelConversion::GlobalVoxelToChunkAndLocal_Min(
                 CurrentGlobal,
                 OutChunkCoord,
                 LocalVoxel
@@ -3984,7 +4035,7 @@ TArray<FIntVector> ADiggerManager::GetAllPhysicalStorageChunks(const FIntVector&
     
     // Start with the canonical owning chunk
     FIntVector CanonicalChunk, LocalVoxelOut;
-    FVoxelConversion::GlobalVoxelToChunkAndLocal(GlobalVoxel, CanonicalChunk, LocalVoxelOut);
+    FVoxelConversion::GlobalVoxelToChunkAndLocal_Min(GlobalVoxel, CanonicalChunk, LocalVoxelOut);
     
     // Check all 27 possible chunks (canonical + 26 neighbors) to see which ones actually store this voxel
     for (int32 dx = -1; dx <= 1; dx++)
@@ -4004,7 +4055,7 @@ TArray<FIntVector> ADiggerManager::GetAllPhysicalStorageChunks(const FIntVector&
                 
                 // Convert global to local coordinates for this candidate chunk
                 FIntVector LocalVoxel;
-                FVoxelConversion::GlobalVoxelToChunkAndLocal(
+                FVoxelConversion::GlobalVoxelToChunkAndLocal_Min(
                     GlobalVoxel,
                     CandidateChunk,
                     LocalVoxel
@@ -4057,7 +4108,7 @@ TArray<FIntVector> ADiggerManager::GetPossibleOwningChunks(const FIntVector& Glo
                 FIntVector AdjustedGlobal = GlobalIndex - Offset;
 
                 FIntVector CandidateChunkCoords, LocalVoxel;
-                FVoxelConversion::GlobalVoxelToChunkAndLocal(AdjustedGlobal, CandidateChunkCoords, LocalVoxel);
+                FVoxelConversion::GlobalVoxelToChunkAndLocal_Min(AdjustedGlobal, CandidateChunkCoords, LocalVoxel);
 
                 if (ChunkMap.Contains(CandidateChunkCoords))
                 {
@@ -4205,7 +4256,7 @@ void ADiggerManager::ApplyPendingBrushSamples()
 
 void ADiggerManager::CreateHoleAt(FVector WorldPosition, FRotator Rotation, FVector Scale, TSubclassOf<AActor> HoleBPClass)
 {
-    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(WorldPosition);
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk_Min(WorldPosition);
     if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
     {
         //ToDo: set shape type based on brush used!
@@ -4215,7 +4266,7 @@ void ADiggerManager::CreateHoleAt(FVector WorldPosition, FRotator Rotation, FVec
 
 bool ADiggerManager::RemoveHoleNear(FVector WorldPosition, float MaxDistance)
 {
-    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(WorldPosition);
+    FIntVector ChunkCoords = FVoxelConversion::WorldToChunk_Min(WorldPosition);
     if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
     {
         return Chunk->RemoveNearestHole(WorldPosition, MaxDistance);

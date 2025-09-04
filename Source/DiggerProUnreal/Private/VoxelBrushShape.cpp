@@ -1,4 +1,4 @@
-#include "VoxelBrushShape.h"
+﻿#include "VoxelBrushShape.h"
 
 #include "DiggerDebug.h"
 #include "DiggerManager.h"
@@ -60,7 +60,7 @@ UVoxelChunk* UVoxelBrushShape::GetTargetChunkFromBrushPosition(const FVector3d& 
     if (!DiggerManager) return nullptr;
 
     // Calculate the chunk position based on the brush position
-    FIntVector ChunkPosition = FVoxelConversion::WorldToChunk(BrushPosition);
+    FIntVector ChunkPosition = FVoxelConversion::WorldToChunk_Min(BrushPosition);
 
     // Retrieve the chunk from the map
     UVoxelChunk* NewTargetChunk = DiggerManager->GetOrCreateChunkAtChunk(ChunkPosition);

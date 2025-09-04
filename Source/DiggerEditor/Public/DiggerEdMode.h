@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -104,3 +104,4 @@ private:
     // Static state
     static bool bIsDiggerModeCurrentlyActive;
 };
+

@@ -1,4 +1,4 @@
-#include "NoiseBrushShape.h"
+﻿#include "NoiseBrushShape.h"
 
 #include "FBrushStroke.h"
 #include "VoxelConversion.h"
@@ -54,4 +54,5 @@ bool UNoiseBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStrok
 	const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
 	return DistanceSq <= RadiusSq;
 }
+
 
