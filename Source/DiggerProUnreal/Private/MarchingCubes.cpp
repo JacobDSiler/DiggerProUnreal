@@ -769,7 +769,7 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
     // WorldSpaceOffset for proper alignment for center aligned chunk schema.
     FVector TotalOffset = FVector(FVoxelConversion::LocalVoxelSize * 0.25F - FVoxelConversion::ChunkWorldSize() * 0.25f);
     
-    int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    int32 N = FVoxelConversion::VoxelsPerChunk();
 
     if (IsDebugging()) {
         DrawDebugBox(
@@ -1208,7 +1208,7 @@ void UMarchingCubes::InitializeHeightCache(const FVector& ChunkOrigin, float Vox
 	// Clear existing cache
 	HeightCache.Empty();
     
-	int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+   int32 N = FVoxelConversion::VoxelsPerChunk();
     
 	// Add padding around the chunk for smooth interpolation at edges
 	int32 Padding = 3;

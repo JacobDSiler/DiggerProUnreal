@@ -957,7 +957,7 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
     }
 
     float BrushEffectRadius = BrushStroke.BrushRadius + BrushStroke.BrushFalloff;
-    float ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::LocalVoxelSize;
+    float ChunkWorldSize = FVoxelConversion::ChunkWorldSize();
     float ChunkDiagonal = ChunkWorldSize * 1.732f; // sqrt(3) for 3D diagonal
     float SafetyPadding = BrushEffectRadius + ChunkDiagonal;
 
@@ -1082,8 +1082,8 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
         return;
     }
 
-    VoxelSize = TerrainGridSize / Subdivisions;
-    float ChunkWorldSize = ChunkSize * TerrainGridSize;
+    VoxelSize = FVoxelConversion::LocalVoxelSize;
+    const float ChunkWorldSize = FVoxelConversion::ChunkWorldSize();
 
     if (DiggerDebug::Space)
     {
@@ -1115,24 +1115,22 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
         return;
     }
 
-    // Compute chunk origin and extent
-    FVector ChunkCenter = FVector(ChunkCoords) * ChunkWorldSize;
+    // Compute chunk origin (min corner), center and extent using conversion helpers
+    FVector ChunkMin = FVoxelConversion::ChunkToWorld_Min(ChunkCoords);
     FVector ChunkExtent = FVector(ChunkWorldSize * 0.5f);
-    FVector ChunkOrigin = ChunkCenter - ChunkExtent;
+    FVector ChunkCenter = ChunkMin + ChunkExtent;
 
-    FVector LocalInChunk = ClickPosition - ChunkOrigin;
-    FIntVector OutChunk, LocalVoxel;
-    FVoxelConversion::WorldToChunkAndLocal_Min(ClickPosition, OutChunk, LocalVoxel);
-    FVector LocalVoxelToWorld = FVoxelConversion::ChunkVoxelToWorldCenter_Min(OutChunk, LocalVoxel);
+    // Determine local and global voxel coordinates for the click
+    FIntVector LocalVoxel;
+    FVoxelConversion::WorldToChunkAndLocal_Min(ClickPosition, ChunkCoords, LocalVoxel);
+    const FVector VoxelCenter = FVoxelConversion::ChunkVoxelToWorldCenter_Min(ChunkCoords, LocalVoxel);
+    const FIntVector GlobalVoxel = FVoxelConversion::ChunkAndLocalToGlobalVoxel_Min(ChunkCoords, LocalVoxel);
 
     if (DiggerDebug::Space || DiggerDebug::Voxels || DiggerDebug::Chunks)
     {
-        UE_LOG(LogTemp, Error, TEXT("LocalInChunk: %s, LocalVoxel: %s, WorldPosition: %s"),
-               *LocalInChunk.ToString(), *LocalVoxel.ToString(), *LocalVoxelToWorld.ToString());
+        UE_LOG(LogTemp, Error, TEXT("Chunk:%s Local:%s Global:%s World:%s"),
+               *ChunkCoords.ToString(), *LocalVoxel.ToString(), *GlobalVoxel.ToString(), *VoxelCenter.ToString());
     }
-
-    // World-space center of the voxel
-    FVector VoxelCenter = ChunkOrigin + FVector(LocalVoxel) * VoxelSize + FVector(VoxelSize * 0.5f);
 
     if (DiggerDebug::Voxels)
     {
@@ -1153,10 +1151,10 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
                                  FFastDebugConfig(FLinearColor::Yellow, 30.0f, 2.0f));
 
             // Draw chunk origin (orange sphere)
-            FastDebug->DrawSphere(ChunkOrigin, 20.0f, 
+            FastDebug->DrawSphere(ChunkMin, 20.0f,
                                  FFastDebugConfig(FLinearColor(1.0f, 0.5f, 0.0f), 30.0f, 2.0f));
 
-            const int32 ChunkVoxels = ChunkSize * Subdivisions;
+            const int32 ChunkVoxels = FVoxelConversion::VoxelsPerChunk();
             FVector SelectedVoxelCenter = FVector::ZeroVector;
 
             // Collect edge voxel positions for batch rendering
@@ -1170,7 +1168,7 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
                     for (int32 Z = 0; Z < ChunkVoxels; Z++)
                     {
                         FIntVector VoxelCoord(X, Y, Z);
-                        FVector CurrentVoxelCenter = ChunkOrigin + FVector(VoxelCoord) * VoxelSize + FVector(VoxelSize * 0.5f);
+                        FVector CurrentVoxelCenter = FVoxelConversion::ChunkVoxelToWorldCenter_Min(ChunkCoords, VoxelCoord);
 
                         // Collect edge voxels
                         if (X == 0 || X == ChunkVoxels - 1 ||
@@ -1240,6 +1238,7 @@ void ADiggerManager::DebugDrawVoxelAtWorldPositionFast(const FVector& WorldPosit
     FIntVector ChunkCoords;
     FIntVector VoxelIndex;
     FVoxelConversion::WorldToChunkAndLocal_Min(WorldPosition, ChunkCoords, VoxelIndex);
+    const FIntVector GlobalVoxel = FVoxelConversion::ChunkAndLocalToGlobalVoxel_Min(ChunkCoords, VoxelIndex);
 
     if (!FVoxelConversion::IsValidLocalIndex_Min(VoxelIndex))
     {
@@ -1260,8 +1259,8 @@ void ADiggerManager::DebugDrawVoxelAtWorldPositionFast(const FVector& WorldPosit
 
     if (DiggerDebug::Chunks || DiggerDebug::Voxels)
     {
-        UE_LOG(LogTemp, Log, TEXT("Drew voxel at world position %s: Chunk %s, VoxelIndex %s, Center %s"),
-            *WorldPosition.ToString(), *ChunkCoords.ToString(), *VoxelIndex.ToString(), *VoxelCenter.ToString());
+        UE_LOG(LogTemp, Log, TEXT("Drew voxel at world position %s: Chunk %s, Local %s, Global %s, Center %s"),
+            *WorldPosition.ToString(), *ChunkCoords.ToString(), *VoxelIndex.ToString(), *GlobalVoxel.ToString(), *VoxelCenter.ToString());
     }
 }
 
@@ -1273,15 +1272,13 @@ void ADiggerManager::DrawDiagonalDebugVoxelsFast(FIntVector ChunkCoords)
     if (!FastDebug) return;
 
     // Calculate chunk dimensions
-    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const int32 VoxelsPerChunk = FVoxelConversion::VoxelsPerChunk();
     const float DebugDuration = 30.0f;
-    
-    // Get the chunk center using the conversion method
-    FVector ChunkCenter = FVoxelConversion::ChunkToWorld_Min(ChunkCoords);
-    FVector ChunkExtent = FVector(FVoxelConversion::ChunkSize * FVoxelConversion::TerrainGridSize / 2.0f);
-    
-    // Calculate the minimum corner based on the center and extent
-    FVector ChunkMinCorner = ChunkCenter - ChunkExtent;
+
+    // Derive chunk min, extent and center using conversion helpers
+    FVector ChunkMinCorner = FVoxelConversion::ChunkToWorld_Min(ChunkCoords);
+    FVector ChunkExtent = FVector(FVoxelConversion::ChunkWorldSize() * 0.5f);
+    FVector ChunkCenter = ChunkMinCorner + ChunkExtent;
     
     UE_LOG(LogTemp, Warning, TEXT("DrawDiagonalDebugVoxelsFast - ChunkCoords: %s"), *ChunkCoords.ToString());
     UE_LOG(LogTemp, Warning, TEXT("ChunkCenter: %s, ChunkMinCorner: %s"), 
@@ -1296,8 +1293,8 @@ void ADiggerManager::DrawDiagonalDebugVoxelsFast(FIntVector ChunkCoords)
     // Collect diagonal voxels from minimum corner to maximum corner
     for (int32 i = 0; i < VoxelsPerChunk; i++)
     {
-        FVector VoxelCenter = ChunkMinCorner + 
-                             FVector(i + 0.5f, i + 0.5f, i + 0.5f) * FVoxelConversion::LocalVoxelSize;
+        FIntVector Local = FIntVector(i, i, i);
+        FVector VoxelCenter = FVoxelConversion::ChunkVoxelToWorldCenter_Min(ChunkCoords, Local);
         DiagonalVoxelPositions.Add(VoxelCenter);
     }
     
@@ -1311,19 +1308,18 @@ void ADiggerManager::DrawDiagonalDebugVoxelsFast(FIntVector ChunkCoords)
     
     // Collect overflow voxel positions
     TArray<FVector> OverflowVoxelPositions;
-    FVector overflowOffsets[] = {
-        FVector(-1, -1, -1),  // Corner overflow
-        FVector(-1, 0, 0),    // X-axis overflow
-        FVector(0, -1, 0),    // Y-axis overflow
-        FVector(0, 0, -1)     // Z-axis overflow
+    FIntVector overflowOffsets[] = {
+        FIntVector(-1, -1, -1),  // Corner overflow
+        FIntVector(-1, 0, 0),    // X-axis overflow
+        FIntVector(0, -1, 0),    // Y-axis overflow
+        FIntVector(0, 0, -1)     // Z-axis overflow
     };
-    
-    for (const FVector& offset : overflowOffsets)
+
+    for (const FIntVector& offset : overflowOffsets)
     {
-        FVector VoxelCenter = ChunkMinCorner + 
-                             (offset + FVector(0.5f)) * FVoxelConversion::LocalVoxelSize;
+        FVector VoxelCenter = FVoxelConversion::ChunkVoxelToWorldCenter_Min(ChunkCoords, offset);
         OverflowVoxelPositions.Add(VoxelCenter);
-        
+
         UE_LOG(LogTemp, Warning, TEXT("Overflow voxel at local position %s, world position %s"),
                *offset.ToString(), *VoxelCenter.ToString());
     }
@@ -1351,7 +1347,7 @@ void ADiggerManager::DrawDiagonalDebugVoxelsFast(FIntVector ChunkCoords)
                       FFastDebugConfig(FLinearColor(1.0f, 0.0f, 1.0f), DebugDuration, 3.0f));
     
     // Draw overflow regions on the minimum sides
-    const float ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::TerrainGridSize;
+    const float ChunkWorldSize = FVoxelConversion::ChunkWorldSize();
     
     // X-axis overflow region
     FVector XOverflowCenter = ChunkMinCorner + FVector(-FVoxelConversion::LocalVoxelSize * 0.5f, 
@@ -2465,7 +2461,7 @@ void ADiggerManager::UpdateVoxelSize()
     {
         UE_LOG(LogTemp, Warning, TEXT("Initializing FVoxelConversion in PIE BeginPlay"));
         FVoxelConversion::InitFromConfig(ChunkSize, Subdivisions, TerrainGridSize, FVector::ZeroVector);
-        VoxelSize = TerrainGridSize / Subdivisions;
+        VoxelSize = FVoxelConversion::LocalVoxelSize;
     }
     else
     {
@@ -3329,7 +3325,8 @@ void ADiggerManager::DebugDrawChunkSectionIDs()
         if (Chunk)
         {
             Chunk->GetSparseVoxelGrid()->RenderVoxels();
-            const FVector ChunkPosition = FVoxelConversion::ChunkToWorld_Min(Chunk->GetChunkCoordinates());
+            const FVector ChunkMin = FVoxelConversion::ChunkToWorld_Min(Chunk->GetChunkCoordinates());
+            const FVector ChunkPosition = ChunkMin + FVector(FVoxelConversion::ChunkWorldSize() * 0.5f);
             const FString SectionIDText = FString::Printf(TEXT("ID: %d"), Chunk->GetSectionIndex());
             DrawDebugString(GetSafeWorld(), ChunkPosition, SectionIDText, nullptr, FColor::Green, 5.0f, true);
         }
@@ -3381,7 +3378,8 @@ UVoxelChunk* ADiggerManager::FindOrCreateNearestChunk(const FVector& Position)
         UVoxelChunk* Chunk = Entry.Value;
         if (!Chunk) continue;
 
-        FVector WorldPos = FVoxelConversion::ChunkToWorld_Min(Chunk->GetChunkCoordinates());
+        const FVector WorldPos = FVoxelConversion::ChunkToWorld_Min(Chunk->GetChunkCoordinates()) +
+                                FVector(FVoxelConversion::ChunkWorldSize() * 0.5f);
         float Distance = FVector::Dist(Position, WorldPos);
 
         if (Distance < MinDistance)
@@ -3426,7 +3424,8 @@ UVoxelChunk* ADiggerManager::FindNearestChunk(const FVector& Position)
     float MinDistance = FLT_MAX;
     for (auto& Entry : ChunkMap)
     {
-        FVector WorldPos = FVoxelConversion::ChunkToWorld_Min(Entry.Value->GetChunkCoordinates());
+        const FVector WorldPos = FVoxelConversion::ChunkToWorld_Min(Entry.Value->GetChunkCoordinates()) +
+                                FVector(FVoxelConversion::ChunkWorldSize() * 0.5f);
         float Distance = FVector::Dist(Position, WorldPos);
         if (Distance < MinDistance)
         {
@@ -3442,7 +3441,7 @@ UVoxelChunk* ADiggerManager::FindNearestChunk(const FVector& Position)
 
 void ADiggerManager::MarkNearbyChunksDirty(const FVector& CenterPosition, float Radius)
 {
-    int32 Reach = FMath::CeilToInt(Radius / (ChunkSize * TerrainGridSize));
+    int32 Reach = FMath::CeilToInt(Radius / FVoxelConversion::ChunkWorldSize());
 
     UE_LOG(LogTemp, Warning, TEXT("MarkNearbyChunksDirty: CenterPosition=%s, Radius=%f"), *CenterPosition.ToString(), Radius);
     UE_LOG(LogTemp, Warning, TEXT("FVoxelConversion: ChunkSize=%d, TerrainGridSize=%f, Origin=%s"), FVoxelConversion::ChunkSize, FVoxelConversion::TerrainGridSize, *FVoxelConversion::Origin.ToString());
@@ -3618,7 +3617,7 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
         Out.Voxels.Reserve(Out.VoxelCount);
         Out.VoxelInstances.Reserve(Out.VoxelCount);
 
-        const int32 VPC = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+        const int32 VPC = FVoxelConversion::VoxelsPerChunk();
 
         for (const FVoxelInstance& Src : AllPhysical)
         {

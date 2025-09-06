@@ -255,13 +255,14 @@ void UVoxelChunk::DebugDrawChunk()
 	if (!World) World = DiggerManager->GetWorldFromManager();
 	if (!World) return;
     
-	const float DebugDuration = 35.0f;
-	// Core chunk bounds
-	const FVector ChunkCenter = FVector(ChunkCoordinates) * ChunkSize * TerrainGridSize;
-	const FVector ChunkExtent = FVector(ChunkSize * TerrainGridSize / 2.0f);
-    
-	// Draw core chunk (red) using fast debug system
-	FAST_DEBUG_BOX(ChunkCenter, ChunkExtent, FLinearColor::Red);
+        const float DebugDuration = 35.0f;
+        // Core chunk bounds using conversion helpers
+        const FVector ChunkMin = FVoxelConversion::ChunkToWorld_Min(ChunkCoordinates);
+        const FVector ChunkExtent = FVector(FVoxelConversion::ChunkWorldSize() * 0.5f);
+        const FVector ChunkCenter = ChunkMin + ChunkExtent;
+
+        // Draw core chunk (red) using fast debug system
+        FAST_DEBUG_BOX(ChunkCenter, ChunkExtent, FLinearColor::Red);
 }
 
 void UVoxelChunk::DebugPrintVoxelData() const
@@ -784,7 +785,7 @@ void UVoxelChunk::WriteToOverflows(const FIntVector& LocalVoxelCoords,
                                    int32 StorageX, int32 StorageY, int32 StorageZ, 
                                    float SDF, bool bDig)
 {
-    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const int32 VoxelsPerChunk = FVoxelConversion::VoxelsPerChunk();
     const int32 HalfVoxelsPerChunk = VoxelsPerChunk / 2;
     
     // Write to current chunk's overflow regions based on voxel position
@@ -870,7 +871,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     // Get chunk origin and voxel size - cache these values
     const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld_Min(ChunkCoordinates);
     const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
-    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const int32 VoxelsPerChunk = FVoxelConversion::VoxelsPerChunk();
     const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
     const float HalfVoxelSize = CachedVoxelSize * 0.5f;
 	
@@ -1086,7 +1087,7 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
 
     const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld_Min(ChunkCoordinates);
     const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
-    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const int32 VoxelsPerChunk = FVoxelConversion::VoxelsPerChunk();
     const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
     const float HalfVoxelSize = CachedVoxelSize * 0.5f;
 

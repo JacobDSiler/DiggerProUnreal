@@ -58,7 +58,7 @@ void ATestVoxelConversion::RunTests()
         *OutChunk.ToString(), *LocalVoxel.ToString());
 
     // Global voxel = Chunk * VPC + Local
-    const int32 VPC = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const int32 VPC = FVoxelConversion::VoxelsPerChunk();
     const FIntVector GlobalVoxel(
         OutChunk.X * VPC + LocalVoxel.X,
         OutChunk.Y * VPC + LocalVoxel.Y,
