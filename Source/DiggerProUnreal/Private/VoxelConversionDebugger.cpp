@@ -35,7 +35,7 @@ void AVoxelConversionDebugger::TestPositionConversion(FVector WorldPosition)
     UE_LOG(LogTemp, Warning, TEXT("WorldToLocalVoxel: %s"), *LocalVoxel.ToString());
     
     // Calculate global voxel coordinate for clarity
-    int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    int32 VoxelsPerChunk = FVoxelConversion::VoxelsPerChunk();
     FIntVector GlobalVoxel(
         ChunkCoords.X * VoxelsPerChunk + LocalVoxel.X,
         ChunkCoords.Y * VoxelsPerChunk + LocalVoxel.Y,
@@ -76,7 +76,7 @@ void AVoxelConversionDebugger::VisualizeChunkBoundaries(FVector WorldPosition, f
 void AVoxelConversionDebugger::DrawDebugChunk(const FIntVector& ChunkCoords, float Duration)
 {
     FVector ChunkOrigin = FVoxelConversion::ChunkToWorld_Min(ChunkCoords);
-    float ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::TerrainGridSize;
+    float ChunkWorldSize = FVoxelConversion::ChunkWorldSize();
     
     FVector Min = ChunkOrigin;
     FVector Max = ChunkOrigin + FVector(ChunkWorldSize);
@@ -98,7 +98,7 @@ void AVoxelConversionDebugger::VisualizeVoxelAtPosition(FVector WorldPosition, f
     FVoxelConversion::WorldToChunkAndLocal_Min(WorldPosition, LocalVoxel, OutChunk);
     
     // Calculate the center of the voxel
-    int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    int32 VoxelsPerChunk = FVoxelConversion::VoxelsPerChunk();
     FIntVector GlobalVoxel(
         ChunkCoords.X * VoxelsPerChunk + LocalVoxel.X,
         ChunkCoords.Y * VoxelsPerChunk + LocalVoxel.Y,
@@ -128,7 +128,7 @@ void AVoxelConversionDebugger::TestRoundTripConversion(FVector WorldPosition)
     FIntVector LocalVoxel, OutChunk;
     FVoxelConversion::WorldToChunkAndLocal_Min(WorldPosition, LocalVoxel, OutChunk);
     
-    int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    int32 VoxelsPerChunk = FVoxelConversion::VoxelsPerChunk();
     FIntVector GlobalVoxel(
         ChunkCoords.X * VoxelsPerChunk + LocalVoxel.X,
         ChunkCoords.Y * VoxelsPerChunk + LocalVoxel.Y,
