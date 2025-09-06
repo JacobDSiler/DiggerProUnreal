@@ -78,10 +78,18 @@
 #include "Components/DirectionalLightComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SpotLightComponent.h"
-#include "DiggerProUnreal/Materials/DiggerMaterialTypes.h"
+#include "Materials/DiggerMaterialTypes.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
 // Digger Material Manager
+#include "Materials/DiggerTextureSet.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+#include "Factories/MaterialInstanceConstantFactoryNew.h"
+#include "Materials/MaterialInstanceConstant.h"
+#include "Misc/PackageName.h"
+#include "Editor.h"
+
 
 
 class ADynamicLightActor;
@@ -191,11 +199,9 @@ UMaterialInstanceDynamic* ADiggerManager::GetOrCreateMID(UPrimitiveComponent* Ta
 
 
 /** Build param name: "Layer{N}_Suffix" with N being 1-based layer index. */
-FName ADiggerManager::LayerParam(const int32 LayerOneBased, const TCHAR* Suffix)
+static FName LayerParam(int32 Index1Based, const TCHAR* Suffix) // keep your existing helper if you have it
 {
-    // Example: Layer3_BaseColor, Layer5_Enabled
-    FString Name = FString::Printf(TEXT("Layer%d_%s"), LayerOneBased, Suffix);
-    return FName(*Name);
+    return FName(*FString::Printf(TEXT("Layer%d_%s"), Index1Based, Suffix));
 }
 
 
@@ -204,35 +210,38 @@ void ADiggerManager::PushProfileParamsToMID(UDiggerMaterialProfile* Profile, UMa
 {
     if (!Profile || !MID) return;
 
-    // Global toggles
-    MID->SetScalarParameterValue(TEXT("UseTriplanar"), Profile->bUseTriplanar ? 1.0f : 0.0f);
+    // ── Global toggles (only if your master material actually has these params)
+    // MID->SetScalarParameterValue(FName(TEXT("UseTriplanar")),     Profile->bUseTriplanar     ? 1.0f : 0.0f);
+    // MID->SetScalarParameterValue(FName(TEXT("UseVirtualTexture")), Profile->bUseVirtualTexture ? 1.0f : 0.0f);
 
-    const int32 Used = FMath::Min(MaxLayers, Profile->Layers.Num());
+    const int32 Used = FMath::Clamp(Profile->Layers.Num(), 0, MaxLayers);
 
-    // Enable configured layers
     for (int32 i = 0; i < Used; ++i)
     {
         const int32 L1 = i + 1;
         const FDiggerLayerParams& L = Profile->Layers[i];
 
+        // Enable/disable layer i
         MID->SetScalarParameterValue(LayerParam(L1, TEXT("Enabled")), L.bEnabled ? 1.0f : 0.0f);
 
-        if (L.TextureSet.IsValid())
+        // Resolve texture set (loads the data asset if not already loaded)
+        if (UDiggerTextureSet* Set = L.TextureSet.LoadSynchronous())
         {
-            if (UTexture2D* BC = L.TextureSet->BaseColor.LoadSynchronous())
+            if (UTexture2D* BC  = Set->BaseColor.LoadSynchronous())
             {
                 MID->SetTextureParameterValue(LayerParam(L1, TEXT("BaseColor")), BC);
             }
-            if (UTexture2D* N = L.TextureSet->Normal.LoadSynchronous())
+            if (UTexture2D* N   = Set->Normal.LoadSynchronous())
             {
                 MID->SetTextureParameterValue(LayerParam(L1, TEXT("Normal")), N);
             }
-            if (UTexture2D* ORM = L.TextureSet->ORM.LoadSynchronous())
+            if (UTexture2D* ORM = Set->ORM.LoadSynchronous())
             {
                 MID->SetTextureParameterValue(LayerParam(L1, TEXT("ORM")), ORM);
             }
         }
 
+        // Scalar parameters expected by the master material
         MID->SetScalarParameterValue(LayerParam(L1, TEXT("Tiling")),        L.Tiling);
         MID->SetScalarParameterValue(LayerParam(L1, TEXT("MinHeight")),     L.MinHeight);
         MID->SetScalarParameterValue(LayerParam(L1, TEXT("MaxHeight")),     L.MaxHeight);
@@ -242,13 +251,138 @@ void ADiggerManager::PushProfileParamsToMID(UDiggerMaterialProfile* Profile, UMa
         MID->SetScalarParameterValue(LayerParam(L1, TEXT("Seed")),          L.Seed);
     }
 
-    // Explicitly disable any remaining layers up to MaxLayers (avoids old values lingering)
+    // Disable any remaining layers to prevent stale params from previous profiles
     for (int32 i = Used; i < MaxLayers; ++i)
     {
         const int32 L1 = i + 1;
         MID->SetScalarParameterValue(LayerParam(L1, TEXT("Enabled")), 0.0f);
+
+        // (Optional) also clear textures to null if your material samples them unguarded by "Enabled"
+        // MID->SetTextureParameterValue(LayerParam(L1, TEXT("BaseColor")), nullptr);
+        // MID->SetTextureParameterValue(LayerParam(L1, TEXT("Normal")),    nullptr);
+        // MID->SetTextureParameterValue(LayerParam(L1, TEXT("ORM")),       nullptr);
     }
 }
+
+
+UMaterialInstanceConstant* ADiggerManager::BuildMaterialInstanceFromProfile(UDiggerMaterialProfile* Profile, const FString& TargetFolder, const FString& BaseAssetName, UMaterialInterface* Parent)
+{
+#if WITH_EDITOR
+    if (!Profile || !Parent) return nullptr;
+
+    // Ensure folder exists & unique name
+    FString OutPkgName, OutAssetName;
+    {
+        const FString BasePath = TargetFolder / BaseAssetName;
+        FAssetToolsModule& ATM = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
+        ATM.Get().CreateUniqueAssetName(BasePath, TEXT(""), OutPkgName, OutAssetName);
+    }
+
+    // Create new or reuse existing
+    UMaterialInstanceConstant* MIC = nullptr;
+    const FString PkgPath = FPackageName::GetLongPackagePath(OutPkgName);
+    const FString ExistingObjPath = PkgPath / OutAssetName + TEXT(".") + OutAssetName;
+
+    MIC = FindObject<UMaterialInstanceConstant>(nullptr, *ExistingObjPath);
+    if (!MIC)
+    {
+        UMaterialInstanceConstantFactoryNew* Factory = NewObject<UMaterialInstanceConstantFactoryNew>();
+        Factory->InitialParent = Parent;
+        FAssetToolsModule& ATM = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
+        UObject* NewObj = ATM.Get().CreateAsset(OutAssetName, PkgPath, UMaterialInstanceConstant::StaticClass(), Factory);
+        MIC = Cast<UMaterialInstanceConstant>(NewObj);
+    }
+
+    if (!MIC) return nullptr;
+
+    MIC->Modify();
+    MIC->SetParentEditorOnly(Parent);
+
+    // Push parameters (editor-only setters)
+    const int32 MaxLayers = 32; // or your shader’s max
+    const int32 Used = FMath::Clamp(Profile->Layers.Num(), 0, MaxLayers);
+
+    // Scalars
+    for (int32 i = 0; i < Used; ++i)
+    {
+        const int32 L1 = i + 1;
+        const FDiggerLayerParams& L = Profile->Layers[i];
+
+        MIC->SetScalarParameterValueEditorOnly(LayerParam(L1, TEXT("Enabled")),        L.bEnabled ? 1.0f : 0.0f);
+        MIC->SetScalarParameterValueEditorOnly(LayerParam(L1, TEXT("Tiling")),         L.Tiling);
+        MIC->SetScalarParameterValueEditorOnly(LayerParam(L1, TEXT("MinHeight")),      L.MinHeight);
+        MIC->SetScalarParameterValueEditorOnly(LayerParam(L1, TEXT("MaxHeight")),      L.MaxHeight);
+        MIC->SetScalarParameterValueEditorOnly(LayerParam(L1, TEXT("NoiseAmp")),       L.NoiseAmplitude);
+        MIC->SetScalarParameterValueEditorOnly(LayerParam(L1, TEXT("NoiseFreq")),      L.NoiseFrequency);
+        MIC->SetScalarParameterValueEditorOnly(LayerParam(L1, TEXT("EdgeSharpness")),  L.EdgeSharpness);
+        MIC->SetScalarParameterValueEditorOnly(LayerParam(L1, TEXT("Seed")),           L.Seed);
+
+        if (UDiggerTextureSet* Set = Profile->Layers[i].TextureSet.LoadSynchronous())
+        {
+            if (UTexture* BC  = Set->BaseColor.LoadSynchronous())
+                MIC->SetTextureParameterValueEditorOnly(LayerParam(L1, TEXT("BaseColor")), BC);
+            if (UTexture* N   = Set->Normal.LoadSynchronous())
+                MIC->SetTextureParameterValueEditorOnly(LayerParam(L1, TEXT("Normal")), N);
+            if (UTexture* ORM = Set->ORM.LoadSynchronous())
+                MIC->SetTextureParameterValueEditorOnly(LayerParam(L1, TEXT("ORM")), ORM);
+        }
+    }
+
+    // Disable remaining layers
+    for (int32 i = Used; i < MaxLayers; ++i)
+    {
+        const int32 L1 = i + 1;
+        MIC->SetScalarParameterValueEditorOnly(LayerParam(L1, TEXT("Enabled")), 0.0f);
+    }
+
+    MIC->PostEditChange();
+    if (UPackage* Pkg = MIC->GetOutermost())
+    {
+        Pkg->MarkPackageDirty();
+    }
+    return MIC;
+#else
+    return nullptr;
+#endif
+}
+
+void ADiggerManager::BuildAndApplyProfileMaterial(UDiggerMaterialProfile* Profile)
+{
+#if WITH_EDITOR
+    if (!Profile) return;
+
+    // Choose parent master material (override or default)
+    UMaterialInterface* Parent = nullptr;
+    if (Profile->MasterMaterialOverride.IsValid())
+    {
+        Parent = Profile->MasterMaterialOverride.Get();
+    }
+    if (!Parent)
+    {
+        // Fallback: hardcode your default master path or store it in settings
+        Parent = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Digger/Materials/M_SedimentMaster.M_SedimentMaster"));
+    }
+    if (!Parent) return;
+
+    // Build or update a MIC asset
+    const FString TargetFolder = TEXT("/Game/Digger/Materials/Generated");
+    const FString BaseName     = TEXT("MI_Digger_Sediment");
+    UMaterialInstanceConstant* MIC = BuildMaterialInstanceFromProfile(Profile, TargetFolder, BaseName, Parent);
+    if (!MIC) return;
+
+    // Assign to your mesh components (adjust to your component layout)
+    TArray<UMeshComponent*> Meshes;
+    GetComponents<UMeshComponent>(Meshes);
+    for (UMeshComponent* MC : Meshes)
+    {
+        if (!MC) continue;
+        // If your mesh has multiple slots, choose which slot you want
+        MC->SetMaterial(0, MIC);
+        MC->MarkRenderStateDirty();
+    }
+#endif
+}
+
 
 
 //New Multi Save Files System

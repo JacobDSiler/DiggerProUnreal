@@ -267,7 +267,8 @@ private:
     UMaterialInstanceDynamic* GetOrCreateMID(UPrimitiveComponent* TargetComponent, int32 ElementIndex);
     static FName LayerParam(int32 LayerOneBased, const TCHAR* Suffix);
     void PushProfileParamsToMID(UDiggerMaterialProfile* Profile, UMaterialInstanceDynamic* MID, int32 MaxLayers = 12);
-
+    UMaterialInstanceConstant* BuildMaterialInstanceFromProfile(UDiggerMaterialProfile* Profile, const FString& TargetFolder, const FString& BaseAssetName, UMaterialInterface* Parent);
+    
 public:
 
     FCriticalSection UpdateChunksCriticalSection;

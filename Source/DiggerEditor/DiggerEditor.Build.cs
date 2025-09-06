@@ -7,68 +7,66 @@ public class DiggerEditor : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PublicIncludePaths.AddRange(new string[] {
-			Path.Combine(ModuleDirectory, "Public"),
-			Path.Combine(ModuleDirectory, "../DiggerProUnreal/Public") // Access runtime headers
+		PublicIncludePaths.AddRange(new string[]
+		{
+			Path.Combine(ModuleDirectory, "Public")
 		});
 
-		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private"));
+		PrivateIncludePaths.AddRange(new string[]
+		{
+			Path.Combine(ModuleDirectory, "Private")
+		});
 
-		// Core editor dependencies
-		PublicDependencyModuleNames.AddRange(new string[] {
+		// Link to runtime module for access to core Digger classes
+		PrivateDependencyModuleNames.Add("DiggerProUnreal");
+
+		PrivateDependencyModuleNames.AddRange(new string[]
+		{
+			// Core engine
 			"Core",
 			"CoreUObject",
 			"Engine",
+			"InputCore",
+			"RenderCore",
+			"RHI",
+
+			// Editor framework
 			"UnrealEd",
-			"EditorFramework",
 			"LevelEditor",
+			"EditorFramework",
+			"EditorStyle",
+			"EditorWidgets",
+			"EditorSubsystem",
+			"InteractiveToolsFramework",
+			"EditorInteractiveToolsFramework",
+
+			// Slate UI
 			"Slate",
 			"SlateCore",
 			"ToolMenus",
-			"EditorInteractiveToolsFramework",
-			"ProceduralMeshComponent",
-			"SocketIOClient",
-			"GeometryCore",          // For mesh tools
-			"ContentBrowser",         // For asset thumbnails
-			"DesktopPlatform",
-			"EditorStyle",
-			"ToolMenus",
-			"EditorWidgets",
-			"DiggerProUnreal",
-		});
+			"ToolWidgets",
+			"AppFramework",
 
-		PrivateDependencyModuleNames.AddRange(new string[] {
-			"DiggerProUnreal",       // Editor → Runtime link
-			"EditorStyle",
-			"EditorSubsystem",
+			// Asset & Content management
+			"AssetRegistry",
 			"AssetTools",
+			"ContentBrowser",
 			"ContentBrowserData",
-			"MeshDescription",
-			"StaticMeshDescription",
 			"PropertyEditor",
 			"Projects",
-			"AppFramework",
-			"AssetRegistry",
-			"RenderCore",
-			"RHI",
+			"DesktopPlatform",
+
+			// Mesh / Geometry
+			"ProceduralMeshComponent",
+			"MeshDescription",
+			"StaticMeshDescription",
+			"GeometryCore",
+
+			// Networking (Editor-only: DiggerConnect)
+			"SocketIOClient",
 			"HTTP",
 			"WebSockets",
 			"ApplicationCore",
-			"InputCore",
-			"ToolWidgets",           // For editor widgets
-			"ContentBrowser",  // Provides FAssetThumbnail
-			"AssetTools",      // Additional asset functionality
-		});
-
-		// For SComboBox, SEditableTextBox etc.
-		PrivateDependencyModuleNames.AddRange(new string[] {
-			"EditorStyle",
-			"EditorWidgets", 
-			"UnrealEd",
-			"ToolMenus",
-			"Slate",
-			"SlateCore",
-			"PropertyEditor"
 		});
 	}
 }

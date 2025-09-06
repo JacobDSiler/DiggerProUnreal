@@ -3,7 +3,8 @@
 
 #include "CoreMinimal.h"
 #include "DiggerEdMode.h"
-#include "DiggerManager.h" 
+#include "DiggerManager.h"
+#include "Materials/DiggerMaterialTypes.h"
 #include "Engine/Engine.h"
 #include "ProcgenArcanaCaveImporter.h"
 #include "SparseVoxelGrid.h" // <-- Make sure this is included!
@@ -15,7 +16,6 @@
 #include "FLightBrushTypes.h"
 #include "SocketIOLobbyManager.h"   
 #include "Widgets/Layout/SSeparator.h"
-#include "DiggerProUnreal/Materials/DiggerMaterialTypes.h" 
 #include "DiggerEdModeToolkit.generated.h" // This MUST be the last include
 
 
@@ -119,6 +119,62 @@ public:
 	void RequestBrushUIRefresh();
 	
 private:
+	
+	// ─────────────────────────────────────────────────────────────
+	// Digger Material Manager (DMM) — UI state & API
+	// ─────────────────────────────────────────────────────────────
+
+	// Simple UI mode for the Digger Material Manager
+	UENUM()
+	enum class EDMMPanelMode : uint8
+	{
+		Sediment,
+		Landscape,
+		Utilities
+	};
+
+
+
+	// Which sub-panel shows under the banner
+	EDMMPanelMode CurrentDMMMode = EDMMPanelMode::Sediment;
+
+	// The profile asset we’re editing/applying (weak so we don’t pin it)
+	TWeakObjectPtr<UDiggerMaterialProfile> ActiveMaterialProfile;
+
+	// Section entry
+	TSharedRef<SWidget> MakeMaterialManagerSection();
+
+	// Top toolbar (mode dropdown + profile picker + Quick-Apply)
+	TSharedRef<SWidget> MakeDMMToolbar();
+
+	// Bodies
+	TSharedRef<SWidget> MakeSedimentBody();
+	TSharedRef<SWidget> MakeLandscapeBody();
+	TSharedRef<SWidget> MakeUtilitiesBody();
+
+	// Sediment: a single layer row (inline list for now)
+	TSharedRef<SWidget> MakeSedimentLayerRow(int32 LayerIndex);
+
+	// Actions
+	FReply OnQuickApplyClicked();
+	FReply OnAddLayerClicked();
+	FReply OnRemoveLayerClicked(int32 LayerIndex);
+	FReply OnMoveLayerUpClicked(int32 LayerIndex);
+	FReply OnMoveLayerDownClicked(int32 LayerIndex);
+
+	// Data helpers
+	void   EnsureActiveProfile();
+	UDiggerMaterialProfile* GetMutableProfile() const;
+	void   TouchProfile(UDiggerMaterialProfile* Profile);
+
+	// Other Helpers
+	void SaveDMMState() const;
+	void LoadDMMState();
+	static FString GetProfileConfigKey() { return TEXT("DMM.ActiveProfilePath"); }
+	static FString GetModeConfigKey()    { return TEXT("DMM.Mode"); }
+
+private:
+	
 	// Licensing UI state
 	EDiggerConnectTier CurrentTier = EDiggerConnectTier::Free;
 	int32 ConcurrentUsersCap = 2;          // Free default
@@ -142,7 +198,10 @@ private:
 
 	// ——— Material Manager ———
 
-	TWeakObjectPtr<UDiggerMaterialProfile> ActiveMaterialProfile;
+	// UI container for re-rendering the Sediment body
+	TSharedPtr<class SBox> SedimentBodyBox;
+
+	
 
 	// UI helpers
 	TSharedRef<SWidget> MakeDMMHeaderRow();
@@ -152,15 +211,6 @@ private:
 
 	// Actions
 	FReply OnDMMHeaderClicked();
-	FReply OnAddLayerClicked();
-	FReply OnRemoveLayerClicked(int32 LayerIndex);
-	FReply OnMoveLayerUpClicked(int32 LayerIndex);
-	FReply OnMoveLayerDownClicked(int32 LayerIndex);
-	FReply OnQuickApplyClicked();
-
-	// Data ops
-	void EnsureActiveProfile();
-	UDiggerMaterialProfile* GetMutableProfile() const;
 	
 	// ── Navigation UI State ──
 
@@ -478,7 +528,6 @@ private:
 	ADiggerManager* GetDiggerManager();
 //SubSubSections
 	TSharedRef<SWidget> MakeIslandGridWidget();
-	TSharedRef<SWidget> MakeMaterialManagerSection();
 	TSharedRef<SWidget> MakeDebugCheckbox(const FString& Label, bool* FlagPtr);
 	TSharedRef<SWidget> MakeAngleButton(float Angle, float& Target, const FString& Label);
     TSharedRef<SWidget> MakeAngleButton(double Angle, double& Target, const FString& Label);
@@ -732,7 +781,9 @@ private:
 	// Collapsible Menu Bools
 
 
+	// We keep the banner always visible (no collapse arrow now)
 	bool bShowMaterialManagerSection = true;
+	
 	bool bShowBrushShapeSection = false; 
 	bool bShowProcgenArcanaImporter = false;
 	bool bShowSaveLoadSection = false;

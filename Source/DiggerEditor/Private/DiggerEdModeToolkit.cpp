@@ -1,5 +1,4 @@
 // DiggerEdModeToolkit.cpp
-
 #include "DiggerEdModeToolkit.h"
 #include "DiggerEdMode.h"
 #include "DiggerManager.h"
@@ -25,6 +24,34 @@
 #include "Misc/Paths.h"
 #include "Styling/AppStyle.h"  // For FAppStyle instead of FEditorStyle
 
+// Digger Material Manager Includes
+#include "DiggerManager.h"                      // runtime actor
+#include "Widgets/Input/SComboBox.h"
+#include "Widgets/Layout/SWidgetSwitcher.h"
+#include "PropertyCustomizationHelpers.h"       // SObjectPropertyEntryBox
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+#include "Factories/DataAssetFactory.h"
+#include "ContentBrowserModule.h"
+#include "ObjectTools.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+#include "Factories/DataAssetFactory.h"
+#include "ContentBrowserModule.h"
+#include "Modules/ModuleManager.h"
+#include "Misc/PackageName.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+#include "Factories/DataAssetFactory.h"
+#include "ContentBrowserModule.h"
+#include "Modules/ModuleManager.h"
+#include "Misc/PackageName.h"
+#include "ScopedTransaction.h"
+#include "UObject/UnrealType.h"   // FProperty
+#include "Materials/DiggerMaterialTypes.h"
+#include "Selection.h"
+#include "Widgets/Layout/SGridPanel.h"
+#include "Misc/ConfigCacheIni.h"  // GConfig, GEditorPerProjectIni
 
 
 
@@ -45,7 +72,11 @@
 #include "IContentBrowserSingleton.h"
 
 // Editor Interactive Tools Framework
-#include "Behaviors/2DViewportBehaviorTargets.h" // Cleaned duplicates
+#include "BaseBehaviors/BehaviorTargetInterfaces.h"
+#include "BaseBehaviors/ClickDragBehavior.h"
+#include "BaseBehaviors/MouseHoverBehavior.h"
+//#include "BaseBehaviors/KeyInputBehavior.h"
+#include "BaseBehaviors/SingleClickBehavior.h"
 
 // Slate UI - Widgets
 #include "BrushAssetEditorUtils.h"
@@ -55,16 +86,6 @@
 #include "IWebSocket.h"
 #include "SocketSubsystem.h"
 #include "WebSocketsModule.h"
-#include "Behaviors/2DViewportBehaviorTargets.h"
-#include "Behaviors/2DViewportBehaviorTargets.h"
-#include "Behaviors/2DViewportBehaviorTargets.h"
-#include "Behaviors/2DViewportBehaviorTargets.h"
-#include "Behaviors/2DViewportBehaviorTargets.h"
-#include "Behaviors/2DViewportBehaviorTargets.h"
-#include "Behaviors/2DViewportBehaviorTargets.h"
-#include "Behaviors/2DViewportBehaviorTargets.h"
-#include "Behaviors/2DViewportBehaviorTargets.h"
-#include "Behaviors/2DViewportBehaviorTargets.h"
 #include "Brushes/SlateImageBrush.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/PointLightComponent.h"
@@ -78,6 +99,7 @@
 #include "Styling/SlateStyleRegistry.h"
 #include "Widgets/Colors/SColorPicker.h"
 #include "EditorViewportClient.h"
+#include "Materials/DiggerTextureSet.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
@@ -90,11 +112,63 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Widgets/Notifications/SProgressBar.h"
 #include "Widgets/Text/STextBlock.h"
-// Digger Material Manager
-#include "DiggerProUnreal/Materials/DiggerMaterialTypes.h"
-#include "Selection.h"
+
 
 #define LOCTEXT_NAMESPACE "FDiggerEdModeToolkit"
+
+
+static FString GetInitialProfileFolder()
+{
+    FString DefaultPath = TEXT("/Game/Digger/Materials/Profiles");
+
+#if WITH_EDITOR
+    FContentBrowserModule& CB = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
+    TArray<FString> Paths;
+
+    // UE API compatibility: prefer GetSelectedFolders (5.1+), otherwise fall back
+    CB.Get().GetSelectedFolders(Paths);
+
+    if (Paths.Num() > 0)
+    {
+        DefaultPath = Paths[0];
+    }
+#endif
+
+    return DefaultPath;
+}
+
+// Announces an edit to the UDiggerMaterialProfile to the editor (undo/redo, details, CB, save)
+static void NotifyProfileArrayChanged(UDiggerMaterialProfile* Profile, const FName MemberName)
+{
+    if (!Profile) return;
+
+#if WITH_EDITOR
+    const FScopedTransaction Tx(NSLOCTEXT("Digger", "Tx_ModifyMaterialProfile", "Modify Digger Material Profile"));
+
+    Profile->Modify();
+
+    // Try to send a targeted property change for better DETAILS/serialization behavior
+    if (FProperty* ChangedProp = Profile->GetClass()->FindPropertyByName(MemberName))
+    {
+        Profile->PreEditChange(ChangedProp);
+
+        FPropertyChangedEvent Event(ChangedProp, EPropertyChangeType::ValueSet);
+        Profile->PostEditChangeProperty(Event);
+    }
+    else
+    {
+        // Fallback if the property isn't found (shouldn't happen if MemberName is correct)
+        Profile->PostEditChange();
+    }
+
+    if (UPackage* Pkg = Profile->GetOutermost())
+    {
+        Pkg->MarkPackageDirty();
+    }
+#endif
+}
+
+
 
 
 FDiggerEdModeToolkit::FDiggerEdModeToolkit()
@@ -390,14 +464,22 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
                 this->MakeDebugCheckbox(TEXT("Caves"), &DiggerDebug::Caves)
             ]
         ]
-    ]
-    ;
+    ];
 
+    ////////////////////////////////////////////////////////////////
+    /// Custom Brushes
+    //
     ScanCustomBrushFolder();
     if (CustomBrushGrid.IsValid())
     {
         RebuildCustomBrushGrid();
     }
+
+    ///////////////////////////////////////////////////////////////
+    /// Digger Material Manager
+    //
+    
+    LoadDMMState();     // <- restore mode/profile
 
     FModeToolkit::Init(InitToolkitHost);
 }
@@ -416,66 +498,37 @@ FReply FDiggerEdModeToolkit::OnDMMHeaderClicked()
     return FReply::Handled();
 }
 
-FReply FDiggerEdModeToolkit::OnAddLayerClicked()
+
+// ─────────────────────────────────────────────────────────────
+// Digger Material Manager (DMM) — implementations
+// ─────────────────────────────────────────────────────────────
+
+//////////////////////////////////////////////////////////////////////////
+// Data helpers
+
+
+
+void FDiggerEdModeToolkit::TouchProfile(UDiggerMaterialProfile* Profile)
 {
-    if (UDiggerMaterialProfile* P = GetMutableProfile())
+    if (!Profile) return;
+    Profile->Modify();
+#if WITH_EDITOR
+    if (UPackage* Pkg = Profile->GetOutermost())
     {
-        P->Modify();
-        P->Layers.AddDefaulted();
-        return FReply::Handled();
+        Pkg->MarkPackageDirty();
     }
-    return FReply::Unhandled();
+#endif
 }
 
-FReply FDiggerEdModeToolkit::OnRemoveLayerClicked(int32 LayerIndex)
-{
-    if (UDiggerMaterialProfile* P = GetMutableProfile())
-    {
-        if (P->Layers.IsValidIndex(LayerIndex))
-        {
-            P->Modify();
-            P->Layers.RemoveAt(LayerIndex);
-            return FReply::Handled();
-        }
-    }
-    return FReply::Unhandled();
-}
-
-FReply FDiggerEdModeToolkit::OnMoveLayerUpClicked(int32 LayerIndex)
-{
-    if (UDiggerMaterialProfile* P = GetMutableProfile())
-    {
-        if (P->Layers.IsValidIndex(LayerIndex) && LayerIndex > 0)
-        {
-            P->Modify();
-            P->Layers.Swap(LayerIndex, LayerIndex - 1);
-            return FReply::Handled();
-        }
-    }
-    return FReply::Unhandled();
-}
-
-FReply FDiggerEdModeToolkit::OnMoveLayerDownClicked(int32 LayerIndex)
-{
-    if (UDiggerMaterialProfile* P = GetMutableProfile())
-    {
-        if (P->Layers.IsValidIndex(LayerIndex) && LayerIndex < P->Layers.Num() - 1)
-        {
-            P->Modify();
-            P->Layers.Swap(LayerIndex, LayerIndex + 1);
-            return FReply::Handled();
-        }
-    }
-    return FReply::Unhandled();
-}
+//////////////////////////////////////////////////////////////////////////
+// Actions
 
 FReply FDiggerEdModeToolkit::OnQuickApplyClicked()
 {
-    // TODO: find your ADiggerManager in-world or via selection
     UDiggerMaterialProfile* Profile = GetMutableProfile();
-    if (!Profile) return FReply::Unhandled();
+    if (!Profile) return FReply::Handled();
 
-    // Example: apply to a selected ADiggerManager
+#if WITH_EDITOR
     if (GEditor)
     {
         for (FSelectionIterator It(GEditor->GetSelectedActorIterator()); It; ++It)
@@ -487,8 +540,592 @@ FReply FDiggerEdModeToolkit::OnQuickApplyClicked()
             }
         }
     }
+#endif
     return FReply::Handled();
 }
+
+
+
+//////////////////////////////////////////////////////////////////////////
+// Toolbar (mode dropdown + profile picker + quick apply)
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDMMToolbar()
+{
+    // persistent options list
+    static TArray<TSharedPtr<FString>> ModeOptions = {
+        MakeShared<FString>(TEXT("Sediment")),
+        MakeShared<FString>(TEXT("Landscape")),
+        MakeShared<FString>(TEXT("Utilities"))
+    };
+
+    auto GetModeAsIndex = [this]() -> int32
+    {
+        switch (CurrentDMMMode)
+        {
+        case EDMMPanelMode::Sediment:  return 0;
+        case EDMMPanelMode::Landscape: return 1;
+        case EDMMPanelMode::Utilities: return 2;
+        }
+        return 0;
+    };
+
+    return SNew(SHorizontalBox)
+
+    // ── Mode dropdown ───────────────────────────────────────────
+    + SHorizontalBox::Slot().AutoWidth().Padding(2)
+    [
+        SNew(SComboBox<TSharedPtr<FString>>)
+        .OptionsSource(&ModeOptions)
+        .InitiallySelectedItem(ModeOptions[GetModeAsIndex()])
+        .OnGenerateWidget_Lambda([](TSharedPtr<FString> InItem)
+        {
+            return SNew(STextBlock).Text(FText::FromString(*InItem));
+        })
+        .OnSelectionChanged_Lambda([this](TSharedPtr<FString> Item, ESelectInfo::Type)
+        {
+            if (!Item) return;
+            if (*Item == TEXT("Sediment"))  CurrentDMMMode = EDMMPanelMode::Sediment;
+            if (*Item == TEXT("Landscape")) CurrentDMMMode = EDMMPanelMode::Landscape;
+            if (*Item == TEXT("Utilities")) CurrentDMMMode = EDMMPanelMode::Utilities;
+            SaveDMMState();
+        })
+        [
+            SNew(STextBlock)
+            .Text_Lambda([this]()
+            {
+                switch (CurrentDMMMode)
+                {
+                case EDMMPanelMode::Sediment:  return FText::FromString(TEXT("Sediment"));
+                case EDMMPanelMode::Landscape: return FText::FromString(TEXT("Landscape"));
+                default:                       return FText::FromString(TEXT("Utilities"));
+                }
+            })
+            .ToolTipText(FText::FromString(TEXT("Select Sediment, Landscape, or Utilities tools.")))
+        ]
+    ]
+
+    // ── Profile picker ───────────────────────────────────────────
+    + SHorizontalBox::Slot().FillWidth(1.f).Padding(8, 2)
+    [
+        SNew(SHorizontalBox)
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)
+        [
+            SNew(STextBlock).Text(FText::FromString(TEXT("Profile:")))
+        ]
+        + SHorizontalBox::Slot().FillWidth(1.f)
+        [
+            SNew(SObjectPropertyEntryBox)
+            .AllowedClass(UDiggerMaterialProfile::StaticClass())
+            .ObjectPath_Lambda([this]() -> FString
+            {
+                return ActiveMaterialProfile.IsValid() ? ActiveMaterialProfile->GetPathName() : FString();
+            })
+            .OnObjectChanged_Lambda([this](const FAssetData& AD)
+            {
+                ActiveMaterialProfile = Cast<UDiggerMaterialProfile>(AD.GetAsset());
+                SaveDMMState();
+                if (SedimentBodyBox.IsValid()) { SedimentBodyBox->SetContent(MakeSedimentBody()); }
+            })
+            .AllowClear(true)
+            .ToolTipText(FText::FromString(TEXT("Pick a UDiggerMaterialProfile to edit/apply.")))
+        ]
+    ]
+
+    // ── Create Profile button ───────────────────────────────────
+    + SHorizontalBox::Slot().AutoWidth().Padding(2)
+    [
+        SNew(SButton)
+        .Text(FText::FromString(TEXT("Create Profile")))
+        .ToolTipText(FText::FromString(TEXT("Create a new UDiggerMaterialProfile asset.")))
+        .OnClicked_Lambda([this]()
+        {
+            const FString DefaultPath = GetInitialProfileFolder();
+
+            FString BaseStem = TEXT("DA_Profile");
+            EDiggerProfileType NewType = EDiggerProfileType::Sediment;
+            switch (CurrentDMMMode)
+            {
+            case EDMMPanelMode::Sediment: BaseStem = TEXT("DA_SedimentProfile");
+                NewType = EDiggerProfileType::Sediment;
+                break;
+            case EDMMPanelMode::Landscape: BaseStem = TEXT("DA_LandscapeProfile");
+                NewType = EDiggerProfileType::Landscape;
+                break;
+            case EDMMPanelMode::Utilities: BaseStem = TEXT("DA_UtilitiesProfile");
+                NewType = EDiggerProfileType::Utilities;
+                break;
+            }
+
+            FString OutPackageName, OutAssetName;
+            {
+                const FString BaseObjectPath = DefaultPath / BaseStem;
+                FAssetToolsModule& ATM = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
+                ATM.Get().CreateUniqueAssetName(BaseObjectPath, TEXT(""), OutPackageName, OutAssetName);
+            }
+
+            UDataAssetFactory* Factory = NewObject<UDataAssetFactory>();
+            Factory->DataAssetClass = UDiggerMaterialProfile::StaticClass();
+
+            FAssetToolsModule& ATM = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
+            UObject* NewObj = ATM.Get().CreateAsset(
+                OutAssetName,
+                FPackageName::GetLongPackagePath(OutPackageName),
+                UDiggerMaterialProfile::StaticClass(),
+                Factory
+            );
+
+            if (UDiggerMaterialProfile* NewProfile = Cast<UDiggerMaterialProfile>(NewObj))
+            {
+                NewProfile->Modify();
+                NewProfile->ProfileType = NewType;
+
+                if (NewProfile->Layers.Num() == 0 && NewType == EDiggerProfileType::Sediment)
+                {
+                    FDiggerLayerParams& L0 = NewProfile->Layers.AddDefaulted_GetRef();
+                    L0.LayerName = TEXT("Sediment 01");
+                    L0.bEnabled = true;
+
+                    FDiggerLayerParams& L1 = NewProfile->Layers.AddDefaulted_GetRef();
+                    L1.LayerName = TEXT("Sediment 02");
+                    L1.bEnabled = true;
+                }
+
+                NotifyProfileArrayChanged(NewProfile, TEXT("Layers")); // marks dirty & notifies
+                ActiveMaterialProfile = NewProfile;
+
+                if (SedimentBodyBox.IsValid()) // refresh visible list
+                {
+                    SedimentBodyBox->SetContent(MakeSedimentBody());
+                }
+
+                if (GEditor) // sync CB to new asset (optional but nice)
+                {
+                    TArray<UObject*> ToSync;
+                    ToSync.Add(NewProfile);
+                    GEditor->SyncBrowserToObjects(ToSync);
+                }
+            }
+
+
+            return FReply::Handled();
+        })
+    ]
+
+
+    // ── Quick-Apply ──────────────────────────────────────────────
+    + SHorizontalBox::Slot().AutoWidth().Padding(2)
+    [
+        SNew(SButton)
+        .Text(FText::FromString(TEXT("Quick-Apply")))
+        .ToolTipText(FText::FromString(TEXT("Apply this profile to the selected Digger Manager actor.")))
+        .OnClicked(this, &FDiggerEdModeToolkit::OnQuickApplyClicked)
+    ]
+    + SHorizontalBox::Slot().AutoWidth().Padding(2)
+    [
+        SNew(SButton)
+        .Text(FText::FromString(TEXT("Build & Apply")))
+        .ToolTipText(FText::FromString(TEXT(
+            "Create/Update a Material Instance asset from this profile and apply it to selected Digger meshes.")))
+        .OnClicked_Lambda([this]()
+        {
+#if WITH_EDITOR
+            UDiggerMaterialProfile* Profile = GetMutableProfile();
+            if (!Profile)
+            {
+                return FReply::Handled();
+            }
+
+            if (GEditor)
+            {
+                for (FSelectionIterator It(GEditor->GetSelectedActorIterator()); It; ++It)
+                {
+                    if (ADiggerManager* DM = Cast<ADiggerManager>(*It))
+                    {
+                        // Date: 06/09/2025 TODO: Hook this up so the DiggerManager actually makes and applies the material the user is making!
+                        //DM->BuildAndApplyProfileMaterial(Profile);
+                    }
+                }
+            }
+#endif
+            return FReply::Handled();
+        })
+    ];
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Sediment UI
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSedimentLayerRow(int32 Index)
+{
+    UDiggerMaterialProfile* P = GetMutableProfile();
+    check(P && P->Layers.IsValidIndex(Index));
+    FDiggerLayerParams& L = P->Layers[Index];
+
+    auto Label = [](const TCHAR* Txt){ return SNew(STextBlock).Text(FText::FromString(Txt)); };
+
+    return SNew(SBorder)
+    .Padding(FMargin(6))
+    [
+        SNew(SVerticalBox)
+
+        // Row header
+        + SVerticalBox::Slot().AutoHeight().Padding(0,2)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().Padding(2)
+            [
+                SNew(SCheckBox)
+                .IsChecked_Lambda([&L]() { return L.bEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+                .OnCheckStateChanged_Lambda([this, &L](ECheckBoxState S)
+                {
+                    L.bEnabled = (S == ECheckBoxState::Checked);
+                    TouchProfile(GetMutableProfile());
+                })
+                .ToolTipText(FText::FromString(TEXT("Enable/disable this layer.")))
+            ]
+            + SHorizontalBox::Slot().FillWidth(1.f).Padding(2)
+            [
+                SNew(SEditableTextBox)
+                .Text_Lambda([&L]() { return FText::FromString(L.LayerName); })
+                .OnTextCommitted_Lambda([this, &L](const FText& T, ETextCommit::Type)
+                {
+                    L.LayerName = T.ToString();
+                    TouchProfile(GetMutableProfile());
+                })
+                .ToolTipText(FText::FromString(TEXT("Layer name (for your reference).")))
+            ]
+            + SHorizontalBox::Slot().AutoWidth().Padding(2)
+            [
+                SNew(SButton).Text(FText::FromString(TEXT("▲")))
+                .OnClicked_Lambda([this, Index]() { return OnMoveLayerUpClicked(Index); })
+            ]
+            + SHorizontalBox::Slot().AutoWidth().Padding(2)
+            [
+                SNew(SButton).Text(FText::FromString(TEXT("▼")))
+                .OnClicked_Lambda([this, Index]() { return OnMoveLayerDownClicked(Index); })
+            ]
+            + SHorizontalBox::Slot().AutoWidth().Padding(2)
+            [
+                SNew(SButton).Text(FText::FromString(TEXT("Remove")))
+                .OnClicked_Lambda([this, Index]() { return OnRemoveLayerClicked(Index); })
+            ]
+        ]
+
+        // Texture Set
+        + SVerticalBox::Slot().AutoHeight().Padding(0,4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
+            [
+                Label(TEXT("Texture Set"))
+            ]
+            + SHorizontalBox::Slot().FillWidth(1.f).Padding(2)
+            [
+                SNew(SObjectPropertyEntryBox)
+                .AllowedClass(UDiggerTextureSet::StaticClass())
+                .ObjectPath_Lambda([&L]() -> FString
+                {
+                    return L.TextureSet.IsNull()
+                               ? FString()
+                               : L.TextureSet.ToSoftObjectPath().ToString();
+                })
+                .OnObjectChanged_Lambda([this, &L](const FAssetData& AD)
+                {
+                    L.TextureSet = Cast<UDiggerTextureSet>(AD.GetAsset());
+                    TouchProfile(GetMutableProfile());
+                })
+                .AllowClear(true)
+                .ToolTipText(FText::FromString(TEXT("Assign UDiggerTextureSet (BaseColor/Normal/ORM).")))
+            ]
+        ]
+
+        // Scalars grid
+        + SVerticalBox::Slot().AutoHeight().Padding(0,2)
+        [
+            SNew(SGridPanel).FillColumn(1, 1.f)
+
+            + SGridPanel::Slot(0,0).Padding(2)[ Label(TEXT("Tiling")) ]
+            + SGridPanel::Slot(1,0).Padding(2)[
+                SNew(SNumericEntryBox<float>)
+                .Value_Lambda([&L](){ return L.Tiling; })
+                .OnValueChanged_Lambda([this, &L](float V){ L.Tiling = V; TouchProfile(GetMutableProfile()); })
+                .MinValue(0.0001f).MaxValue(10.f).MinSliderValue(0.0001f).MaxSliderValue(1.f)
+            ]
+
+            + SGridPanel::Slot(0,1).Padding(2)[ Label(TEXT("Min Height")) ]
+            + SGridPanel::Slot(1,1).Padding(2)[
+                SNew(SNumericEntryBox<float>)
+                .Value_Lambda([&L](){ return L.MinHeight; })
+                .OnValueChanged_Lambda([this, &L](float V){ L.MinHeight = V; TouchProfile(GetMutableProfile()); })
+            ]
+
+            + SGridPanel::Slot(0,2).Padding(2)[ Label(TEXT("Max Height")) ]
+            + SGridPanel::Slot(1,2).Padding(2)[
+                SNew(SNumericEntryBox<float>)
+                .Value_Lambda([&L](){ return L.MaxHeight; })
+                .OnValueChanged_Lambda([this, &L](float V){ L.MaxHeight = V; TouchProfile(GetMutableProfile()); })
+            ]
+
+            + SGridPanel::Slot(0,3).Padding(2)[ Label(TEXT("Noise Amp")) ]
+            + SGridPanel::Slot(1,3).Padding(2)[
+                SNew(SNumericEntryBox<float>)
+                .Value_Lambda([&L](){ return L.NoiseAmplitude; })
+                .OnValueChanged_Lambda([this, &L](float V){ L.NoiseAmplitude = V; TouchProfile(GetMutableProfile()); })
+            ]
+
+            + SGridPanel::Slot(0,4).Padding(2)[ Label(TEXT("Noise Freq")) ]
+            + SGridPanel::Slot(1,4).Padding(2)[
+                SNew(SNumericEntryBox<float>)
+                .Value_Lambda([&L](){ return L.NoiseFrequency; })
+                .OnValueChanged_Lambda([this, &L](float V){ L.NoiseFrequency = V; TouchProfile(GetMutableProfile()); })
+            ]
+
+            + SGridPanel::Slot(0,5).Padding(2)[ Label(TEXT("Edge Sharp")) ]
+            + SGridPanel::Slot(1,5).Padding(2)[
+                SNew(SNumericEntryBox<float>)
+                .Value_Lambda([&L](){ return L.EdgeSharpness; })
+                .OnValueChanged_Lambda([this, &L](float V){ L.EdgeSharpness = V; TouchProfile(GetMutableProfile()); })
+            ]
+
+            + SGridPanel::Slot(0,6).Padding(2)[ Label(TEXT("Seed")) ]
+            + SGridPanel::Slot(1,6).Padding(2)[
+                SNew(SNumericEntryBox<float>)
+                .Value_Lambda([&L](){ return L.Seed; })
+                .OnValueChanged_Lambda([this, &L](float V){ L.Seed = V; TouchProfile(GetMutableProfile()); })
+            ]
+        ]
+    ];
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSedimentBody()
+{
+    EnsureActiveProfile();
+    UDiggerMaterialProfile* P = GetMutableProfile();
+
+    TSharedRef<SVerticalBox> VBox = SNew(SVerticalBox)
+
+    + SVerticalBox::Slot().AutoHeight().Padding(2)
+    [
+        SNew(SHorizontalBox)
+        + SHorizontalBox::Slot().AutoWidth().Padding(2)
+        [
+            SNew(SButton)
+            .Text(FText::FromString(TEXT("Add Layer")))
+            .OnClicked(this, &FDiggerEdModeToolkit::OnAddLayerClicked)
+        ]
+        + SHorizontalBox::Slot().AutoWidth().Padding(2)
+        [
+            SNew(SButton)
+            .Text(FText::FromString(TEXT("Quick-Apply")))
+            .OnClicked(this, &FDiggerEdModeToolkit::OnQuickApplyClicked)
+        ]
+    ];
+
+    if (!P)
+    {
+        VBox->AddSlot().AutoHeight().Padding(2)
+        [
+            SNew(STextBlock).Text(FText::FromString(TEXT("Pick a UDiggerMaterialProfile above to begin.")))
+        ];
+        return VBox;
+    }
+
+    for (int32 i = 0; i < P->Layers.Num(); ++i)
+    {
+        VBox->AddSlot().AutoHeight().Padding(2)
+        [
+            MakeSedimentLayerRow(i)
+        ];
+    }
+
+    return VBox;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Landscape & Utilities stubs (for now)
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeLandscapeBody()
+{
+    return SNew(STextBlock).Text(FText::FromString(TEXT("Landscape material management (coming next)")));
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeUtilitiesBody()
+{
+    return SNew(STextBlock).Text(FText::FromString(TEXT("Helpers: auto-naming, set builder, folder scan (coming next)")));
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Section entry
+
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeMaterialManagerSection()
+{
+    return SNew(SVerticalBox)
+
+        // Header Button (Fold/Unfold)
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            MakeDMMHeaderRow()
+        ]
+        
+    // Banner (no collapse arrow now)
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SBorder)
+        .Padding(FMargin(6))
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("Digger Material Manager")))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+        ]
+    ]
+
+    // Toolbar (mode + profile + quick apply)
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        MakeDMMToolbar()
+    ]
+
+        // Body (switch by mode)
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SWidgetSwitcher)
+        .WidgetIndex_Lambda([this]()
+        {
+            switch (CurrentDMMMode)
+            {
+            case EDMMPanelMode::Sediment:  return 0;
+            case EDMMPanelMode::Landscape: return 1;
+            default:                       return 2;
+            }
+        })
+        // Sediment
+        + SWidgetSwitcher::Slot()
+        [
+            SAssignNew(SedimentBodyBox, SBox)
+            [
+                MakeSedimentBody()
+            ]
+        ]
+        // Landscape
+        + SWidgetSwitcher::Slot() [ MakeLandscapeBody() ]
+        // Utilities
+        + SWidgetSwitcher::Slot() [ MakeUtilitiesBody() ]
+    ];
+}
+
+FReply FDiggerEdModeToolkit::OnAddLayerClicked()
+{
+    if (UDiggerMaterialProfile* P = GetMutableProfile())
+    {
+        P->Layers.AddDefaulted();
+        NotifyProfileArrayChanged(P, TEXT("Layers"));
+    }
+    if (SedimentBodyBox.IsValid()) { SedimentBodyBox->SetContent(MakeSedimentBody()); }
+    return FReply::Handled();
+}
+
+///////////////////////////////////////////////////////////////////////
+/// Order Action Buttons
+//
+
+FReply FDiggerEdModeToolkit::OnRemoveLayerClicked(int32 LayerIndex)
+{
+    if (UDiggerMaterialProfile* P = GetMutableProfile())
+    {
+        if (P->Layers.IsValidIndex(LayerIndex))
+        {
+            P->Layers.RemoveAt(LayerIndex);
+            NotifyProfileArrayChanged(P, TEXT("Layers"));
+        }
+    }
+    if (SedimentBodyBox.IsValid()) { SedimentBodyBox->SetContent(MakeSedimentBody()); }
+    return FReply::Handled();
+}
+
+FReply FDiggerEdModeToolkit::OnMoveLayerUpClicked(int32 LayerIndex)
+{
+    if (UDiggerMaterialProfile* P = GetMutableProfile())
+    {
+        if (P->Layers.IsValidIndex(LayerIndex) && LayerIndex > 0)
+        {
+            P->Layers.Swap(LayerIndex, LayerIndex - 1);
+            NotifyProfileArrayChanged(P, TEXT("Layers"));
+        }
+    }
+    if (SedimentBodyBox.IsValid()) { SedimentBodyBox->SetContent(MakeSedimentBody()); }
+    return FReply::Handled();
+}
+
+FReply FDiggerEdModeToolkit::OnMoveLayerDownClicked(int32 LayerIndex)
+{
+    if (UDiggerMaterialProfile* P = GetMutableProfile())
+    {
+        if (P->Layers.IsValidIndex(LayerIndex) && LayerIndex < P->Layers.Num() - 1)
+        {
+            P->Layers.Swap(LayerIndex, LayerIndex + 1);
+            NotifyProfileArrayChanged(P, TEXT("Layers"));
+        }
+    }
+    if (SedimentBodyBox.IsValid()) { SedimentBodyBox->SetContent(MakeSedimentBody()); }
+    return FReply::Handled();
+}
+
+///////////////////////////////////////////////////
+/// Other DMM Helpers
+//
+
+void FDiggerEdModeToolkit::SaveDMMState() const
+{
+#if WITH_EDITOR
+    // Persist profile
+    const FString ProfilePath = ActiveMaterialProfile.IsValid()
+        ? ActiveMaterialProfile->GetPathName()
+        : FString();
+
+    GConfig->SetString(TEXT("/Script/DiggerEditor"), *GetProfileConfigKey(), *ProfilePath, GEditorPerProjectIni);
+
+    // Persist mode as string
+    FString ModeStr = TEXT("Sediment");
+    switch (CurrentDMMMode)
+    {
+    case EDMMPanelMode::Sediment:  ModeStr = TEXT("Sediment");  break;
+    case EDMMPanelMode::Landscape: ModeStr = TEXT("Landscape"); break;
+    case EDMMPanelMode::Utilities: ModeStr = TEXT("Utilities"); break;
+    }
+    GConfig->SetString(TEXT("/Script/DiggerEditor"), *GetModeConfigKey(), *ModeStr, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+#endif
+}
+
+void FDiggerEdModeToolkit::LoadDMMState()
+{
+#if WITH_EDITOR
+    // Mode
+    FString ModeStr;
+    if (GConfig->GetString(TEXT("/Script/DiggerEditor"), *GetModeConfigKey(), ModeStr, GEditorPerProjectIni))
+    {
+        if      (ModeStr.Equals(TEXT("Landscape"), ESearchCase::IgnoreCase)) CurrentDMMMode = EDMMPanelMode::Landscape;
+        else if (ModeStr.Equals(TEXT("Utilities"), ESearchCase::IgnoreCase)) CurrentDMMMode = EDMMPanelMode::Utilities;
+        else                                                                 CurrentDMMMode = EDMMPanelMode::Sediment;
+    }
+
+    // Profile
+    FString ProfilePath;
+    if (GConfig->GetString(TEXT("/Script/DiggerEditor"), *GetProfileConfigKey(), ProfilePath, GEditorPerProjectIni))
+    {
+        if (!ProfilePath.IsEmpty())
+        {
+            if (UDiggerMaterialProfile* Loaded = LoadObject<UDiggerMaterialProfile>(nullptr, *ProfilePath))
+            {
+                ActiveMaterialProfile = Loaded;
+            }
+        }
+    }
+#endif
+}
+
+
 
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDMMHeaderRow()
 {
@@ -645,6 +1282,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDMMBody()
     ];
 }
 
+/*
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeMaterialManagerSection()
 {
     return SNew(SVerticalBox)
@@ -671,6 +1309,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeMaterialManagerSection()
         ]
     ];
 }
+*/
 
 
 
