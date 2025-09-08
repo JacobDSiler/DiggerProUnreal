@@ -923,94 +923,107 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke, bool Force
     ApplyBrushToAllChunks(BrushStroke);
 }
 
-void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
+// DiggerManager.cpp
+void ADiggerManager::ApplyBrushToAllChunks(const FBrushStroke& BrushStroke)
 {
-    const UVoxelBrushShape* ActiveBrushShape = GetActiveBrushShape(BrushStroke.BrushType);
-    if (!ActiveBrushShape)
+    // Prefer cached member; fall back to GetWorld() if needed
+    UWorld* W = this->World ? this->World : GetWorld();
+    if (!W) return;
+
+    // --- 1) Build conservative world-space AABB for the brush ---
+    const FVector C = BrushStroke.BrushPosition; // EditorBrushPosition + EditorBrushOffset already baked in
+    const float   R = FMath::Max(1.f, BrushStroke.BrushRadius);
+
+    FBox WorldAABB(ForceInit);
+    switch (BrushStroke.BrushType)
     {
-        if (DiggerDebug::Brush)
+        case EVoxelBrushType::Sphere:
         {
-            UE_LOG(LogTemp, Error, TEXT("ActiveBrushShape is null for brush type %d"), (int32)BrushStroke.BrushType);
+            WorldAABB = FBox(C - FVector(R), C + FVector(R));
+            break;
         }
-        return;
-    }
-
-    /*UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: === BRUSH STROKE DEBUG ==="));
-    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Position: %s"), *BrushStroke.BrushPosition.ToString());
-    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Radius: %f"), BrushStroke.BrushRadius);
-    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Falloff: %f"), BrushStroke.BrushFalloff);
-    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Strength: %f"), BrushStroke.BrushStrength);
-    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: bDig: %s"), BrushStroke.bDig ? TEXT("true") : TEXT("false"));*/
-    
-    if (FVoxelConversion::LocalVoxelSize <= 0.0f)
-    {
-        FVoxelConversion::InitFromConfig(8, 4, 100.0f, FVector::ZeroVector);
-    }
-
-    // Handle hole spawn ONCE per brush stroke, before processing chunks
-    if (BrushStroke.bDig)
-    {
-        if(BrushStroke.BrushPosition.Z - BrushStroke.BrushRadius + BrushStroke.BrushFalloff <= GetLandscapeHeightAt(BrushStroke.BrushPosition))
+        case EVoxelBrushType::Cube:
         {
-            HandleHoleSpawn(BrushStroke);
+            if (BrushStroke.bUseAdvancedCubeBrush)
+            {
+                const FVector Half(
+                    FMath::Max(1.f, BrushStroke.AdvancedCubeHalfExtentX),
+                    FMath::Max(1.f, BrushStroke.AdvancedCubeHalfExtentY),
+                    FMath::Max(1.f, BrushStroke.AdvancedCubeHalfExtentZ));
+                WorldAABB = FBox(C - Half, C + Half);
+            }
+            else
+            {
+                const FVector Half(R);
+                WorldAABB = FBox(C - Half, C + Half);
+            }
+            break;
+        }
+        case EVoxelBrushType::Cylinder:
+        {
+            const float HalfZ = (BrushStroke.BrushLength > 0.f) ? (BrushStroke.BrushLength * 0.5f) : R;
+            WorldAABB.Min = FVector(C.X - R, C.Y - R, C.Z - HalfZ);
+            WorldAABB.Max = FVector(C.X + R, C.Y + R, C.Z +  HalfZ);
+            break;
+        }
+        default:
+        {
+            WorldAABB = FBox(C - FVector(R), C + FVector(R));
+            break;
         }
     }
 
-    float BrushEffectRadius = BrushStroke.BrushRadius + BrushStroke.BrushFalloff;
-    float ChunkWorldSize = FVoxelConversion::ChunkWorldSize();
-    float ChunkDiagonal = ChunkWorldSize * 1.732f; // sqrt(3) for 3D diagonal
-    float SafetyPadding = BrushEffectRadius + ChunkDiagonal;
+    // --- 2) Convert to chunk range (min-corner aligned) ---
+    const FVector Eps(1.f, 1.f, 1.f);
+    const FIntVector MinChunk = FVoxelConversion::WorldToChunk_Min(WorldAABB.Min - Eps);
+    const FIntVector MaxChunk = FVoxelConversion::WorldToChunk_Min(WorldAABB.Max + Eps);
 
-    FVector Min = BrushStroke.BrushPosition - FVector(SafetyPadding);
-    FVector Max = BrushStroke.BrushPosition + FVector(SafetyPadding);
-
-    FIntVector MinChunk = FVoxelConversion::WorldToChunk_Min(Min);
-    FIntVector MaxChunk = FVoxelConversion::WorldToChunk_Min(Max);
+    // --- 3) Iterate candidate chunks and cull by chunk AABBs ---
+    const float CWS = FVoxelConversion::ChunkWorldSize(); // function call
+    const ENetMode NM = W->GetNetMode();
+    const bool bServerLike = (NM != NM_Client); // Server or Standalone
 
     for (int32 X = MinChunk.X; X <= MaxChunk.X; ++X)
+    for (int32 Y = MinChunk.Y; Y <= MaxChunk.Y; ++Y)
+    for (int32 Z = MinChunk.Z; Z <= MaxChunk.Z; ++Z)
     {
-        for (int32 Y = MinChunk.Y; Y <= MaxChunk.Y; ++Y)
+        const FIntVector ChunkCoords(X, Y, Z);
+
+        const FVector ChunkMin = FVoxelConversion::ChunkToWorld_Min(ChunkCoords);
+        const FBox    ChunkAABB(ChunkMin, ChunkMin + FVector(CWS));
+
+        if (!ChunkAABB.Intersect(WorldAABB))
         {
-            for (int32 Z = MinChunk.Z; Z <= MaxChunk.Z; ++Z)
+            continue;
+        }
+
+        // Create or fetch the chunk (non-static member call; we’re in instance context)
+        UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords);
+        if (!IsValid(Chunk))
+        {
+            if (DiggerDebug::Chunks)
             {
-                FIntVector ChunkCoords(X, Y, Z);
-                
-                // Add this logging
-                if (DiggerDebug::Chunks)
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("Trying to get/create chunk at: %s"), *ChunkCoords.ToString());
-                }
-                
-                if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
-                {
-                    if (DiggerDebug::Chunks)
-                    {
-                        UE_LOG(LogTemp, Warning, TEXT("Successfully got chunk at: %s"), *ChunkCoords.ToString());
-                    }
-                    
-                    ENetMode NetMode = GetWorld()->GetNetMode();
-                    if (NetMode == NM_Standalone)
-                    {
-                        // Single player: call the local method directly
-                        Chunk->ApplyBrushStroke(BrushStroke);
-                    }
-                    else
-                    {
-                        // Multiplayer: call the multicast function (from the server)
-                        Chunk->MulticastApplyBrushStroke(BrushStroke);
-                    }
-                }
-                else
-                {
-                    if (DiggerDebug::Chunks)
-                    {
-                        UE_LOG(LogTemp, Error, TEXT("Failed to get/create chunk at: %s"), *ChunkCoords.ToString());
-                    }
-                }
+                UE_LOG(LogTemp, Error, TEXT("Failed to get/create chunk at: %s"), *ChunkCoords.ToString());
             }
+            continue;
+        }
+
+        // Apply the stroke
+        if (bServerLike)
+        {
+            // Server / Standalone: replicate to clients if applicable
+            Chunk->MulticastApplyBrushStroke(BrushStroke);
+        }
+        else
+        {
+            // Client/editor local path
+            Chunk->ApplyBrushStroke(BrushStroke);
         }
     }
 }
+
+
+
 
 void ADiggerManager::SetVoxelAtWorldPosition(const FVector& WorldPos, float Value)
 {

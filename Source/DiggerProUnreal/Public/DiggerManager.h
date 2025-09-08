@@ -92,6 +92,18 @@ struct FBrushSample
     uint8   Op;        // 0 add/union, 1 subtract/diff, 2 smin...
 };
 
+// Canonical conversion: World -> (Global, Chunk, Local)
+static inline void WorldToAllVoxelSpaces(
+    const FVector& World,
+    FIntVector& OutGlobal,
+    FIntVector& OutChunk,
+    FIntVector& OutLocal)
+{
+    OutGlobal = FVoxelConversion::WorldToGlobalVoxel(World);
+    FVoxelConversion::GlobalVoxelToChunkAndLocal(OutGlobal, OutChunk, OutLocal);
+}
+
+
 UCLASS(Blueprintable)
 class DIGGERPROUNREAL_API ADiggerManager : public AActor
 {
@@ -124,7 +136,7 @@ public:
     UFUNCTION(BlueprintCallable, Category="Brush")
     void ApplyBrushToAllChunksPIE(FBrushStroke& BrushStroke);
     void ApplyBrushToAllChunks(FBrushStroke& BrushStroke, bool ForceUpdate);
-    void ApplyBrushToAllChunks(FBrushStroke& BrushStroke);
+    void ApplyBrushToAllChunks(const FBrushStroke& BrushStroke);
 
     /**
  * Detects all unified voxel islands across the chunk map.
@@ -317,7 +329,6 @@ public:
 
     UFUNCTION(CallInEditor, Category="Digger Brush|Actions")
     void ApplyBrushInEditor(bool bDig);
-    void RemoveIslandAtPosition(const FVector& IslandCenter, const FIntVector& ReferenceVoxel);
 
 
     UPROPERTY(EditAnywhere, Category="Digger Brush|Settings")

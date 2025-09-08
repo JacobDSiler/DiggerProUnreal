@@ -125,5 +125,53 @@ struct DIGGERPROUNREAL_API FVoxelConversion
                 ChunkSize, Subdivisions, TerrainGridSize, LocalVoxelSize, *Origin.ToString(), ChunkWorldSize());
         }
     }
+
+    // ==== Legacy name shims (compat) ====
+    // Keep old call-sites compiling while you finish migrating.
+
+    static FORCEINLINE FVector ChunkToWorld(const FIntVector& Chunk)
+    {
+        return ChunkToWorld_Min(Chunk);
+    }
+
+    static FORCEINLINE FIntVector WorldToChunk(const FVector& W)
+    {
+        return WorldToChunk_Min(W);
+    }
+
+    static FORCEINLINE FIntVector WorldToGlobalVoxel(const FVector& W)
+    {
+        return WorldToGlobalVoxel_Min(W);
+    }
+
+    static FORCEINLINE void GlobalVoxelToChunkAndLocal(
+        const FIntVector& G, FIntVector& OutChunk, FIntVector& OutLocal)
+    {
+        GlobalVoxelToChunkAndLocal_Min(G, OutChunk, OutLocal);
+    }
+
+    static FORCEINLINE FIntVector ChunkAndLocalToGlobalVoxel(
+        const FIntVector& Chunk, const FIntVector& Local)
+    {
+        return ChunkAndLocalToGlobalVoxel_Min(Chunk, Local);
+    }
+
+    static FORCEINLINE FVector GlobalVoxelToWorld(const FIntVector& G)
+    {
+        // Most old sites expected CENTER; if you truly want min-corner, swap to GlobalVoxelMinToWorld.
+        return GlobalVoxelCenterToWorld(G);
+    }
+
+    static FORCEINLINE FIntVector WorldToLocalVoxel(const FVector& W)
+    {
+        FIntVector C, L;
+        WorldToChunkAndLocal_Min(W, C, L);
+        return L;
+    }
+
+    static FORCEINLINE FVector ChunkVoxelToWorld(const FIntVector& Chunk, const FIntVector& Local)
+    {
+        return ChunkVoxelToWorldCenter_Min(Chunk, Local);
+    }
 };
 

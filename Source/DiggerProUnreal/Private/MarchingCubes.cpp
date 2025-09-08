@@ -608,10 +608,11 @@ void UMarchingCubes::FindRimVertices(
 
 
 
+// --- DROP-IN REPLACEMENT ---
 void UMarchingCubes::GenerateMeshFromGrid(
     USparseVoxelGrid* InVoxelGrid,
-    const FVector& /*OriginUnused*/,
-    float VoxelSize,
+    const FVector& Origin,        // <-- island/mesh world origin (center)
+    float /*VoxelSizeParam*/,     // unused; we read FVoxelConversion::LocalVoxelSize
     TArray<FVector>& OutVertices,
     TArray<int32>& OutTriangles,
     TArray<FVector>& OutNormals)
@@ -626,10 +627,10 @@ void UMarchingCubes::GenerateMeshFromGrid(
         return;
     }
 
-    // ---- 1) Find GLOBAL-voxel bounds of the sparse set ----
     const TMap<FIntVector, FVoxelData>& Map = InVoxelGrid->VoxelData;
     if (Map.Num() == 0) return;
 
+    // ---- Bounds in GLOBAL voxel indices ----
     FIntVector MinG( INT_MAX,  INT_MAX,  INT_MAX);
     FIntVector MaxG(-INT_MAX, -INT_MAX, -INT_MAX);
     for (const auto& KV : Map)
@@ -643,7 +644,6 @@ void UMarchingCubes::GenerateMeshFromGrid(
     const FIntVector Samples = MaxG - MinG + FIntVector(1,1,1);
     if (Samples.X < 2 || Samples.Y < 2 || Samples.Z < 2) return;
 
-    // ---- 2) Helpers ----
     auto CornerOff = [](int32 i)->FIntVector
     {
         static const FIntVector Off[8] = {
@@ -655,9 +655,10 @@ void UMarchingCubes::GenerateMeshFromGrid(
 
     auto GetHeight = [&](const FVector& W){ return GetCachedHeight(W); };
 
-    // ---- 3) March cells in GLOBAL-voxel space ----
+    // Cache to dedup exact shared vertices
     TMap<FVector,int32> VertexCache;
 
+    // March in GLOBAL lattice; positions are WORLD; we convert to LOCAL by subtracting Origin
     for (int32 cx=0; cx<Samples.X-1; ++cx)
     for (int32 cy=0; cy<Samples.Y-1; ++cy)
     for (int32 cz=0; cz<Samples.Z-1; ++cz)
@@ -671,7 +672,7 @@ void UMarchingCubes::GenerateMeshFromGrid(
         {
             const FIntVector G = CellBase + CornerOff(i);
 
-            // WORLD position of this lattice point (center of the voxel index)
+            // WORLD position of this lattice point (center-based lattice; consistent everywhere)
             CornerWS[i] = FVoxelConversion::GlobalVoxelCenterToWorld(G);
 
             if (const FVoxelData* V = InVoxelGrid->GetVoxelData(G))
@@ -680,13 +681,14 @@ void UMarchingCubes::GenerateMeshFromGrid(
             }
             else
             {
-                // Undefined → infer from landscape: air above, solid below
+                // Unset → infer from landscape: solid below, air above
                 const float H = GetHeight(CornerWS[i]);
                 CornerSDF[i] = (CornerWS[i].Z < H) ? FVoxelConversion::SDF_SOLID
                                                    : FVoxelConversion::SDF_AIR;
             }
         }
 
+        // Build cube index (SDF>0 = air)
         int32 CubeIndex = 0;
         for (int32 i=0;i<8;++i)
             if (CornerSDF[i] > 0) CubeIndex |= (1<<i);
@@ -694,38 +696,41 @@ void UMarchingCubes::GenerateMeshFromGrid(
 
         for (int32 i=0; TriangleConnectionTable[CubeIndex][i] != -1; i+=3)
         {
-            FVector tri[3];
+            FVector triWS[3];
             for (int32 j=0;j<3;++j)
             {
                 const int32 e  = TriangleConnectionTable[CubeIndex][i+j];
                 const int32 a  = EdgeConnection[e][0];
                 const int32 b  = EdgeConnection[e][1];
 
-                tri[j] = InterpolateVertex(
+                triWS[j] = InterpolateVertex(
                     CornerWS[a], CornerWS[b],
                     CornerSDF[a], CornerSDF[b]);
 
-                tri[j] = ApplyLandscapeTransition(tri[j]); // if you use this
+                // If you keep this transition, ensure it doesn't add offsets:
+                triWS[j] = ApplyLandscapeTransition(triWS[j]);
             }
 
+            // Store LOCAL vertices (subtract Origin)
             for (int32 j=0;j<3;++j)
             {
-                const FVector& V = tri[j];
-                if (int32* Idx = VertexCache.Find(V))
+                const FVector VLocal = triWS[j] - Origin;
+
+                if (int32* Idx = VertexCache.Find(VLocal))
                 {
                     OutTriangles.Add(*Idx);
                 }
                 else
                 {
-                    const int32 NewIdx = OutVertices.Add(V);
-                    VertexCache.Add(V, NewIdx);
+                    const int32 NewIdx = OutVertices.Add(VLocal);
+                    VertexCache.Add(VLocal, NewIdx);
                     OutTriangles.Add(NewIdx);
                 }
             }
         }
     }
 
-    // ---- 4) Smooth normals (same as your current) ----
+    // Smooth vertex normals
     OutNormals.SetNumZeroed(OutVertices.Num());
     for (int32 i=0;i<OutTriangles.Num(); i+=3)
     {
@@ -736,16 +741,18 @@ void UMarchingCubes::GenerateMeshFromGrid(
         const FVector e1 = OutVertices[i1] - OutVertices[i0];
         const FVector e2 = OutVertices[i2] - OutVertices[i0];
         const FVector fn = FVector::CrossProduct(e1, e2);
-        const float mag  = fn.Size();
-        if (mag > SMALL_NUMBER)
+        const float   m  = fn.Size();
+
+        if (m > SMALL_NUMBER)
         {
-            const FVector unit = fn / mag;
-            const FVector w    = unit * mag;
-            OutNormals[i0] += -w; OutNormals[i1] += -w; OutNormals[i2] += -w;
+            const FVector unit = fn / m;
+            const FVector w    = unit * m;     // area-weighted
+            OutNormals[i0] += w; OutNormals[i1] += w; OutNormals[i2] += w;
         }
     }
-    for (FVector& n : OutNormals) n = (n).GetSafeNormal();
+    for (FVector& n : OutNormals) n = n.GetSafeNormal(); // <-- DO NOT flip
 }
+
 
 
 
