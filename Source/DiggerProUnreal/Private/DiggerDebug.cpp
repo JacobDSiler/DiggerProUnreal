@@ -38,7 +38,9 @@ FDiggerDebug::FDiggerDebug()
 
 void FDiggerDebug::RegisterFlag(const TCHAR* FlagName, bool& FlagRef)
 {
-    FlagRegistry.Add(FName(FlagName), &FlagRef);
+    const FName Name(FlagName);
+    FlagRegistry.Add(Name, &FlagRef);
+    FlagList.Add(FFlagEntry(Name, &FlagRef));
 }
 
 bool* FDiggerDebug::FindFlag(const FName& FlagName)

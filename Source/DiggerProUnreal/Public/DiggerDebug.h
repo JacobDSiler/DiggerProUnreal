@@ -11,6 +11,8 @@ class FDiggerDebug
 {
 public:
     using FFlagRegistry = TMap<FName, bool*>;
+    using FFlagEntry = TPair<FName, bool*>;
+    using FFlagList = TArray<FFlagEntry>;
 
     /** Retrieve the singleton instance. */
     static FDiggerDebug& Get();
@@ -18,6 +20,9 @@ public:
     /** Map of all debug flag names to the underlying bool pointers. */
     const FFlagRegistry& GetFlagRegistry() const { return FlagRegistry; }
     FFlagRegistry& GetFlagRegistry() { return FlagRegistry; }
+
+    /** Ordered list of all registered flags (useful for UI enumeration). */
+    const FFlagList& GetAllFlags() const { return FlagList; }
 
     /** Find a particular debug flag by name. Returns nullptr when not found. */
     bool* FindFlag(const FName& FlagName);
@@ -56,6 +61,7 @@ private:
     void RegisterFlag(const TCHAR* FlagName, bool& FlagRef);
 
     FFlagRegistry FlagRegistry;
+    FFlagList FlagList;
 };
 
 namespace DiggerDebug
@@ -92,6 +98,11 @@ namespace DiggerDebug
     inline FDiggerDebug::FFlagRegistry& GetFlagRegistry()
     {
         return FDiggerDebug::Get().GetFlagRegistry();
+    }
+
+    inline const FDiggerDebug::FFlagList& GetAllFlags()
+    {
+        return FDiggerDebug::Get().GetAllFlags();
     }
 
     inline bool* FindFlag(const FName& FlagName)
