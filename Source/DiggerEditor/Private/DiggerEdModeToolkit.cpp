@@ -1923,6 +1923,11 @@ void FDiggerEdModeToolkit::ClearBrushDigPreviewOverride()
     bUseBrushDigPreviewOverride = false;
 }
 
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDebugCheckbox(const FDiggerDebug::FFlagEntry& FlagEntry)
+{
+    return MakeDebugCheckbox(FlagEntry.Key.ToString(), FlagEntry.Value);
+}
+
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDebugCheckbox(const FString& Label, bool* FlagPtr)
 {
     return SNew(SCheckBox)
