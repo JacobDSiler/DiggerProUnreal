@@ -2,20 +2,6 @@
 
 #include "CoreMinimal.h"
 
-/** Plain-old-data descriptor used to expose a debug flag and its bool pointer. */
-struct FDiggerDebugFlag
-{
-    FDiggerDebugFlag() = default;
-    FDiggerDebugFlag(const FName& InKey, bool* InValue)
-        : Key(InKey)
-        , Value(InValue)
-    {
-    }
-
-    FName Key;
-    bool* Value = nullptr;
-};
-
 /**
  * Singleton container that owns the Digger debug flags so that the editor UI
  * can discover and mutate them at runtime instead of relying on global
@@ -25,7 +11,8 @@ class FDiggerDebug
 {
 public:
     using FFlagRegistry = TMap<FName, bool*>;
-    using FFlagList = TArray<FDiggerDebugFlag>;
+    using FFlagEntry = TPair<FName, bool*>;
+    using FFlagList = TArray<FFlagEntry>;
 
     /** Retrieve the singleton instance. */
     static FDiggerDebug& Get();
@@ -81,8 +68,6 @@ namespace DiggerDebug
 {
     inline FDiggerDebug& Get() { return FDiggerDebug::Get(); }
 
-    using FDiggerDebugFlag = ::FDiggerDebugFlag;
-
     inline bool& Verbose = FDiggerDebug::Get().Verbose;
     inline bool& Performance = FDiggerDebug::Get().Performance;
     inline bool& Cache = FDiggerDebug::Get().Cache;
@@ -115,7 +100,8 @@ namespace DiggerDebug
         return FDiggerDebug::Get().GetFlagRegistry();
     }
 
-    inline const TArray<FDiggerDebugFlag>& GetAllFlags()
+
+    inline const FDiggerDebug::FFlagList& GetAllFlags()
     {
         return FDiggerDebug::Get().GetAllFlags();
     }
