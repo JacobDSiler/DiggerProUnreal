@@ -291,6 +291,7 @@ public:
 	void AddIsland(const FIslandData& Island);
 	void BindIslandDelegates();
 
+	TSharedRef<SWidget>  GenerateDebugCheckboxes();
 	virtual void Init(const TSharedPtr<IToolkitHost>& InitToolkitHost) override;
 	bool CanPaintWithCustomBrush() const;
 	void ScanCustomBrushFolder();

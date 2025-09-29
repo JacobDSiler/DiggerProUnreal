@@ -89,6 +89,9 @@
 #include "Materials/MaterialInstanceConstant.h"
 #include "Misc/PackageName.h"
 #include "Editor.h"
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceConstant.h"
+#include "Materials/Material.h"
 
 
 
@@ -198,13 +201,6 @@ UMaterialInstanceDynamic* ADiggerManager::GetOrCreateMID(UPrimitiveComponent* Ta
 }
 
 
-/** Build param name: "Layer{N}_Suffix" with N being 1-based layer index. */
-static FName LayerParam(int32 Index1Based, const TCHAR* Suffix) // keep your existing helper if you have it
-{
-    return FName(*FString::Printf(TEXT("Layer%d_%s"), Index1Based, Suffix));
-}
-
-
 /** Push all parameters from the profile into the MID, clamping extra layers off. */
 void ADiggerManager::PushProfileParamsToMID(UDiggerMaterialProfile* Profile, UMaterialInstanceDynamic* MID, int32 MaxLayers)
 {
@@ -263,6 +259,250 @@ void ADiggerManager::PushProfileParamsToMID(UDiggerMaterialProfile* Profile, UMa
         // MID->SetTextureParameterValue(LayerParam(L1, TEXT("ORM")),       nullptr);
     }
 }
+
+
+// --------------------------------------------------------
+// LayerParam: build names like "Layer3_BaseColor"
+// --------------------------------------------------------
+FName ADiggerManager::LayerParam(int32 Index1Based, const TCHAR* Suffix)
+{
+    return FName(*FString::Printf(TEXT("Layer%d_%s"), Index1Based, Suffix));
+}
+
+// --------------------------------------------------------
+// ValidateMasterMaterial
+// --------------------------------------------------------
+bool ADiggerManager::ValidateMasterMaterial(UMaterialInterface* Master, int32 MaxLayers, FText& OutReport) const
+{
+    if (!Master)
+    {
+        OutReport = FText::FromString(TEXT("❌ No master material provided (null Master pointer)."));
+        return false;
+    }
+
+    // Gather parameter infos
+    TArray<FMaterialParameterInfo> ScalarInfos, VectorInfos, TextureInfos, RVTInfos, FontInfos;
+    TArray<FGuid> ScalarIds, VectorIds, TextureIds, RVTIds, FontIds;
+
+    Master->GetAllScalarParameterInfo(ScalarInfos, ScalarIds);
+    Master->GetAllVectorParameterInfo(VectorInfos, VectorIds);
+    Master->GetAllTextureParameterInfo(TextureInfos, TextureIds);
+    Master->GetAllRuntimeVirtualTextureParameterInfo(RVTInfos, RVTIds);
+    Master->GetAllFontParameterInfo(FontInfos, FontIds);
+
+    // Build lookup sets
+    TSet<FName> ScalarNames, TextureNames, VectorNames;
+    for ( auto& Info : ScalarInfos)  ScalarNames.Add(Info.Name);
+    for ( auto& Info : VectorInfos)  VectorNames.Add(Info.Name);
+    for ( auto& Info : TextureInfos) TextureNames.Add(Info.Name);
+
+    // Expected suffixes
+    TArray<FString> ScalarSuffixes = {
+        TEXT("Enabled"), TEXT("Tiling"), TEXT("MinHeight"), TEXT("MaxHeight"),
+        TEXT("NoiseAmp"), TEXT("NoiseFreq"), TEXT("EdgeSharpness"), TEXT("Seed")
+    };
+    TArray<FString> TextureSuffixes = {
+        TEXT("BaseColor"), TEXT("Normal"), TEXT("ORM")
+    };
+
+    // Collect problems
+    TArray<FString> MissingScalars, MissingTextures, Warnings;
+
+    for (int32 i = 1; i <= MaxLayers; ++i)
+    {
+        for (const FString& Suffix : ScalarSuffixes)
+        {
+            const FName N = LayerParam(i, *Suffix);
+            if (!ScalarNames.Contains(N))
+            {
+                MissingScalars.Add(FString::Printf(TEXT("  - %s (Scalar)"), *N.ToString()));
+            }
+        }
+        for (const FString& Suffix : TextureSuffixes)
+        {
+            const FName N = LayerParam(i, *Suffix);
+            if (!TextureNames.Contains(N))
+            {
+                MissingTextures.Add(FString::Printf(TEXT("  - %s (Texture)"), *N.ToString()));
+            }
+        }
+    }
+
+    // Optional globals
+    if (!ScalarNames.Contains(FName(TEXT("UseTriplanar"))))
+    {
+        Warnings.Add(TEXT("  - Global scalar 'UseTriplanar' not found (optional)."));
+    }
+    if (!ScalarNames.Contains(FName(TEXT("UseVirtualTexture"))))
+    {
+        Warnings.Add(TEXT("  - Global scalar 'UseVirtualTexture' not found (optional)."));
+    }
+
+    // Build report string
+    FString Report;
+    Report += FString::Printf(TEXT("Master: %s\n"), *Master->GetPathName());
+    Report += FString::Printf(TEXT("Scalars found: %d  Textures found: %d  Vectors found: %d\n"),
+                              ScalarNames.Num(), TextureNames.Num(), VectorNames.Num());
+
+    if (MissingScalars.Num() == 0 && MissingTextures.Num() == 0)
+    {
+        Report += TEXT("\nAll required LayerN_* parameters are present.\n");
+    }
+    else
+    {
+        if (MissingScalars.Num() > 0)
+        {
+            Report += TEXT("\nMissing scalar parameters:\n");
+            for (const FString& S : MissingScalars) Report += S + TEXT("\n");
+        }
+        if (MissingTextures.Num() > 0)
+        {
+            Report += TEXT("\nMissing texture parameters:\n");
+            for (const FString& S : MissingTextures) Report += S + TEXT("\n");
+        }
+    }
+
+    if (Warnings.Num() > 0)
+    {
+        Report += TEXT("\nWarnings:\n");
+        for (const FString& W : Warnings) Report += W + TEXT("\n");
+    }
+
+#if WITH_EDITOR
+    if (UMaterial* AsMat = Master->GetMaterial())
+    {
+        AsMat->ForceRecompileForRendering();
+    }
+#endif
+
+    if (MissingScalars.Num() == 0 && MissingTextures.Num() == 0)
+    {
+        Report += TEXT("\n✅ All required LayerN_* parameters are present.\n");
+    }
+    else
+    {
+        if (MissingScalars.Num() > 0)
+        {
+            Report += TEXT("\n❌ Missing scalar parameters:\n");
+            for (const FString& S : MissingScalars) Report += S + TEXT("\n");
+        }
+        if (MissingTextures.Num() > 0)
+        {
+            Report += TEXT("\n❌ Missing texture parameters:\n");
+            for (const FString& S : MissingTextures) Report += S + TEXT("\n");
+        }
+    }
+
+    if (Warnings.Num() > 0)
+    {
+        Report += TEXT("\n⚠️ Warnings:\n");
+        for (const FString& W : Warnings) Report += W + TEXT("\n");
+    }
+
+    OutReport = FText::FromString(Report);
+
+    return (MissingScalars.Num() == 0 && MissingTextures.Num() == 0);
+}
+
+
+#include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstance.h"
+#include "Materials/Material.h"
+
+static FMaterialParameterInfo LInfo(const TCHAR* Name, int32 LayerIndex)
+{
+    return FMaterialParameterInfo(FName(Name), EMaterialParameterAssociation::LayerParameter, LayerIndex);
+}
+
+
+bool ADiggerManager::ValidateLayeredMaster(UMaterialInterface* Master, int32 ExpectedLayers, FText& OutReport) const
+{
+    if (!Master)
+    {
+        OutReport = FText::FromString(TEXT("No master material provided."));
+        return false;
+    }
+
+    // Collect all parameter infos
+    TArray<FMaterialParameterInfo> ScalarInfos, VectorInfos, TextureInfos, RVTInfos, FontInfos;
+    TArray<FGuid> ScalarIds, VectorIds, TextureIds, RVTIds, FontIds;
+    Master->GetAllScalarParameterInfo(ScalarInfos, ScalarIds);
+    Master->GetAllVectorParameterInfo(VectorInfos, VectorIds);
+    Master->GetAllTextureParameterInfo(TextureInfos, TextureIds);
+    Master->GetAllRuntimeVirtualTextureParameterInfo(RVTInfos, RVTIds);
+    Master->GetAllFontParameterInfo(FontInfos, FontIds);
+
+    // Build a set for quick lookups
+    TSet<FMaterialParameterInfo> ScalarSet, TextureSet;
+    for (const auto& I : ScalarInfos)  ScalarSet.Add(I);
+    for (const auto& I : TextureInfos) TextureSet.Add(I);
+
+    // Names expected on the LAYER (your ML_SedimentLayer)
+    static const TCHAR* LayerTextureParams[] = { TEXT("BaseColorTex"), TEXT("NormalTex"), TEXT("ORMTex") };
+    static const TCHAR* LayerScalarParams[]  = { TEXT("Tiling") };
+
+    // Names expected on the BLEND (your MLB_HeightBlend)
+    static const TCHAR* BlendScalarParams[] = {
+        TEXT("Enabled"), TEXT("MinHeight"), TEXT("MaxHeight"),
+        TEXT("NoiseAmp"), TEXT("NoiseFreq"), TEXT("EdgeSharpness"), TEXT("Seed")
+    };
+
+    TArray<FString> Missing, Notes;
+
+    // Check the first N entries (0..ExpectedLayers-1)
+    for (int32 LayerIdx = 0; LayerIdx < ExpectedLayers; ++LayerIdx)
+    {
+        // Layer params
+        for (const TCHAR* P : LayerTextureParams)
+        {
+            if (!TextureSet.Contains(LInfo(P, LayerIdx)))
+            {
+                Missing.Add(FString::Printf(TEXT("Layer %d: texture param '%s' not found"), LayerIdx, P));
+            }
+        }
+        for (const TCHAR* P : LayerScalarParams)
+        {
+            if (!ScalarSet.Contains(LInfo(P, LayerIdx)))
+            {
+                Missing.Add(FString::Printf(TEXT("Layer %d: scalar param '%s' not found"), LayerIdx, P));
+            }
+        }
+
+        // Blend params (for layer > 0 there is a blend over previous; for LayerIdx==0 some setups omit blends)
+        if (LayerIdx > 0)
+        {
+            for (const TCHAR* P : BlendScalarParams)
+            {
+                if (!ScalarSet.Contains(LInfo(P, LayerIdx)))
+                {
+                    Missing.Add(FString::Printf(TEXT("Blend for Layer %d: scalar param '%s' not found"), LayerIdx, P));
+                }
+            }
+        }
+    }
+
+    FString Report;
+    Report += FString::Printf(TEXT("Master: %s\n"), *Master->GetPathName());
+    Report += FString::Printf(TEXT("Expected layers checked: %d\n"), ExpectedLayers);
+    Report += FString::Printf(TEXT("Found: %d scalars, %d textures\n"), ScalarInfos.Num(), TextureInfos.Num());
+
+    if (Missing.Num() == 0)
+    {
+        Report += TEXT("\nOK: All expected layer/blend parameters are present.\n");
+        OutReport = FText::FromString(Report);
+        return true;
+    }
+    else
+    {
+        Report += TEXT("\nMissing parameters:\n");
+        for (const FString& S : Missing) Report += TEXT("  - ") + S + TEXT("\n");
+        OutReport = FText::FromString(Report);
+        return false;
+    }
+}
+
+
+
 
 
 UMaterialInstanceConstant* ADiggerManager::BuildMaterialInstanceFromProfile(UDiggerMaterialProfile* Profile, const FString& TargetFolder, const FString& BaseAssetName, UMaterialInterface* Parent)
@@ -360,7 +600,7 @@ void ADiggerManager::BuildAndApplyProfileMaterial(UDiggerMaterialProfile* Profil
     if (!Parent)
     {
         // Fallback: hardcode your default master path or store it in settings
-        Parent = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Digger/Materials/M_SedimentMaster.M_SedimentMaster"));
+        Parent = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Digger/Materials/M_SedimentMaster_Inst.M_SedimentMaster_Inst"));
     }
     if (!Parent) return;
 
@@ -1024,10 +1264,12 @@ ADiggerManager::ADiggerManager()
     MarchingCubes = CreateDefaultSubobject<UMarchingCubes>(TEXT("MarchingCubes"));
 
     if (!HoleBP)
-    { HoleBP = LoadDefaultHoleBPClass(); }
+    {
+        HoleBP = LoadDefaultHoleBPClass();
+    }
 
-    // Load the material in the constructor
-    static ConstructorHelpers::FObjectFinder<UMaterial> Material(TEXT("/Game/Materials/M_VoxelMat.M_VoxelMat"));
+    // Load the material instance in the constructor
+    static ConstructorHelpers::FObjectFinder<UMaterialInterface> Material(TEXT("/Game/Digger/Materials/M_SedimentMaster_Inst.M_SedimentMaster_Inst"));
     if (Material.Succeeded())
     {
         TerrainMaterial = Material.Object;
@@ -1036,10 +1278,11 @@ ADiggerManager::ADiggerManager()
     {
         if (DiggerDebug::UserConv)
         {
-            UE_LOG(LogTemp, Error, TEXT("Material M_ProcGrid required in /Content/Materials/ folder. Please ensure it is there."));
+            UE_LOG(LogTemp, Error, TEXT("Material M_SedimentMaster_Inst not found in /Game/Digger/Materials/. Please ensure it exists and is a Material Instance Constant."));
         }
     }
 }
+
 
 void ADiggerManager::SpawnLight(const FBrushStroke& BrushStroke)
 {

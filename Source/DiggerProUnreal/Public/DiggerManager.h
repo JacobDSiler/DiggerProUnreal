@@ -29,6 +29,8 @@
 #include "UObject/Package.h"
 #include "Voxel/VoxelEvents.h"
 #include "VoxelBrushTypes.h"
+#include "Materials/DiggerMaterialTypes.h"
+#include "Materials/MaterialInstanceConstant.h"
 
 
 #include "DiggerManager.generated.h"
@@ -218,7 +220,7 @@ public:
     UVoxelBrushShape* GetActiveBrushShape(EVoxelBrushType BrushType) const;
     // Add this helper so callers don’t have to worry about init/fallback:
     UVoxelBrushShape* GetBrushShapeForType(EVoxelBrushType BrushType);
-
+    
     
     // In ADiggerManager class declaration
     void ApplyLightBrushInEditor(const FBrushStroke& BrushStroke);
@@ -265,12 +267,20 @@ protected:
 
 private:
     UMaterialInstanceDynamic* GetOrCreateMID(UPrimitiveComponent* TargetComponent, int32 ElementIndex);
-    static FName LayerParam(int32 LayerOneBased, const TCHAR* Suffix);
     void PushProfileParamsToMID(UDiggerMaterialProfile* Profile, UMaterialInstanceDynamic* MID, int32 MaxLayers = 12);
     UMaterialInstanceConstant* BuildMaterialInstanceFromProfile(UDiggerMaterialProfile* Profile, const FString& TargetFolder, const FString& BaseAssetName, UMaterialInterface* Parent);
-    
+
 public:
 
+    // Returns parameter names like "Layer3_BaseColor"
+    static FName LayerParam(int32 Index1Based, const TCHAR* Suffix);
+    
+    // Validate that a master material exposes all expected LayerN_* params.
+    // Returns true if everything required is present. OutReport contains a human-readable summary.
+    bool ValidateMasterMaterial(UMaterialInterface* Master, int32 MaxLayers, FText& OutReport) const;
+    bool ValidateLayeredMaster(UMaterialInterface* Master, int32 ExpectedLayers, FText& OutReport) const;
+
+    
     FCriticalSection UpdateChunksCriticalSection;
 
     void DebugBrushPlacement(const FVector& ClickPosition);
@@ -297,6 +307,8 @@ public:
     void RemoveIslandVoxels(const FIslandData& Island);
     void ClearAllIslandActors();
     void DestroyIslandActor(AIslandActor* IslandActor);
+
+    void BuildAndApplyProfileMaterial(UDiggerMaterialProfile* Profile);
 
     template<typename TIn, typename TOut>
     TArray<TOut> ConvertArray(const TArray<TIn>& InArray)
@@ -648,7 +660,7 @@ private:
     UVoxelChunk* OneChunk;
 
     UPROPERTY()
-    UMaterial* TerrainMaterial;
+    UMaterialInterface* TerrainMaterial;
 
     UPROPERTY()
     TArray<UProceduralMeshComponent*> ProceduralMeshComponents;
@@ -776,10 +788,9 @@ private:
     void ClearAllVoxelData();
 
 public:
-    float GetCachedLandscapeHeightAt(const FVector& WorldPos);
     void PopulateLandscapeHeightCache(ALandscapeProxy* Landscape);
     
-    [[nodiscard]] UMaterial* GetTerrainMaterial() const
+    [[nodiscard]] UMaterialInterface* GetTerrainMaterial() const
     {
         return TerrainMaterial;
     }
@@ -806,7 +817,7 @@ public:
     ALandscapeProxy* GetLandscapeProxyAt(const FVector& WorldPos);
     TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos, bool bForcePrecise);
     TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos);
-    // Delete this after it works!!!11!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // Delete this after it works!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     // In DiggerManager.h
     UFUNCTION(CallInEditor, BlueprintCallable, Category = "Debug")
     void QuickDebugTest();
