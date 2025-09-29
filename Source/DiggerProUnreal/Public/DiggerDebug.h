@@ -100,6 +100,7 @@ namespace DiggerDebug
         return FDiggerDebug::Get().GetFlagRegistry();
     }
 
+
     inline const FDiggerDebug::FFlagList& GetAllFlags()
     {
         return FDiggerDebug::Get().GetAllFlags();
