@@ -2,6 +2,20 @@
 
 #include "CoreMinimal.h"
 
+/** Plain-old-data descriptor used to expose a debug flag and its bool pointer. */
+struct FDiggerDebugFlag
+{
+    FDiggerDebugFlag() = default;
+    FDiggerDebugFlag(const FName& InKey, bool* InValue)
+        : Key(InKey)
+        , Value(InValue)
+    {
+    }
+
+    FName Key;
+    bool* Value = nullptr;
+};
+
 /**
  * Singleton container that owns the Digger debug flags so that the editor UI
  * can discover and mutate them at runtime instead of relying on global
@@ -10,27 +24,8 @@
 class FDiggerDebug
 {
 public:
-    /**
-     * Lightweight record describing a single debug flag. The structure mimics
-     * the previous `FDiggerDebugFlag` POD type so existing call sites can
-     * continue to interact with the debug system without code changes while we
-     * expose the data through a central registry.
-     */
-    struct FFlagEntry
-    {
-        FFlagEntry() = default;
-        FFlagEntry(const FName& InKey, bool* InValue)
-            : Key(InKey)
-            , Value(InValue)
-        {
-        }
-
-        FName Key;
-        bool* Value = nullptr;
-    };
-
     using FFlagRegistry = TMap<FName, bool*>;
-    using FFlagList = TArray<FFlagEntry>;
+    using FFlagList = TArray<FDiggerDebugFlag>;
 
     /** Retrieve the singleton instance. */
     static FDiggerDebug& Get();
@@ -86,7 +81,7 @@ namespace DiggerDebug
 {
     inline FDiggerDebug& Get() { return FDiggerDebug::Get(); }
 
-    using FDiggerDebugFlag = FDiggerDebug::FFlagEntry;
+    using FDiggerDebugFlag = ::FDiggerDebugFlag;
 
     inline bool& Verbose = FDiggerDebug::Get().Verbose;
     inline bool& Performance = FDiggerDebug::Get().Performance;
