@@ -269,6 +269,8 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
 
     static float DummyFloat = 0.0f;
 
+    TSharedPtr<SVerticalBox> DebugFlagListContainer;
+
     ToolkitWidget = SNew(SVerticalBox)
         
 
@@ -406,62 +408,10 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         ]
         .BodyContent()
         [
-            SNew(SVerticalBox)
+            SAssignNew(DebugFlagListContainer, SVerticalBox)
             + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
             [
                 SNew(STextBlock).Text(FText::FromString("General Debug Flags"))
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(1)
-            [
-                this->MakeDebugCheckbox(TEXT("Verbose"), &DiggerDebug::Verbose)
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(1)
-            [
-                this->MakeDebugCheckbox(TEXT("Performance"), &DiggerDebug::Performance)
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(1)
-            [
-                this->MakeDebugCheckbox(TEXT("Normals"), &DiggerDebug::Normals)
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(1)
-            [
-                this->MakeDebugCheckbox(TEXT("Error"), &DiggerDebug::Error)
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(1)
-            [
-                this->MakeDebugCheckbox(TEXT("Holes"), &DiggerDebug::Holes)
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(1)
-            [
-                this->MakeDebugCheckbox(TEXT("Landscape"), &DiggerDebug::Landscape)
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(1)
-            [
-                this->MakeDebugCheckbox(TEXT("Voxel Conversion"), &DiggerDebug::VoxelConv)
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(1)
-            [
-                this->MakeDebugCheckbox(TEXT("Islands"), &DiggerDebug::Islands)
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(1)
-            [
-                this->MakeDebugCheckbox(TEXT("Brush"), &DiggerDebug::Brush)
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(1)
-            [
-                this->MakeDebugCheckbox(TEXT("Casts"), &DiggerDebug::Casts)
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(1)
-            [
-                this->MakeDebugCheckbox(TEXT("Threads"), &DiggerDebug::Threads)
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(1)
-            [
-                this->MakeDebugCheckbox(TEXT("Manager"), &DiggerDebug::Manager)
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(1)
-            [
-                this->MakeDebugCheckbox(TEXT("Caves"), &DiggerDebug::Caves)
             ]
         ]
     ];
@@ -480,6 +430,20 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     //
     
     LoadDMMState();     // <- restore mode/profile
+
+    if (DebugFlagListContainer.IsValid())
+    {
+        const FDiggerDebug::FFlagList& FlagEntries = DiggerDebug::GetAllFlags();
+        for (const FDiggerDebug::FFlagEntry& FlagEntry : FlagEntries)
+        {
+            DebugFlagListContainer->AddSlot()
+                .AutoHeight()
+                .Padding(1.0f)
+                [
+                    MakeDebugCheckbox(FlagEntry)
+                ];
+        }
+    }
 
     FModeToolkit::Init(InitToolkitHost);
 }
@@ -1921,6 +1885,11 @@ void FDiggerEdModeToolkit::SetBrushDigPreviewOverride(bool bInDig)
 void FDiggerEdModeToolkit::ClearBrushDigPreviewOverride()
 {
     bUseBrushDigPreviewOverride = false;
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDebugCheckbox(const FDiggerDebug::FFlagEntry& FlagEntry)
+{
+    return MakeDebugCheckbox(FlagEntry.Key.ToString(), FlagEntry.Value);
 }
 
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDebugCheckbox(const FString& Label, bool* FlagPtr)
