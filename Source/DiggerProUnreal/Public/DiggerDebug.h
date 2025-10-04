@@ -10,8 +10,18 @@
 class FDiggerDebug
 {
 public:
+    /** Plain-old-data descriptor used to expose a debug flag and its bool pointer. */
+    struct FFlagEntry
+    {
+        FFlagEntry() = default;
+        FFlagEntry(const FName& InKey, bool* InValue)
+            : Key(InKey), Value(InValue) {}
+
+        FName Key;
+        bool* Value = nullptr;
+    };
+
     using FFlagRegistry = TMap<FName, bool*>;
-    using FFlagEntry = TPair<FName, bool*>;
     using FFlagList = TArray<FFlagEntry>;
 
     /** Retrieve the singleton instance. */
@@ -68,46 +78,45 @@ namespace DiggerDebug
 {
     inline FDiggerDebug& Get() { return FDiggerDebug::Get(); }
 
-    inline bool& Verbose = FDiggerDebug::Get().Verbose;
-    inline bool& Performance = FDiggerDebug::Get().Performance;
-    inline bool& Cache = FDiggerDebug::Get().Cache;
-    inline bool& Normals = FDiggerDebug::Get().Normals;
-    inline bool& Error = FDiggerDebug::Get().Error;
-    inline bool& Holes = FDiggerDebug::Get().Holes;
-    inline bool& Landscape = FDiggerDebug::Get().Landscape;
-    inline bool& VoxelConv = FDiggerDebug::Get().VoxelConv;
-    inline bool& Mesh = FDiggerDebug::Get().Mesh;
-    inline bool& Islands = FDiggerDebug::Get().Islands;
-    inline bool& Brush = FDiggerDebug::Get().Brush;
-    inline bool& Context = FDiggerDebug::Get().Context;
-    inline bool& UserConv = FDiggerDebug::Get().UserConv;
-    inline bool& IO = FDiggerDebug::Get().IO;
-    inline bool& Threads = FDiggerDebug::Get().Threads;
-    inline bool& Space = FDiggerDebug::Get().Space;
-    inline bool& Chunks = FDiggerDebug::Get().Chunks;
-    inline bool& Voxels = FDiggerDebug::Get().Voxels;
-    inline bool& Casts = FDiggerDebug::Get().Casts;
-    inline bool& Delegates = FDiggerDebug::Get().Delegates;
-    inline bool& Manager = FDiggerDebug::Get().Manager;
-    inline bool& Caves = FDiggerDebug::Get().Caves;
-    inline bool& Lights = FDiggerDebug::Get().Lights;
-    inline bool& Flags = FDiggerDebug::Get().Flags;
-    inline bool& VoxelModificationReports = FDiggerDebug::Get().VoxelModificationReports;
-    inline bool& Seams = FDiggerDebug::Get().Seams;
+    inline bool& Verbose() { return Get().Verbose; }
+    inline bool& Performance() { return Get().Performance; }
+    inline bool& Cache() { return Get().Cache; }
+    inline bool& Normals() { return Get().Normals; }
+    inline bool& Error() { return Get().Error; }
+    inline bool& Holes() { return Get().Holes; }
+    inline bool& Landscape() { return Get().Landscape; }
+    inline bool& VoxelConv() { return Get().VoxelConv; }
+    inline bool& Mesh() { return Get().Mesh; }
+    inline bool& Islands() { return Get().Islands; }
+    inline bool& Brush() { return Get().Brush; }
+    inline bool& Context() { return Get().Context; }
+    inline bool& UserConv() { return Get().UserConv; }
+    inline bool& IO() { return Get().IO; }
+    inline bool& Threads() { return Get().Threads; }
+    inline bool& Space() { return Get().Space; }
+    inline bool& Chunks() { return Get().Chunks; }
+    inline bool& Voxels() { return Get().Voxels; }
+    inline bool& Casts() { return Get().Casts; }
+    inline bool& Delegates() { return Get().Delegates; }
+    inline bool& Manager() { return Get().Manager; }
+    inline bool& Caves() { return Get().Caves; }
+    inline bool& Lights() { return Get().Lights; }
+    inline bool& Flags() { return Get().Flags; }
+    inline bool& VoxelModificationReports() { return Get().VoxelModificationReports; }
+    inline bool& Seams() { return Get().Seams; }
 
     inline FDiggerDebug::FFlagRegistry& GetFlagRegistry()
     {
-        return FDiggerDebug::Get().GetFlagRegistry();
+        return Get().GetFlagRegistry();
     }
-
 
     inline const FDiggerDebug::FFlagList& GetAllFlags()
     {
-        return FDiggerDebug::Get().GetAllFlags();
+        return Get().GetAllFlags();
     }
 
     inline bool* FindFlag(const FName& FlagName)
     {
-        return FDiggerDebug::Get().FindFlag(FlagName);
+        return Get().FindFlag(FlagName);
     }
 }
