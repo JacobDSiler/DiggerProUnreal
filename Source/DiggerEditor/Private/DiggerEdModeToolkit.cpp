@@ -6466,6 +6466,16 @@ void FDiggerEdModeToolkit::RebuildIslandGrid()
 
     TSharedRef<SWidget> NewWidget = MakeIslandGridWidget(); // Make sure this returns a valid widget (not SWidget)
 
+    if (DiggerDebug::Islands())
+    {
+        if (!NewWidget->SupportsKeyboardFocus()) // or other sanity check
+        {
+            if (DiggerDebug::Islands())
+                UE_LOG(LogTemp, Warning, TEXT("RebuildIslandGrid: MakeIslandGridWidget returned invalid widget."));
+            return;
+        }
+    }
+
     IslandGridContainer->SetContent(NewWidget);
 
     if (DiggerDebug::Islands())
@@ -6478,16 +6488,29 @@ void FDiggerEdModeToolkit::RebuildIslandGrid()
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()
 {
     const int32 NumColumns = 4;
+
+    // Defensive: if Islands array is empty, return a placeholder widget
+    if (Islands.Num() == 0)
+    {
+        return SNew(STextBlock)
+            .Text(FText::FromString("No islands to display."));
+    }
+
     TSharedRef<SUniformGridPanel> IslandGridPanel = SNew(SUniformGridPanel).SlotPadding(2.0f);
 
     for (int32 i = 0; i < Islands.Num(); ++i)
     {
+        // Defensive: validate index and array bounds
+        if (i < 0 || i >= Islands.Num())
+        {
+            continue;
+        }
+
         IslandGridPanel->AddSlot(i % NumColumns, i / NumColumns)
         [
             SNew(SButton)
             .ButtonColorAndOpacity_Lambda([this, i]() -> FLinearColor
             {
-                // Defensive check in case of async changes
                 if (!this || i < 0 || i >= Islands.Num())
                 {
                     return FLinearColor::Gray;
@@ -6500,9 +6523,9 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()
                 {
                     return FReply::Unhandled();
                 }
+
                 SelectedIslandIndex = i;
 
-                // Draw a debug icon at the island's world location
                 if (GEditor)
                 {
                     UWorld* World = GEditor->GetEditorWorldContext().World();
@@ -6525,8 +6548,16 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()
         ];
     }
 
+    // Defensive: if no slots were added, return a fallback widget
+    if (IslandGridPanel->GetChildren()->Num() == 0)
+    {
+        return SNew(STextBlock)
+            .Text(FText::FromString("Island grid is empty."));
+    }
+
     return IslandGridPanel;
 }
+
 
 
 
@@ -6584,7 +6615,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeMirrorButton(double& Target, const
 
 /// ProcgenArcana Cave Methods ///
 
-// Preview Azgar cave import method
+// Preview ProcgenArcana cave import method
 void FDiggerEdModeToolkit::PreviewProcgenArcanaCave()
 {
     if (DiggerDebug::Caves())
