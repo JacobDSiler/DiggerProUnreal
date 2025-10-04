@@ -379,7 +379,7 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 
     USparseVoxelGrid* InVoxelGrid = ChunkPtr->GetSparseVoxelGrid();
     if (!InVoxelGrid) {
-    	if (DiggerDebug::Voxels)
+    	if (DiggerDebug::Voxels())
         UE_LOG(LogTemp, Warning, TEXT("No InVoxelGrid and/or data to generate mesh! InVoxelGrid: %s, VoxelData.Num(): %d"),
             InVoxelGrid ? TEXT("Valid") : TEXT("Invalid"),
             InVoxelGrid ? InVoxelGrid->VoxelData.Num() : 0)
@@ -387,7 +387,7 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
     }
 	if(InVoxelGrid->VoxelData.IsEmpty())
 	{
-		if (DiggerDebug::Voxels)
+		if (DiggerDebug::Voxels())
 		UE_LOG(LogTemp, Warning, TEXT("InVoxelGrid MarchingCubes.cpp, LN 373 : VoxelData is empty!"))
 		return;
 	}
@@ -431,7 +431,7 @@ void UMarchingCubes::GenerateMeshSyncronous(const UVoxelChunk* ChunkPtr)
 
 	USparseVoxelGrid* InVoxelGrid = ChunkPtr->GetSparseVoxelGrid();
 	if (!InVoxelGrid) {
-		if (DiggerDebug::Voxels)
+		if (DiggerDebug::Voxels())
 			UE_LOG(LogTemp, Warning, TEXT("No InVoxelGrid and/or data to generate mesh! InVoxelGrid: %s, VoxelData.Num(): %d"),
 				InVoxelGrid ? TEXT("Valid") : TEXT("Invalid"),
 				InVoxelGrid ? InVoxelGrid->VoxelData.Num() : 0)
@@ -439,7 +439,7 @@ void UMarchingCubes::GenerateMeshSyncronous(const UVoxelChunk* ChunkPtr)
 	}
 	if(InVoxelGrid->VoxelData.IsEmpty())
 	{
-		if (DiggerDebug::Voxels)
+		if (DiggerDebug::Voxels())
 			UE_LOG(LogTemp, Warning, TEXT("InVoxelGrid MarchingCubes.cpp, LN 373 : VoxelData is empty!"))
 		return;
 	}
@@ -1441,7 +1441,7 @@ void UMarchingCubes::InitializeHeightCache(const FVector& ChunkOrigin, float Vox
 {
 	if (!DiggerManager)
 	{
-		if (DiggerDebug::Manager)
+		if (DiggerDebug::Manager())
 		UE_LOG(LogTemp, Warning, TEXT("DiggerManager is null, cannot initialize height cache"));
 		return;
 	}
@@ -1459,7 +1459,7 @@ void UMarchingCubes::InitializeHeightCache(const FVector& ChunkOrigin, float Vox
 	FVector ChunkMin = ChunkOrigin - FVector(N * VoxelSize * 0.5f);
 	FVector SampleStart = ChunkMin - FVector(Padding * VoxelSize);
 
-	if (DiggerDebug::Chunks || DiggerDebug::Landscape)
+	if (DiggerDebug::Chunks() || DiggerDebug::Landscape())
 	UE_LOG(LogTemp, Log, TEXT("Initializing height cache for chunk at %s with %dx%d samples"), 
 		   *ChunkOrigin.ToString(), TotalSize, TotalSize);
     
@@ -1490,7 +1490,7 @@ void UMarchingCubes::InitializeHeightCache(const FVector& ChunkOrigin, float Vox
 	CachedChunkSize = N;
 	bHeightCacheInitialized = true;
 
-	if (DiggerDebug::Landscape)
+	if (DiggerDebug::Landscape())
 	UE_LOG(LogTemp, Log, TEXT("Height cache initialized with %d entries"), HeightCache.Num());
 }
 
@@ -1498,7 +1498,7 @@ float UMarchingCubes::GetCachedHeight(const FVector& WorldPosition) const
 {
 	if (!bHeightCacheInitialized)
 	{
-		if (DiggerDebug::Landscape)
+		if (DiggerDebug::Landscape())
 		UE_LOG(LogTemp, Warning, TEXT("Height cache not initialized!"));
 		return 0.0f;
 	}
@@ -1574,7 +1574,7 @@ void UMarchingCubes::GenerateMeshForIsland(
 			CreateIslandProceduralMesh(OutVertices, OutTriangles, OutNormals, Origin, IslandId);
 		});
 	} else {
-		if (DiggerDebug::Mesh || DiggerDebug::Islands)
+		if (DiggerDebug::Mesh() || DiggerDebug::Islands())
 		UE_LOG(LogTemp, Warning, TEXT("Island mesh generation returned empty data"));
 	}
 }
@@ -1602,7 +1602,7 @@ void UMarchingCubes::CreateIslandProceduralMesh(
 )
 {
 	if (!DiggerManager) {
-		if (DiggerDebug::Manager)
+		if (DiggerDebug::Manager())
 		UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in CreateIslandProceduralMesh"));
 		return;
 	}
@@ -1611,7 +1611,7 @@ void UMarchingCubes::CreateIslandProceduralMesh(
 	FString MeshName = FString::Printf(TEXT("IslandMesh_%d"), IslandId);
 	UProceduralMeshComponent* IslandMesh = NewObject<UProceduralMeshComponent>(DiggerManager, *MeshName);
 	if (!IslandMesh) {
-		if (DiggerDebug::Islands)
+		if (DiggerDebug::Islands())
 		UE_LOG(LogTemp, Error, TEXT("Failed to create IslandMeshComponent"));
 		return;
 	}
@@ -1639,7 +1639,7 @@ void UMarchingCubes::CreateIslandProceduralMesh(
 		IslandMesh->SetMaterial(0, DiggerManager->GetTerrainMaterial());
 	}
 
-	if (DiggerDebug::Islands)
+	if (DiggerDebug::Islands())
 	UE_LOG(LogTemp, Log, TEXT("Island mesh %d created at origin %s with %d vertices."), IslandId, *Origin.ToString(), Vertices.Num());
 
 	// Optional: Add to an array for future management
@@ -1653,21 +1653,21 @@ void UMarchingCubes::CreateIslandProceduralMesh(
 void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutOutVertices, const TArray<int32>& OutTriangles, const TArray<FVector>& Normals) const {
     // Validate pointers
     if (!DiggerManager || !DiggerManager->ProceduralMesh) {
-    	if (DiggerDebug::Manager || DiggerDebug::Mesh)
+    	if (DiggerDebug::Manager() || DiggerDebug::Mesh())
         UE_LOG(LogTemp, Error, TEXT("DiggerManager or ProceduralMesh is null in ReconstructMeshSection"));
         return;
     }
 
     // Validate SectionIndex
     if (SectionIndex < 0) {
-    	if (DiggerDebug::Manager || DiggerDebug::Mesh)
+    	if (DiggerDebug::Manager() || DiggerDebug::Mesh())
         UE_LOG(LogTemp, Error, TEXT("Invalid SectionIndex in ReconstructMeshSection: %d"), SectionIndex);
         return;
     }
 
     // Validate Mesh Data
     if (OutOutVertices.Num() == 0 || OutTriangles.Num() == 0 || Normals.Num() == 0) {
-    	if (DiggerDebug::Manager || DiggerDebug::Mesh)
+    	if (DiggerDebug::Manager() || DiggerDebug::Mesh())
         UE_LOG(LogTemp, Error, TEXT("Empty mesh data in ReconstructMeshSection"));
         return;
     }

@@ -35,7 +35,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Hole Shapes")
 	UStaticMesh* GetMeshForShape(EHoleShapeType Shape) const
 	{
-		if (DiggerDebug::Holes)
+		if (DiggerDebug::Holes())
 		{
 			// Check for the DiggerDebug flag to determine if we should log
 			UE_LOG(LogTemp, Warning, TEXT("Getting a MeshForShape to spawn a hole!"));

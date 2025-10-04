@@ -7,7 +7,7 @@
  * can discover and mutate them at runtime instead of relying on global
  * variables defined in a header.
  */
-class FDiggerDebug
+class DIGGERPROUNREAL_API FDiggerDebug
 {
 public:
     /** Plain-old-data descriptor used to expose a debug flag and its bool pointer. */

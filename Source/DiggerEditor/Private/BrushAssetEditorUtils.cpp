@@ -24,7 +24,7 @@ bool FBrushAssetEditorUtils::SaveSDFBrushToFile(const FCustomSDFBrush& Brush, co
     Data.Append(reinterpret_cast<const uint8*>(Brush.SDFValues.GetData()), Brush.SDFValues.Num() * sizeof(float));
 
     bool bSaved = FFileHelper::SaveArrayToFile(Data, *FilePath);
-    if (DiggerDebug::IO)
+    if (DiggerDebug::IO())
     {
         UE_LOG(LogTemp, Log, TEXT("Saving SDF brush to %s: %s"), *FilePath, bSaved ? TEXT("Success") : TEXT("Failed"));
     }

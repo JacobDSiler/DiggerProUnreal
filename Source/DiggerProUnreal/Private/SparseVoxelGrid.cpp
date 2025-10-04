@@ -158,7 +158,7 @@ void USparseVoxelGrid::InitializeDiggerManager()
 	EnsureDiggerManager();
 	if (!DiggerManager || !DiggerManager->GetSafeWorld())
 	{
-		if (DiggerDebug::Context)
+		if (DiggerDebug::Context())
 		{
 			UE_LOG(LogTemp, Warning, TEXT("World is null in InitializeDiggerManager."));
 		}
@@ -180,14 +180,14 @@ bool USparseVoxelGrid::EnsureDiggerManager()
 
 	if (!DiggerManager)
 	{
-		if (DiggerDebug::Manager)
+		if (DiggerDebug::Manager())
 		{
 			UE_LOG(LogTemp, Error, TEXT("DiggerManager is null in USparseVoxelGrid::EnsureDiggerManager."));
 		}
 		return false;
 	}
 
-	if (DiggerDebug::Voxels)
+	if (DiggerDebug::Voxels())
 	{
 		UE_LOG(LogTemp, VeryVerbose, TEXT("DiggerManager ensured for USparseVoxelGrid."));
 	}
@@ -214,7 +214,7 @@ bool USparseVoxelGrid::IsPointAboveLandscape(FVector& Point)
 	if (!World) World = GetSafeWorld();
 	if (!World)
 	{
-		if (DiggerDebug::Context)
+		if (DiggerDebug::Context())
 		{
 			UE_LOG(LogTemp, Error, TEXT("World is null in IsPointAboveLandscape"));
 		}
@@ -399,7 +399,7 @@ bool USparseVoxelGrid::FindNearestSetVoxel(const FIntVector& StartCoords, FIntVe
 	if (VoxelData.Contains(StartCoords))
 	{
 		OutVoxel = StartCoords;
-		if (DiggerDebug::Voxels || DiggerDebug::Islands)
+		if (DiggerDebug::Voxels() || DiggerDebug::Islands())
 		{
 			UE_LOG(LogTemp, VeryVerbose, TEXT("Found voxel at start position: %s"), *StartCoords.ToString());
 		}
@@ -408,7 +408,7 @@ bool USparseVoxelGrid::FindNearestSetVoxel(const FIntVector& StartCoords, FIntVe
 
 	if (VoxelData.Num() == 0)
 	{
-		if (DiggerDebug::Voxels || DiggerDebug::Islands)
+		if (DiggerDebug::Voxels() || DiggerDebug::Islands())
 		{
 			UE_LOG(LogTemp, VeryVerbose, TEXT("Grid is empty, no voxels to find"));
 		}
@@ -488,17 +488,17 @@ void USparseVoxelGrid::LogVoxelData() const
 {
 	if (VoxelData.IsEmpty())
 	{
-		if (DiggerDebug::Voxels)
+		if (DiggerDebug::Voxels())
 		{
 			UE_LOG(LogTemp, VeryVerbose, TEXT("VoxelData is empty."));
 		}
 		return;
 	}
 
-	if (DiggerDebug::Voxels)
+	if (DiggerDebug::Voxels())
 	{
 		UE_LOG(LogTemp, VeryVerbose, TEXT("VoxelData has %d entries."), VoxelData.Num());
-		if (DiggerDebug::Verbose)
+		if (DiggerDebug::Verbose())
 		{
 			for (const auto& P : VoxelData)
 			{
@@ -598,7 +598,7 @@ void USparseVoxelGrid::RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove)
 		FScopeLock Lock(&VoxelDataMutex);
 		for (const FIntVector& Voxel : VoxelsToRemove)
 		{
-			if (DiggerDebug::Voxels || DiggerDebug::Islands)
+			if (DiggerDebug::Voxels() || DiggerDebug::Islands())
 			{
 				AsyncTask(ENamedThreads::GameThread, [this, Voxel]()
 				{
@@ -635,7 +635,7 @@ void USparseVoxelGrid::RemoveSpecifiedVoxels(const TArray<FIntVector>& LocalVoxe
 	FScopeLock Lock(&VoxelDataMutex);
 	for (const FIntVector& Voxel : LocalVoxels)
 	{
-		if (DiggerDebug::Voxels || DiggerDebug::Islands)
+		if (DiggerDebug::Voxels() || DiggerDebug::Islands())
 		{
 			AsyncTask(ENamedThreads::GameThread, [this, Voxel]()
 			{
@@ -654,7 +654,7 @@ bool USparseVoxelGrid::RemoveVoxel(const FIntVector& LocalVoxel)
 {
 	FScopeLock Lock(&VoxelDataMutex);
 
-	if (DiggerDebug::Voxels || DiggerDebug::Islands)
+	if (DiggerDebug::Voxels() || DiggerDebug::Islands())
 	{
 		AsyncTask(ENamedThreads::GameThread, [this, LocalVoxel]()
 		{
@@ -679,7 +679,7 @@ bool USparseVoxelGrid::CollectIslandAtPosition(const FVector& Center, TArray<FIn
 	// Convert world position to voxel space
 	const FIntVector StartVoxel = FVoxelConversion::WorldToLocalVoxel(Center);
 
-	if (DiggerDebug::Islands || DiggerDebug::Space)
+	if (DiggerDebug::Islands() || DiggerDebug::Space())
 	{
 		UE_LOG(LogTemp, Display, TEXT("[Island] Extraction at position: %s → Voxel: %s"), *Center.ToString(), *StartVoxel.ToString());
 	}
@@ -1122,7 +1122,7 @@ void USparseVoxelGrid::RenderVoxels()
 
 	if (VoxelData.IsEmpty())
 	{
-		if (DiggerDebug::Voxels)
+		if (DiggerDebug::Voxels())
 		{
 			UE_LOG(LogTemp, VeryVerbose, TEXT("VoxelData is empty, nothing to render."));
 		}

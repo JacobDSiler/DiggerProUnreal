@@ -58,7 +58,7 @@ struct FVoxelConversion
         // Return min corner, not center
         FVector ChunkMinCorner = Origin + FVector(ChunkCoords) * ChunkSize * TerrainGridSize;
 
-        if (DiggerDebug::VoxelConv)
+        if (DiggerDebug::VoxelConv())
             UE_LOG(LogTemp, Verbose, TEXT("[ChunkToWorld] ChunkCoords: %s, ChunkMinCorner: %s"),
                 *ChunkCoords.ToString(), *ChunkMinCorner.ToString());
 
@@ -268,7 +268,7 @@ static FIntVector ChunkAndLocalToGlobalVoxel_MinCornerAligned(const FIntVector& 
             FMath::FloorToInt(LocalInChunk.Z / LocalVoxelSize)
         );
 
-        if (DiggerDebug::VoxelConv)
+        if (DiggerDebug::VoxelConv())
         UE_LOG(LogTemp, Verbose, TEXT("[WorldToMinCornerVoxel] WorldPos: %s → Chunk: %s, VoxelIndex: %s"),
             *WorldPos.ToString(), *ChunkCoords.ToString(), *VoxelIndex.ToString());
         
@@ -343,7 +343,7 @@ static FIntVector ChunkAndLocalToGlobalVoxel_MinCornerAligned(const FIntVector& 
         FVector ChunkOrigin = ChunkToWorld(ChunkCoords);
         FVector WorldPos = ChunkOrigin + (FVector(LocalCoords) + FVector(0.5f)) * LocalVoxelSize;
 
-        if (DiggerDebug::VoxelConv)
+        if (DiggerDebug::VoxelConv())
         UE_LOG(LogTemp, Verbose, TEXT("[LocalVoxelToWorld] GlobalVoxelCoords: %s → WorldPos: %s"),
             *GlobalVoxelCoords.ToString(), *WorldPos.ToString());
 
@@ -362,7 +362,7 @@ static FIntVector ChunkAndLocalToGlobalVoxel_MinCornerAligned(const FIntVector& 
         FVector ChunkOrigin = ChunkToWorld(ChunkCoords);
         FVector WorldPos = ChunkOrigin + (FVector(LocalVoxel) + FVector(0.5f)) * LocalVoxelSize;
 
-        if (DiggerDebug::VoxelConv)
+        if (DiggerDebug::VoxelConv())
         UE_LOG(LogTemp, Verbose, TEXT("[ChunkVoxelToWorld] Chunk: %s, LocalVoxel: %s → World: %s"),
             *ChunkCoords.ToString(), *LocalVoxel.ToString(), *WorldPos.ToString());
 
@@ -387,7 +387,7 @@ static FIntVector ChunkAndLocalToGlobalVoxel_MinCornerAligned(const FIntVector& 
         Origin = InOrigin;
         ChunkWorldSize = ChunkSize * TerrainGridSize;
 
-        if (DiggerDebug::VoxelConv)
+        if (DiggerDebug::VoxelConv())
         UE_LOG(LogTemp, Display, TEXT("[InitFromConfig] ChunkSize: %d, Subdivisions: %d, TerrainGridSize: %f, LocalVoxelSize: %f, Origin: %s"),
             ChunkSize, Subdivisions, TerrainGridSize, LocalVoxelSize, *Origin.ToString());
     }

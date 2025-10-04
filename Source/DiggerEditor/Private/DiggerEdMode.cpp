@@ -230,7 +230,7 @@ bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVec
         {
             OutHit = SmartHit;
             OutHitLocation = SmartHit.ImpactPoint;
-            if (DiggerDebug::Casts)
+            if (DiggerDebug::Casts())
             UE_LOG(LogTemp, Warning, TEXT("SmartTrace returned: %s"), *SmartHit.ImpactPoint.ToString());
             return true;
         }
@@ -246,7 +246,7 @@ bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVec
         {
             OutHit = FallbackHit;
             OutHitLocation = FallbackHit.ImpactPoint;
-            if (DiggerDebug::Casts)
+            if (DiggerDebug::Casts())
             UE_LOG(LogTemp, Error, TEXT("Line Trace Fallback returned hit: %s"), *FallbackHit.ImpactPoint.ToString());
             return true;
         }
@@ -317,7 +317,7 @@ bool FDiggerEdMode::TraceUnderCursor(FEditorViewportClient* InViewportClient, FH
     ADiggerManager* Digger = FindDiggerManager();
     if (!IsValid(Digger))
     {
-        if (DiggerDebug::Casts || DiggerDebug::Manager)
+        if (DiggerDebug::Casts() || DiggerDebug::Manager())
         UE_LOG(LogTemp, Error, TEXT("No DiggerManager found in DiggerEdMode::TraceUnderCursor!"));
         return false;
     }
@@ -347,7 +347,7 @@ bool FDiggerEdMode::TraceUnderCursor(FEditorViewportClient* InViewportClient, FH
         if (SmartHit.bBlockingHit)
         {
             OutHit = SmartHit;
-            if (DiggerDebug::Casts)
+            if (DiggerDebug::Casts())
             UE_LOG(LogTemp, Warning, TEXT("SmartTrace returned hit: %s"), *SmartHit.ImpactPoint.ToString());
             return true;
         }
@@ -365,7 +365,7 @@ bool FDiggerEdMode::TraceUnderCursor(FEditorViewportClient* InViewportClient, FH
         if (World->LineTraceSingleByChannel(FallbackHit, TraceStart, TraceEnd, ECC_Visibility, Params) && FallbackHit.bBlockingHit)
         {
             OutHit = FallbackHit;
-            if (DiggerDebug::Casts)
+            if (DiggerDebug::Casts())
             UE_LOG(LogTemp, Error, TEXT("Line Trace Fallback returned hit: %s"), *FallbackHit.ImpactPoint.ToString());
             return true;
         }
@@ -480,7 +480,7 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
         PreviewRot);
 
 
-    if (DiggerDebug::Brush)
+    if (DiggerDebug::Brush())
         UE_LOG(LogTemp, Warning, TEXT("Brush Radius: %s"), *P.RadiusXYZ.ToString());
 }
 
@@ -785,7 +785,7 @@ bool FDiggerEdMode::InputAxis(
     TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit();
     if (!DiggerToolkit.IsValid())
     {
-        if (DiggerDebug::Error)
+        if (DiggerDebug::Error())
         UE_LOG(LogTemp, Error, TEXT("Toolkit absent in FDiggerEdMode::InputAxis!!!"));
         return false;
     }
@@ -811,7 +811,7 @@ bool FDiggerEdMode::InputAxis(
             v = SnapIf(v, RADIUS_SNAP_STEP);
             DiggerToolkit->SetBrushRadius(v);
 
-            if (DiggerDebug::Brush)
+            if (DiggerDebug::Brush())
                 UE_LOG(LogTemp, Log, TEXT("Brush Radius: %.1f"), v);
         }
         else if (bAlt && !bCtrl)
@@ -823,7 +823,7 @@ bool FDiggerEdMode::InputAxis(
             v = SnapIf(v, FALLOFF_SNAP_STEP);
             DiggerToolkit->SetBrushFalloff(v);
 
-            if (DiggerDebug::Brush)
+            if (DiggerDebug::Brush())
                 UE_LOG(LogTemp, Log, TEXT("Brush Falloff: %.3f"), v);
         }
         else
@@ -835,7 +835,7 @@ bool FDiggerEdMode::InputAxis(
             v = SnapIf(v, STRENGTH_SNAP_STEP);
             DiggerToolkit->SetBrushStrength(v);
 
-            if (DiggerDebug::Brush)
+            if (DiggerDebug::Brush())
                 UE_LOG(LogTemp, Log, TEXT("Brush Strength: %.3f"), v);
         }
 
