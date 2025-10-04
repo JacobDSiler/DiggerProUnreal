@@ -1490,11 +1490,26 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
     // Handle hole spawn ONCE per brush stroke, before processing chunks
     if (BrushStroke.bDig)
     {
-        if(BrushStroke.BrushPosition.Z - BrushStroke.BrushRadius + BrushStroke.BrushFalloff <= GetLandscapeHeightAt(BrushStroke.BrushPosition))
+        TOptional<float> TerrainHeight = GetLandscapeHeightAt(BrushStroke.BrushPosition);
+
+        if (!TerrainHeight.IsSet())
         {
-            HandleHoleSpawn(BrushStroke);
+            if (DiggerDebug::Holes())
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Skipping hole spawn — no terrain height at %s"), *BrushStroke.BrushPosition.ToString());
+            }
+        }
+        else
+        {
+            const float EffectiveBrushZ = BrushStroke.BrushPosition.Z - BrushStroke.BrushRadius + BrushStroke.BrushFalloff;
+
+            if (EffectiveBrushZ <= TerrainHeight.GetValue())
+            {
+                HandleHoleSpawn(BrushStroke);
+            }
         }
     }
+
 
     float BrushEffectRadius = BrushStroke.BrushRadius + BrushStroke.BrushFalloff;
     float ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::LocalVoxelSize;
@@ -3212,22 +3227,18 @@ TSharedPtr<TMap<FIntPoint, float>> ADiggerManager::GetOrCreateLandscapeHeightCac
 }
 
 
-float ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
+TOptional<float> ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
 {
     ALandscapeProxy* LandscapeProxy = nullptr;
 
-    // First, try the last used landscape if it's still valid
-    if (LastUsedLandscape && IsValid(LastUsedLandscape) && 
+    if (LastUsedLandscape && IsValid(LastUsedLandscape) &&
         LastUsedLandscape->GetComponentsBoundingBox().IsInsideXY(WorldPosition))
     {
         LandscapeProxy = LastUsedLandscape;
     }
     else
     {
-        // Use the more reliable iterator-based search
         LandscapeProxy = GetLandscapeProxyAt(WorldPosition);
-        
-        // Update the cache with the found proxy
         if (LandscapeProxy)
         {
             LastUsedLandscape = LandscapeProxy;
@@ -3237,50 +3248,51 @@ float ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
     if (!LandscapeProxy)
     {
         if (DiggerDebug::Landscape())
-        UE_LOG(LogTemp, Warning, TEXT("No landscape found at location %s"), *WorldPosition.ToString());
-        return -100000.0f;
+        {
+            UE_LOG(LogTemp, Warning, TEXT("No landscape found at location %s"), *WorldPosition.ToString());
+        }
+        return TOptional<float>();
     }
 
-    // Try getting height using different sources in order of complexity
-    TOptional<float> HeightResult;
-
-    HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Simple);
+    TOptional<float> HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Simple);
 
     if (!HeightResult.IsSet())
-    {
         HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Complex);
-    }
 
     if (!HeightResult.IsSet() && GIsEditor)
-    {
         HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Editor);
-    }
 
     if (!HeightResult.IsSet())
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to get height at location: %s for landscape: %s"), 
-               *WorldPosition.ToString(), 
+        UE_LOG(LogTemp, Error, TEXT("Failed to get height at location: %s for landscape: %s"),
+               *WorldPosition.ToString(),
                LandscapeProxy ? *LandscapeProxy->GetName() : TEXT("NULL"));
-        return -100000.0f;
     }
 
-    return HeightResult.GetValue();
+    return HeightResult;
 }
 
-// Keep your more reliable GetLandscapeProxyAt function
-ALandscapeProxy* ADiggerManager::GetLandscapeProxyAt(const FVector& WorldPos)
-{
-    for (TActorIterator<ALandscapeProxy> It(GetSafeWorld()); It; ++It)
-    {
-        ALandscapeProxy* Proxy = *It;
-        if (Proxy && IsValid(Proxy) && Proxy->GetComponentsBoundingBox().IsInsideXY(WorldPos))
-        {
-            return Proxy;
-        }
-    }
 
-    return nullptr;
-}
+// // Keep your more reliable GetLandscapeProxyAt function
+// ALandscapeProxy* ADiggerManager::FindLandscapeProxyAt(FVector WorldPosition)
+// {
+//     World = GetSafeWorld();
+//     if (!World) return nullptr;
+//
+//     for (TActorIterator<ALandscapeProxy> It(World); It; ++It)
+//     {
+//         ALandscapeProxy* Proxy = *It;
+//         if (!Proxy || Proxy->IsPendingKill()) continue;
+//
+//         const FBox Bounds = Proxy->GetComponentsBoundingBox();
+//         if (Bounds.IsInsideXY(WorldPosition))
+//         {
+//             return Proxy;
+//         }
+//     }
+//
+//     return nullptr;
+// }
 
 void ADiggerManager::PopulateLandscapeHeightCache(ALandscapeProxy* Landscape)
 {
@@ -3365,10 +3377,7 @@ void ADiggerManager::PopulateLandscapeHeightCacheAsync(ALandscapeProxy* Landscap
 }
 
 
-
-
-
-/*ALandscapeProxy* ADiggerManager::GetLandscapeProxyAt(const FVector& WorldPos)
+ALandscapeProxy* ADiggerManager::GetLandscapeProxyAt(const FVector& WorldPos)
 {
     for (TActorIterator<ALandscapeProxy> It(GetSafeWorld()); It; ++It)
     {
@@ -3380,7 +3389,7 @@ void ADiggerManager::PopulateLandscapeHeightCacheAsync(ALandscapeProxy* Landscap
     }
 
     return nullptr;
-}*/
+}
 
 TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos, bool bForcePrecise)
 {
@@ -3536,7 +3545,9 @@ float ADiggerManager::GetSmartLandscapeHeightAt(const FVector& WorldPos, bool bF
 
    // if (bForcePrecise)
     //{
-        return GetLandscapeHeightAt(WorldPos);
+
+    float Height = GetLandscapeHeightAt(WorldPos).GetValue();
+        return Height ? Height : NAN;
    /* }
 
     // Compare Z difference (height) only, not full vector
@@ -3610,10 +3621,16 @@ FVector ADiggerManager::GetLandscapeNormalAt(const FVector& WorldPosition)
     FVector PosY = WorldPosition + FVector(0, Delta, 0);
     FVector NegY = WorldPosition - FVector(0, Delta, 0);
 
-    float HeightX1 = GetLandscapeHeightAt(PosX);
-    float HeightX0 = GetLandscapeHeightAt(NegX);
-    float HeightY1 = GetLandscapeHeightAt(PosY);
-    float HeightY0 = GetLandscapeHeightAt(NegY);
+    auto SafeHeight = [this](const FVector& Pos) -> float
+    {
+        TOptional<float> Height = GetLandscapeHeightAt(Pos);
+        return Height.IsSet() ? Height.GetValue() : NAN;
+    };
+
+    float HeightX1 = SafeHeight(PosX);
+    float HeightX0 = SafeHeight(NegX);
+    float HeightY1 = SafeHeight(PosY);
+    float HeightY0 = SafeHeight(NegY);
 
     // Calculate gradient
     FVector Gradient;
@@ -3712,12 +3729,24 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     FVector SpawnScale = FVector(GridUnits * VoxelSize / 38.0f); // Normalize to mesh scale
 
     // 🛑 Early out if subterranean
-    if (GetLandscapeHeightAt(SpawnLocation) > SpawnLocation.Z + HoleSize * 0.5f)
+    TOptional<float> TerrainHeight = GetLandscapeHeightAt(SpawnLocation);
+
+    if (!TerrainHeight.IsSet())
     {
         if (DiggerDebug::Casts() || DiggerDebug::Holes())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("No terrain height at %s — skipping subterranean check."), *SpawnLocation.ToString());
+        }
+    }
+    else if (TerrainHeight.GetValue() > SpawnLocation.Z + HoleSize * 0.5f)
+    {
+        if (DiggerDebug::Casts() || DiggerDebug::Holes())
+        {
             UE_LOG(LogTemp, Warning, TEXT("Subterranean hit at %s, not spawning hole."), *SpawnLocation.ToString());
+        }
         return;
     }
+
 
     if (SpawnLocation.IsNearlyZero())
     {

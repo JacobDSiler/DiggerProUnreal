@@ -32,6 +32,10 @@
 #include "Materials/DiggerMaterialTypes.h"
 #include "Materials/MaterialInstanceConstant.h"
 
+#include "Misc/Optional.h"
+
+
+
 
 #include "DiggerManager.generated.h"
 
@@ -810,11 +814,12 @@ public:
         else
             return nullptr;
     }
-    UFUNCTION(BlueprintCallable, Category = "Landscape Tools")
-    float GetLandscapeHeightAt(FVector WorldPosition);
+    //UFUNCTION()//(BlueprintCallable, Category = "Landscape Tools")
+    TOptional<float> GetLandscapeHeightAt(FVector WorldPosition);
     TSharedPtr<TMap<FIntPoint, float>> GetOrCreateLandscapeHeightCache(ALandscapeProxy* Landscape);
     void PopulateLandscapeHeightCacheAsync(ALandscapeProxy* Landscape);
     ALandscapeProxy* GetLandscapeProxyAt(const FVector& WorldPos);
+    // ALandscapeProxy* FindLandscapeProxyAt(const FVector& WorldPos);
     TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos, bool bForcePrecise);
     TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos);
     // Delete this after it works!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

@@ -135,7 +135,7 @@ public:
 		TArray<AActor*>& IgnoredActors,
 		bool bPassedThroughHole,
 		bool bIgnoreHolesNow,
-		int32 Depth
+		int32 Depth, AActor* InitialHoleBP
 	) const;
 
 	FHitResult RecursiveTraceThroughHoles_Internal(
@@ -143,7 +143,7 @@ public:
 		FVector& End,
 		TArray<AActor*>& IgnoredActors,
 		int32 Depth,
-		const FVector& OriginalDirection, bool bPassedThroughHole
+		const FVector& OriginalDirection, bool bPassedThroughHole, AActor* InitialHoleBP
 	) const;
 	
 	FHitResult SmartTrace(const FVector& Start, const FVector& End);

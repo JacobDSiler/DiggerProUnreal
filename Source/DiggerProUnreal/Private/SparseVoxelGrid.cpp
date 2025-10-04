@@ -232,8 +232,23 @@ bool USparseVoxelGrid::IsPointAboveLandscape(FVector& Point)
 
 float USparseVoxelGrid::GetLandscapeHeightAtPoint(FVector Position)
 {
-	return EnsureDiggerManager() ? DiggerManager->GetLandscapeHeightAt(Position) : 0.f;
+	if (!EnsureDiggerManager())
+	{
+		UE_LOG(LogTemp, Error, TEXT("DiggerManager not available — cannot query landscape height."));
+		return NAN; // or return a sentinel value that signals failure upstream
+	}
+
+	TOptional<float> Height = DiggerManager->GetLandscapeHeightAt(Position);
+	if (!Height.IsSet())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Landscape height lookup failed at position: %s"), *Position.ToString());
+		return NAN; // or return a sentinel like -999999.f if NAN causes issues in your pipeline
+	}
+
+	return Height.GetValue();
 }
+
+
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Core voxel access / mutation (CPU path + GPU stub routing)
@@ -364,13 +379,28 @@ float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z)
 	}
 
 	// Fallback to baked terrain via landscape height
-	const FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(FIntVector(X, Y, Z));
-	const float LandscapeHeight = EnsureDiggerManager()
-		? DiggerManager->GetLandscapeHeightAt(FVector(WorldPos.X, WorldPos.Y, 0))
-		: 0.f;
+	const FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(Key);
 
-	return (WorldPos.Z < LandscapeHeight) ? SDF_SOLID : SDF_AIR;
+	if (!EnsureDiggerManager())
+	{
+		UE_LOG(LogTemp, Error, TEXT("DiggerManager unavailable during voxel fallback at %s"), *WorldPos.ToString());
+		return SDF_AIR; // Or return NAN if you want to skip this voxel entirely
+	}
+
+	TOptional<float> LandscapeHeight = DiggerManager->GetLandscapeHeightAt(FVector(WorldPos.X, WorldPos.Y, 0));
+	if (!LandscapeHeight.IsSet())
+	{
+		if (DiggerDebug::Landscape())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("No landscape height found at %s — skipping terrain fallback."), *WorldPos.ToString());
+		}
+		return SDF_AIR; // Or NAN to skip voxel entirely
+	}
+
+	return (WorldPos.Z < LandscapeHeight.GetValue()) ? SDF_SOLID : SDF_AIR;
 }
+
+
 
 float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z) const
 {
@@ -382,13 +412,29 @@ float USparseVoxelGrid::GetVoxel(int32 X, int32 Y, int32 Z) const
 		return Existing->SDFValue;
 	}
 
-	const FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(FIntVector(X, Y, Z));
-	const float LandscapeHeight = (const_cast<USparseVoxelGrid*>(this)->EnsureDiggerManager())
-		? const_cast<USparseVoxelGrid*>(this)->DiggerManager->GetLandscapeHeightAt(FVector(WorldPos.X, WorldPos.Y, 0))
-		: 0.f;
+	const FVector WorldPos = FVoxelConversion::LocalVoxelToWorld(Key);
 
-	return (WorldPos.Z < LandscapeHeight) ? SDF_SOLID : SDF_AIR;
+	// Temporarily cast away const to access DiggerManager
+	USparseVoxelGrid* MutableThis = const_cast<USparseVoxelGrid*>(this);
+	if (!MutableThis->EnsureDiggerManager())
+	{
+		UE_LOG(LogTemp, Error, TEXT("DiggerManager unavailable during const voxel fallback at %s"), *WorldPos.ToString());
+		return NAN;
+	}
+
+	TOptional<float> LandscapeHeight = MutableThis->DiggerManager->GetLandscapeHeightAt(FVector(WorldPos.X, WorldPos.Y, 0));
+	if (!LandscapeHeight.IsSet())
+	{
+		if (DiggerDebug::Landscape())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Const voxel fallback: no landscape height at %s"), *WorldPos.ToString());
+		}
+		return NAN;
+	}
+
+	return (WorldPos.Z < LandscapeHeight.GetValue()) ? SDF_SOLID : SDF_AIR;
 }
+
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Queries / helpers

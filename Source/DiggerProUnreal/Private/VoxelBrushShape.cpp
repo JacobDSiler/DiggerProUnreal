@@ -158,33 +158,48 @@ bool UVoxelBrushShape::GetCameraHitLocation(FHitResult& OutHitResult)
 
     DebugDrawLineIfEnabled(TraceStart, TraceEnd, FColor::Green, 2.0f);
 
-    // Start the recursive trace through holes
-    TArray<AActor*> IgnoredActors;
-    FHitResult Hit = RecursiveTraceThroughHoles(TraceStart, TraceEnd, IgnoredActors, false, false, 0);
+    // Initial trace to detect first hit
+    FHitResult FirstHit;
+    FCollisionQueryParams Params;
+    Params.bTraceComplex = true;
 
-    if (Hit.bBlockingHit)
+    bool bHit = World->LineTraceSingleByChannel(FirstHit, TraceStart, TraceEnd, ECC_Visibility, Params);
+
+    if (!bHit || !FirstHit.GetActor())
     {
-        OutHitResult = Hit;
-        DebugDrawSphereIfEnabled(OutHitResult.ImpactPoint, FColor::Red, 25.0f, 5.0f);
-
-        if (OutHitResult.GetActor())
+        if (DiggerDebug::Casts())
         {
-            if (DiggerDebug::Casts())
-            {
-                UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Final Hit Actor: %s, Component: %s"), 
-                    *OutHitResult.GetActor()->GetName(), 
-                    OutHitResult.GetComponent() ? *OutHitResult.GetComponent()->GetName() : TEXT("None"));
-            }
+            UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No valid hit found."));
         }
-        return true;
+        return false;
     }
 
-    if (DiggerDebug::Casts())
+    AActor* InitialHoleBP = nullptr;
+
+    if (IsHoleBPActor(FirstHit.GetActor()))
     {
-        UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No valid hit found."));
+        InitialHoleBP = FirstHit.GetActor();
+        TArray<AActor*> IgnoredActors;
+        IgnoredActors.Add(InitialHoleBP);
+        FVector NewStart = FirstHit.Location + (TraceEnd - TraceStart).GetSafeNormal() * 0.1f;
+
+        FHitResult RecursiveHit = RecursiveTraceThroughHoles(NewStart, TraceEnd, IgnoredActors, true, false, 1, InitialHoleBP);
+
+        if (RecursiveHit.bBlockingHit)
+        {
+            OutHitResult = RecursiveHit;
+            DebugDrawSphereIfEnabled(OutHitResult.ImpactPoint, FColor::Red, 25.0f, 5.0f);
+            return true;
+        }
+        return false;
     }
-    return false;
+
+    // If first hit is not a HoleBP, return it directly
+    OutHitResult = FirstHit;
+    DebugDrawSphereIfEnabled(OutHitResult.ImpactPoint, FColor::Red, 25.0f, 5.0f);
+    return true;
 }
+
 
 FHitResult UVoxelBrushShape::PerformComplexTrace(FVector& Start, FVector& End, AActor* IgnoredActor) const
 {
@@ -204,7 +219,7 @@ FHitResult UVoxelBrushShape::PerformComplexTrace(FVector& Start, FVector& End, A
     }
 
     // Start with bPassedThroughHole = false, bIgnoreHolesNow = false, Depth = 0
-    return RecursiveTraceThroughHoles(Start, End, IgnoredActors, false, false, 0);
+    return RecursiveTraceThroughHoles(Start, End, IgnoredActors, false, false, 0, IgnoredActor);
 }
 
 FHitResult UVoxelBrushShape::RecursiveTraceThroughHoles_Internal(
@@ -213,7 +228,8 @@ FHitResult UVoxelBrushShape::RecursiveTraceThroughHoles_Internal(
     TArray<AActor*>& IgnoredActors,
     int32 Depth,
     const FVector& OriginalDirection,
-    bool bPassedThroughHole
+    bool bPassedThroughHole,
+    AActor* InitialHoleBP
 ) const
 {
     if (Depth > 32)
@@ -237,50 +253,43 @@ FHitResult UVoxelBrushShape::RecursiveTraceThroughHoles_Internal(
         bPassedThroughHole = true;
         if (!IgnoredActors.Contains(HitActor))
         {
-            IgnoredActors.Add(HitActor); // Only add HoleBP
+            IgnoredActors.Add(HitActor);
         }
         FVector NewStart = Hit.Location + OriginalDirection * 0.1f;
-        return RecursiveTraceThroughHoles_Internal(NewStart, End, IgnoredActors, Depth + 1, OriginalDirection, true);
+        return RecursiveTraceThroughHoles_Internal(NewStart, End, IgnoredActors, Depth + 1, OriginalDirection, true, InitialHoleBP);
     }
 
-    // When we hit the landscape
+    // If we hit terrain
     if (IsLandscape(HitActor))
     {
         if (bPassedThroughHole)
         {
-            if (!IgnoredActors.Contains(HitActor))
+            // Check if we're still inside the original hole bounds
+            if (InitialHoleBP && IsHoleBPActor(InitialHoleBP))
             {
-                IgnoredActors.Add(HitActor); // Only add Landscape
+                const FBox Bounds = InitialHoleBP->GetComponentsBoundingBox();
+                if (Bounds.IsInside(Hit.Location))
+                {
+                    // Still inside hole — continue tracing
+                    FVector NewStart = Hit.Location + OriginalDirection * 0.1f;
+                    return RecursiveTraceThroughHoles_Internal(NewStart, End, IgnoredActors, Depth + 1, OriginalDirection, true, InitialHoleBP);
+                }
             }
-            if (DiggerDebug::Casts())
-            {
-                UE_LOG(LogTemp, Error,
-                       TEXT(
-                           "Hit Landscape after passing through a hole, hopping Backward 1cm before the trace continues!"
-                       ));
-            }
-            FVector NewStart = Hit.Location + OriginalDirection * -1; // Jump back 1cm
-            return RecursiveTraceThroughHoles_Internal(NewStart, End, IgnoredActors, Depth + 1, OriginalDirection,
-                                                       bPassedThroughHole);
+
+            // Outside hole — valid terrain hit
+            return Hit;
         }
         else
         {
-            if (DiggerDebug::Casts())
-            {
-                UE_LOG(LogTemp, Error, TEXT("Returning a landscape hit with !bPassedThroughHole!"));
-            }
-            // If we haven't passed through a hole, return the landscape hit
+            // Hit terrain without passing through a hole
             return Hit;
         }
     }
 
-    if (DiggerDebug::Casts())
-    {
-        UE_LOG(LogTemp, Error, TEXT("Returning Fallback Hit!"));
-    }
-    // Return the first non-HoleBP, non-landscape hit (e.g., procedural mesh)
+    // Hit something else (e.g. procedural mesh)
     return Hit;
 }
+
 
 
 
@@ -291,12 +300,14 @@ FHitResult UVoxelBrushShape::RecursiveTraceThroughHoles(
     TArray<AActor*>& IgnoredActors,
     bool bPassedThroughHole,
     bool bIgnoreHolesNow,
-    int32 Depth
+    int32 Depth,
+    AActor* InitialHoleBP
 ) const
 {
     const FVector OriginalDirection = (End - Start).GetSafeNormal();
-    return RecursiveTraceThroughHoles_Internal(Start, End, IgnoredActors, 0, OriginalDirection, false);
+    return RecursiveTraceThroughHoles_Internal(Start, End, IgnoredActors, Depth, OriginalDirection, bPassedThroughHole, InitialHoleBP);
 }
+
 
 
 FHitResult UVoxelBrushShape::SmartTrace(const FVector& Start, const FVector& End)
@@ -347,7 +358,7 @@ FHitResult UVoxelBrushShape::SmartTrace(const FVector& Start, const FVector& End
         FVector NewStart = FirstHit.Location + (End - Start).GetSafeNormal() * 0.1f;
         FVector NewEnd = End;
         // Call the public version (which sets OriginalDirection internally)
-        return RecursiveTraceThroughHoles(NewStart, NewEnd, IgnoredActors, true, false, 1);
+        return RecursiveTraceThroughHoles(NewStart, NewEnd, IgnoredActors, true, false, 1, IgnoredActors.Last());
     }
     else
     {

@@ -6484,7 +6484,6 @@ void FDiggerEdModeToolkit::RebuildIslandGrid()
 
 
 
-// In DiggerEdModeToolkit.cpp
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()
 {
     const int32 NumColumns = 4;
@@ -6557,7 +6556,6 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandGridWidget()
 
     return IslandGridPanel;
 }
-
 
 
 

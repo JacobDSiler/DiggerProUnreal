@@ -1001,8 +1001,22 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
                 }
 
                 // Get precise landscape height using modified DiggerManager method (cache-free)
-                TOptional<float> Height = DiggerManager->SampleLandscapeHeight(DiggerManager->GetLandscapeProxyAt(WorldPos), WorldPos);
-                float TerrainHeight = Height.IsSet() ? Height.GetValue() : -10000000.f;
+            	TOptional<float> Height = DiggerManager->SampleLandscapeHeight(DiggerManager->GetLandscapeProxyAt(WorldPos), WorldPos);
+
+            	float TerrainHeight;
+            	if (!Height.IsSet())
+            	{
+            		if (DiggerDebug::Landscape())
+            		{
+            			UE_LOG(LogTemp, Warning, TEXT("SampleLandscapeHeight failed at %s"), *WorldPos.ToString());
+            		}
+            		TerrainHeight = NAN; // Or skip this voxel entirely upstream
+            	}
+            	else
+            	{
+            		TerrainHeight = Height.GetValue();
+            	}
+
 
                 // Store voxel info for parallel processing
                 FVoxelInfo VoxelInfo;
@@ -1310,7 +1324,17 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
         );
 
         // Get terrain height
-        float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
+    	TOptional<float> Height = DiggerManager->GetLandscapeHeightAt(WorldPos);
+    	if (!Height.IsSet())
+    	{
+    		// No Landscape Proxy Found
+    		if (DiggerDebug::Landscape())
+    			UE_LOG(LogTemp, Warning, TEXT("No Landscape Found at current x / y coordinate"));
+    		// Skip voxel write or mesh generation
+    		return;
+    	}
+    	
+        float TerrainHeight = Height.GetValue();
         const float RimThickness = GetRimThickness(WorldPos);
         
         // Enhanced rim height consistency logic with seam type control
@@ -1365,8 +1389,19 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
                     (ConnectionCoord.Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
                     (ConnectionCoord.Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
                 );
-                
-                float ConnectionTerrainHeight = DiggerManager->GetLandscapeHeightAt(ConnectionWorldPos);
+            	
+            	// Query Terrain Height
+            	TOptional<float> THeight = DiggerManager->GetLandscapeHeightAt(ConnectionWorldPos);
+            	if (!THeight.IsSet())
+            	{
+            		// No Landscape Proxy Found
+            		if (DiggerDebug::Landscape())
+            			UE_LOG(LogTemp, Warning, TEXT("No Landscape Found at current x / y coordinate"));
+            		// Skip voxel write or mesh generation
+            		return;
+            	}
+            	
+                float ConnectionTerrainHeight = THeight.GetValue();
                 const float ConnectionTerrainDistance = (ConnectionWorldPos.Z - HalfVoxelSize) - ConnectionTerrainHeight;
                 
                 if (ConnectionTerrainDistance <= HalfVoxelSize)
@@ -1427,7 +1462,14 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
                 (DownNeighbor.Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
                 (DownNeighbor.Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
             );
-            float DownTerrainHeight = DiggerManager->GetLandscapeHeightAt(DownWorldPos);
+        	
+        	auto SafeHeight = [this](const FVector& Pos) -> float
+        	{
+        		TOptional<float> Height = DiggerManager->GetLandscapeHeightAt(Pos);
+        		return Height.IsSet() ? Height.GetValue() : NAN;
+        	};
+        	
+            float DownTerrainHeight = SafeHeight(DownWorldPos);
             if ((DownWorldPos.Z - HalfVoxelSize) <= DownTerrainHeight + HalfVoxelSize)
             {
                 HasVerticalSupport = true;

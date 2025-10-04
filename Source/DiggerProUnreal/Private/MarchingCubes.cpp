@@ -494,7 +494,16 @@ FVector UMarchingCubes::ApplyLandscapeTransition(const FVector& VertexWS) const
 {
     if (!DiggerManager) return VertexWS;
 
-    float LandscapeZ = DiggerManager->GetLandscapeHeightAt(VertexWS);
+	TOptional<float> Height = DiggerManager->GetLandscapeHeightAt(VertexWS);
+	if (!Height.IsSet())
+	{
+		// No Landscape Proxy Found
+		if (DiggerDebug::Landscape())
+			UE_LOG(LogTemp, Warning, TEXT("No Landscape Found at current x / y coordinate"));
+		// Skip voxel write or mesh generation
+		return VertexWS;
+	}
+	float LandscapeZ = Height.GetValue();
     float DistanceToSurface = FMath::Abs(VertexWS.Z - LandscapeZ);
 
     if (DistanceToSurface < TransitionHeight)
@@ -530,7 +539,18 @@ void UMarchingCubes::AddSkirtMesh(
     {
         const FVector& RimV = Vertices[RimVertexIndices[i]];
         FVector SkirtV = RimV;
-        SkirtV.Z = DiggerManager->GetLandscapeHeightAt(RimV);
+
+    	TOptional<float> Height = DiggerManager->GetLandscapeHeightAt(RimV);
+    	if (!Height.IsSet())
+    	{
+    		// No Landscape Proxy Found
+    		if (DiggerDebug::Landscape())
+    			UE_LOG(LogTemp, Warning, TEXT("No Landscape Found at current x / y coordinate"));
+    		// Skip voxel write or mesh generation
+    		return;
+    	}
+    	
+        SkirtV.Z = Height.GetValue();
 
         // Offset along the landscape normal to avoid z-fighting and ensure visibility
         FVector LandscapeNormal = DiggerManager->GetLandscapeNormalAt(RimV);
