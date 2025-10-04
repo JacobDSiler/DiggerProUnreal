@@ -840,6 +840,8 @@ public:
 
 private:
 
+    void ForceUpdateTerrainAt(const FVector& Center, float Radius);
+    
     std::queue<FBrushStroke> BrushStrokeQueue;
     const int32 MaxUndoLength = 10; // Example limit
 

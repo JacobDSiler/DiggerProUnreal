@@ -1567,6 +1567,7 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
     }
 }
 
+
 void ADiggerManager::SetVoxelAtWorldPosition(const FVector& WorldPos, float Value)
 {
     // Safety checks
@@ -3717,7 +3718,7 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     // 🔧 Modulate scale based on terrain voxel size
     VoxelSize = FVoxelConversion::LocalVoxelSize;
     const float HoleSize = Stroke.BrushRadius;
-    const float GridUnits = HoleSize / VoxelSize;
+    const float GridUnits = ((HoleSize + (VoxelSize / 2)) / VoxelSize);
     
     const FVector& BrushPos = Stroke.BrushPosition;
     FVector  OffsetCorrection = FVector(5);
@@ -3726,7 +3727,7 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     FRotator SpawnRotation = Stroke.BrushRotation;
 
     // Adjust scale to match voxel grid footprint
-    FVector SpawnScale = FVector(GridUnits * VoxelSize / 38.0f); // Normalize to mesh scale
+    FVector SpawnScale = FVector(GridUnits * VoxelSize / 50.0f); // Normalize to mesh scale
 
     // 🛑 Early out if subterranean
     TOptional<float> TerrainHeight = GetLandscapeHeightAt(SpawnLocation);
@@ -3779,6 +3780,10 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     {
         TargetChunk->SaveHoleData(SpawnLocation, SpawnRotation, SpawnScale);
         TargetChunk->SpawnHoleFromData(FSpawnedHoleData(SpawnLocation, SpawnRotation, SpawnScale, Stroke.HoleShape));
+
+        // New call to the landscape force update helper to update the component so there are no phantom shadows and artifacts.
+        ForceUpdateTerrainAt(SpawnLocation, HoleSize);
+
         if (DiggerDebug::Holes())
             UE_LOG(LogTemp, Log, TEXT("Delegated hole spawn to chunk at location %s"), *SpawnLocation.ToString());
     }
@@ -3790,6 +3795,31 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 }
 
 
+void ADiggerManager::ForceUpdateTerrainAt(const FVector& Center, float Radius)
+{
+    if (!GetWorld()) return;
+
+    for (TActorIterator<ALandscapeProxy> It(GetWorld()); It; ++It)
+    {
+        ALandscapeProxy* Proxy = *It;
+        if (!Proxy || Proxy->IsPendingKill()) continue;
+
+        for (ULandscapeComponent* Component : Proxy->LandscapeComponents)
+        {
+            if (!Component) continue;
+
+            const FBoxSphereBounds Bounds = Component->Bounds;
+            if (Bounds.GetBox().IsInside(Center) || Bounds.SphereRadius > 0.f && FVector::DistSquared(Bounds.Origin, Center) < FMath::Square(Radius + Bounds.SphereRadius))
+            {
+                Component->MarkRenderStateDirty(); // Force material and visibility update
+                if (DiggerDebug::Holes())
+                {
+                    UE_LOG(LogTemp, Log, TEXT("Updated terrain component at %s"), *Bounds.Origin.ToString());
+                }
+            }
+        }
+    }
+}
 
 
 
