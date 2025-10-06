@@ -7,6 +7,7 @@
 #include "HoleShapeLibrary.h"
 #include "VoxelBrushTypes.h"
 #include "Voxel/VoxelEvents.h"
+#include "VoxelStrokeInfo.h"
 #include "VoxelChunk.generated.h"
 
 class ADynamicHole;
@@ -17,7 +18,6 @@ class VoxelBrushShape;
 class USparseVoxelGrid;
 class UMarchingCubes;
 class UProceduralMeshComponent;
-
 
 
 
@@ -128,8 +128,9 @@ public:
     void SetMarchingCubesGenerator(UMarchingCubes* InMarchingCubesGenerator) { MarchingCubesGenerator = InMarchingCubesGenerator; }
     void BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction, const FString& String);
 
+    void ApplySDFToVoxelGrid(const TArray<::FVoxelStrokeInfo>& Voxels, const FBrushStroke& Stroke, const UVoxelBrushShape* BrushShape);
     float BlendSDF(float SDFValue, float ExistingSDF, bool bDig, float TransitionBand);
-    //void ForceRegenerateMesh();
+    
 
 public:
     // Add a hole to the chunk's hole list

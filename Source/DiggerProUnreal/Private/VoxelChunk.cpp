@@ -21,6 +21,7 @@
 #include "Serialization/BufferArchive.h"
 
 
+struct FVoxelStrokeInfo;
 struct FSpawnedHoleData;
 
 UVoxelChunk::UVoxelChunk()
@@ -971,14 +972,8 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     TArray<FIntVector> AirVoxelsBelowTerrain;
 
     // Pre-filter voxels and compute terrain heights on game thread using precise queries
-    struct FVoxelInfo
-    {
-        FIntVector Coords;
-        FVector WorldPos;
-        float TerrainHeight;
-    };
-    
-    TArray<FVoxelInfo> ValidVoxels;
+	TArray<FVoxelStrokeInfo> ValidVoxels;
+
     
     for (int32 X = MinX; X <= MaxX; ++X)
     {
@@ -1019,62 +1014,56 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 
 
                 // Store voxel info for parallel processing
-                FVoxelInfo VoxelInfo;
-                VoxelInfo.Coords = FIntVector(X, Y, Z);
-                VoxelInfo.WorldPos = WorldPos;
-                VoxelInfo.TerrainHeight = TerrainHeight;
-                
-                ValidVoxels.Add(VoxelInfo);
+            	FVoxelStrokeInfo VoxelInfo;
+            	VoxelInfo.Coords = FIntVector(X, Y, Z);
+            	VoxelInfo.WorldPos = WorldPos;
+            	VoxelInfo.TerrainHeight = TerrainHeight;
+
+            	ValidVoxels.Add(VoxelInfo);
+
             }
         }
     }
 
-    // Process valid voxels in parallel - Let brush shape determine everything
-    ParallelFor(ValidVoxels.Num(), [&](int32 VoxelIndex)
-    {
-        const FVoxelInfo& VoxelInfo = ValidVoxels[VoxelIndex];
-        const FIntVector& Coords = VoxelInfo.Coords;
-        const FVector& WorldPos = VoxelInfo.WorldPos;
-        const float TerrainHeight = VoxelInfo.TerrainHeight;
-        const bool bAboveTerrain = WorldPos.Z >= TerrainHeight;
+	//ApplySDFToVoxelGrid(ValidVoxels, Stroke, BrushShape);
 
-        // Calculate SDF value using the specific brush shape with precise terrain height
-        const float SDF = BrushShape->CalculateSDF(WorldPos, Stroke, TerrainHeight);
 
-        // Let the brush shape's SDF completely determine voxel creation
-        if (Stroke.bDig)
-        {
-            // Create air where SDF indicates we're inside the shape
-            if (SDF > 0.1f) // Only use SDF threshold, no distance override
-            {
-                // Add depth validation to prevent far-off subterranean voxels
-                const float MaxDepthBelowBrush = Stroke.BrushRadius * 1.5f;
-                const float VerticalDistanceFromBrush = FMath::Abs(WorldPos.Z - Stroke.BrushPosition.Z);
-                
-                if (VerticalDistanceFromBrush <= MaxDepthBelowBrush)
-                {
-                    bool Removed = SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, true); // true = EXPLICIT AIR
-                    Removed? VoxelsDugCounter.Increment() : false; // Handle it if nothing was Removed.
-                    
-                    // Track air voxels below terrain for solid shell creation
-                    if (!bAboveTerrain)
-                    {
-                        FScopeLock Lock(&BrushStrokeMutex);
-                        AirVoxelsBelowTerrain.Add(Coords);
-                    }
-                }
-            }
-        }
-        else
-        {
-            // Create solid where SDF indicates
-            if (SDF < -0.1f) // Only use SDF threshold, no distance override
-            {
-                bool Added = SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, false); // false = solid
-                Added ? VoxelsAddedCounter.Increment() : false; // Handle it right if nothing was added
-            }
-        }
-    });
+    //Process valid voxels in parallel - Let brush shape determine everything
+	const float GradientRadius = Stroke.BrushRadius + FVoxelConversion::LocalVoxelSize * 2.0f;
+
+	ParallelFor(ValidVoxels.Num(), [&](int32 VoxelIndex)
+	{
+		const FVoxelStrokeInfo& VoxelInfo = ValidVoxels[VoxelIndex];
+		const FIntVector& Coords = VoxelInfo.Coords;
+		const FVector& WorldPos = VoxelInfo.WorldPos;
+		const float TerrainHeight = VoxelInfo.TerrainHeight;
+
+		const float SDF = BrushShape->CalculateSDF(WorldPos, Stroke, TerrainHeight);
+
+		// ✅ Always write SDF — even near surface — to enable smooth marching cubes
+		const float DistanceFromCenter = FVector::Dist(WorldPos, Stroke.BrushPosition);
+		if (DistanceFromCenter <= GradientRadius)
+		{
+			const bool bIsAir = Stroke.bDig;
+			SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, bIsAir);
+
+			if (bIsAir)
+			{
+				VoxelsDugCounter.Increment();
+
+				if (WorldPos.Z < TerrainHeight && SDF > 0.0f)
+				{
+					FScopeLock Lock(&BrushStrokeMutex);
+					AirVoxelsBelowTerrain.Add(Coords);
+				}
+			}
+			else
+			{
+				VoxelsAddedCounter.Increment();
+			}
+		}
+	});
+
 
     // Track shell voxels separately if needed
     int32 ShellVoxelsAdded = 0;
@@ -1514,12 +1503,36 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
 }
 
 
+void UVoxelChunk::ApplySDFToVoxelGrid(const TArray<FVoxelStrokeInfo>& Voxels, const FBrushStroke& Stroke, const UVoxelBrushShape* BrushShape)
+{
+	ParallelFor(Voxels.Num(), [&](int32 VoxelIndex)
+	{
+		const FVoxelStrokeInfo& VoxelInfo = Voxels[VoxelIndex];
+		const FIntVector& Coords = VoxelInfo.Coords;
+		const FVector& WorldPos = VoxelInfo.WorldPos;
+		const float TerrainHeight = VoxelInfo.TerrainHeight;
+
+		const float SDF = BrushShape->CalculateSDF(WorldPos, Stroke, TerrainHeight);
+
+		// Store full SDF value regardless of threshold
+		if (Stroke.bDig)
+		{
+			SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, true); // true = air
+		}
+		else
+		{
+			SparseVoxelGrid->SetVoxel(Coords.X, Coords.Y, Coords.Z, SDF, false); // false = solid
+		}
+	});
+}
+
+
+
+
 void UVoxelChunk::BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction,
 	const FString& String)
 {
 }
-
-
 
 
 

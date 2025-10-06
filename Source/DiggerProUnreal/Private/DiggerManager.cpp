@@ -1511,13 +1511,15 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
     }
 
 
-    float BrushEffectRadius = BrushStroke.BrushRadius + BrushStroke.BrushFalloff;
-    float ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::LocalVoxelSize;
-    float ChunkDiagonal = ChunkWorldSize * 1.732f; // sqrt(3) for 3D diagonal
-    float SafetyPadding = BrushEffectRadius + ChunkDiagonal;
+    const float BrushEffectRadius = BrushStroke.BrushRadius + BrushStroke.BrushFalloff;
+    const float ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::LocalVoxelSize;
+    const float ChunkDiagonal = ChunkWorldSize * 1.732f; // sqrt(3) for full 3D diagonal
 
-    FVector Min = BrushStroke.BrushPosition - FVector(SafetyPadding);
-    FVector Max = BrushStroke.BrushPosition + FVector(SafetyPadding);
+    const float MaxInfluenceRadius = BrushEffectRadius + ChunkDiagonal * 2.0f;
+
+    FVector Min = BrushStroke.BrushPosition - FVector(MaxInfluenceRadius);
+    FVector Max = BrushStroke.BrushPosition + FVector(MaxInfluenceRadius);
+
 
     FIntVector MinChunk = FVoxelConversion::WorldToChunk(Min);
     FIntVector MaxChunk = FVoxelConversion::WorldToChunk(Max);
@@ -3718,7 +3720,7 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     // 🔧 Modulate scale based on terrain voxel size
     VoxelSize = FVoxelConversion::LocalVoxelSize;
     const float HoleSize = Stroke.BrushRadius;
-    const float GridUnits = ((HoleSize + (VoxelSize / 2)) / VoxelSize);
+    const float GridUnits = ((HoleSize + (VoxelSize * 1.5f)) / VoxelSize);
     
     const FVector& BrushPos = Stroke.BrushPosition;
     FVector  OffsetCorrection = FVector(5);
