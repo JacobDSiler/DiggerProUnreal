@@ -1049,9 +1049,14 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
 		}
 	}
 
-	// Get chunk coordinates once
+	// Determine if VoxelData keys are in local or global coordinates
+	// If ParentChunk is null, keys are global coordinates (used by unified island detection)
+	// If ParentChunk exists, keys are local coordinates within the chunk
+	const bool bKeysAreGlobal = (ParentChunk == nullptr);
 	FIntVector ChunkCoords = GetParentChunkCoordinates();
-	UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] DetectIslands ChunkCoords: %s"), *ChunkCoords.ToString());
+	
+	UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] DetectIslands ChunkCoords: %s, KeysAreGlobal: %s"), 
+		*ChunkCoords.ToString(), bKeysAreGlobal ? TEXT("true") : TEXT("false"));
 
 	for (const auto& Pair : VoxelData)
 	{
@@ -1092,12 +1097,24 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
 
 		// Debug the first few voxel conversions
 		int32 DebugCount = 0;
-		for (const FIntVector& LocalVoxel : IslandVoxels)
+		for (const FIntVector& Voxel : IslandVoxels)
 		{
 			FVoxelInstance Instance;
-			Instance.ChunkCoords  = ChunkCoords;
-			Instance.LocalVoxel   = LocalVoxel;
-			Instance.GlobalVoxel  = FVoxelConversion::ChunkAndLocalToGlobalVoxel_Min(ChunkCoords, LocalVoxel);
+			
+			if (bKeysAreGlobal)
+			{
+				// VoxelData keys are already global coordinates
+				Instance.GlobalVoxel = Voxel;
+				// Convert global back to chunk and local
+				FVoxelConversion::GlobalVoxelToChunkAndLocal_Min(Voxel, Instance.ChunkCoords, Instance.LocalVoxel);
+			}
+			else
+			{
+				// VoxelData keys are local coordinates within the chunk
+				Instance.ChunkCoords = ChunkCoords;
+				Instance.LocalVoxel = Voxel;
+				Instance.GlobalVoxel = FVoxelConversion::ChunkAndLocalToGlobalVoxel_Min(ChunkCoords, Voxel);
+			}
 
 			TempInstances.Add(Instance);
 
@@ -1108,7 +1125,8 @@ TArray<FIslandData> USparseVoxelGrid::DetectIslands(float SDFThreshold)
 			if (DebugCount < 3)
 			{
 				UE_LOG(LogTemp, Warning, TEXT("[IslandDebug] Detection Voxel %d:"), DebugCount);
-				UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   LocalVoxel: %s"), *LocalVoxel.ToString());
+				UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   VoxelKey: %s"), *Voxel.ToString());
+				UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   LocalVoxel: %s"), *Instance.LocalVoxel.ToString());
 				UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   GlobalVoxel: %s"), *Instance.GlobalVoxel.ToString());
 				UE_LOG(LogTemp, Warning, TEXT("[IslandDebug]   ExpectedWorldPos: %s"), *WorldPos.ToString());
 			}
