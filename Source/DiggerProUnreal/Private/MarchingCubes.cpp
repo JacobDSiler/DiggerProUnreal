@@ -1046,15 +1046,40 @@ void UMarchingCubes::GenerateDCMeshFromGrid(
             OutTriangles.Append({ idx[0], idx[i], idx[i + 1] });
     };
 
-    // --- Faces
+    // --- Faces (all three orientations for watertight mesh)
+    // XY plane faces (constant Z)
     for (int32 x = MinV.X; x < MaxV.X; ++x)
         for (int32 y = MinV.Y; y < MaxV.Y; ++y)
-            for (int32 z = MinV.Z; z < MaxV.Z; ++z)
+            for (int32 z = MinV.Z; z <= MaxV.Z; ++z)
             {
                 FIntVector c00(x, y, z);
                 FIntVector c10(x + 1, y, z);
                 FIntVector c11(x + 1, y + 1, z);
                 FIntVector c01(x, y + 1, z);
+                AddFaceOrFill(c00, c10, c11, c01);
+            }
+    
+    // XZ plane faces (constant Y)
+    for (int32 x = MinV.X; x < MaxV.X; ++x)
+        for (int32 z = MinV.Z; z < MaxV.Z; ++z)
+            for (int32 y = MinV.Y; y <= MaxV.Y; ++y)
+            {
+                FIntVector c00(x, y, z);
+                FIntVector c10(x + 1, y, z);
+                FIntVector c11(x + 1, y, z + 1);
+                FIntVector c01(x, y, z + 1);
+                AddFaceOrFill(c00, c10, c11, c01);
+            }
+    
+    // YZ plane faces (constant X)
+    for (int32 y = MinV.Y; y < MaxV.Y; ++y)
+        for (int32 z = MinV.Z; z < MaxV.Z; ++z)
+            for (int32 x = MinV.X; x <= MaxV.X; ++x)
+            {
+                FIntVector c00(x, y, z);
+                FIntVector c10(x, y + 1, z);
+                FIntVector c11(x, y + 1, z + 1);
+                FIntVector c01(x, y, z + 1);
                 AddFaceOrFill(c00, c10, c11, c01);
             }
 
