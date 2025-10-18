@@ -1837,29 +1837,24 @@ FIslandMeshData ADiggerManager::GenerateIslandMeshFromStoredData(const FIslandDa
     }
     WorldCenter /= FMath::Max(1, InstanceCount);
 
-    // 2) Generate WORLD-SPACE mesh (mesher must NOT add any origin/offset)
-    TArray<FVector> WorldVerts;
+    // 2) Generate mesh with vertices in LOCAL space (relative to WorldCenter)
+    TArray<FVector> LocalVerts;
     TArray<int32>   Tris;
     TArray<FVector> Normals;
 
     const float VSize = FVoxelConversion::LocalVoxelSize;
 
-    // If your existing signature is (Grid, Origin, VSize, ...), pass ZeroVector.
-    // The mesher body (next section) ignores Origin and works entirely in global-voxel space.
-    MarchingCubes->GenerateMeshFromGrid(Grid, /*Origin*/ FVector::ZeroVector, VSize, WorldVerts, Tris, Normals);
+    // Pass WorldCenter as Origin so the mesher can properly convert world-space vertices to local space
+    MarchingCubes->GenerateMeshFromGrid(Grid, /*Origin*/ WorldCenter, VSize, LocalVerts, Tris, Normals);
 
-    if (WorldVerts.Num() == 0 || Tris.Num() == 0)
+    if (LocalVerts.Num() == 0 || Tris.Num() == 0)
     {
         UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Mesher returned empty for island %s"), *IslandData.IslandID.ToString());
         return Result;
     }
 
-    // 3) Recentre to LOCAL around (0,0,0) for StaticMesh build
-    Result.Vertices.Reserve(WorldVerts.Num());
-    for (const FVector& V : WorldVerts)
-    {
-        Result.Vertices.Add(V - WorldCenter);
-    }
+    // 3) Vertices are already in LOCAL space (mesher subtracted WorldCenter)
+    Result.Vertices = MoveTemp(LocalVerts);
     Result.Triangles = MoveTemp(Tris);
     Result.Normals   = MoveTemp(Normals);
     Result.MeshOrigin = WorldCenter;  // actor pivot in world
