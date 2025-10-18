@@ -808,7 +808,7 @@ void UMarchingCubes::GenerateMeshFromGrid(
 					   VoxelSize,
 					   OutVertices,
 					   OutTriangles,
-					   OutNormals);;
+					   OutNormals);
 		break;
 	}
 
