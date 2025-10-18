@@ -773,9 +773,7 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
 
     UE_LOG(LogTemp, Error, TEXT("SYNCRONOUS MESH GENERATION CALLED!"));
 	
-    // WorldSpaceOffset for proper alignment for center aligned chunk schema.
-    FVector TotalOffset = FVector(FVoxelConversion::LocalVoxelSize * 0.25F - FVoxelConversion::ChunkWorldSize() * 0.25f);
-    
+
     int32 N = FVoxelConversion::VoxelsPerChunk();
 
     if (IsDebugging()) {
@@ -1134,7 +1132,7 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
 
                 for (int32 j = 0; j < 3; ++j) {
                     // Apply offset to vertex before caching/lookup
-                    FVector OffsetVertex = Vertices[j] + TotalOffset;
+                    FVector OffsetVertex = Vertices[j];
                     
                     int32* CachedIndex = VertexCache.Find(OffsetVertex);
                     if (CachedIndex) {
@@ -1170,10 +1168,7 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
         OutNormals[i].Normalize();
     }
 
-    // Apply world space offset to all vertices after mesh generation is complete
-    for (int32 i = 0; i < OutVertices.Num(); ++i) {
-        OutVertices[i] += TotalOffset;
-    }
+
 
     /*TArray<int32> RimVertices;
     FindRimVertices(OutVertices, OutTriangles, RimVertices);

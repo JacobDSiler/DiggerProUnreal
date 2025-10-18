@@ -279,6 +279,11 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
     if (!GetMouseWorldHit(InViewportClient, HitLocation, Hit))
         return false;
 
+    UE_LOG(LogTemp, Error, TEXT("Click World: %s, Origin: %s, Offset: %s"), 
+    *HitLocation.ToString(), 
+    *FVoxelConversion::Origin.ToString(),
+    *(HitLocation - FVoxelConversion::Origin).ToString());
+
     if (ADiggerManager* Digger = FindDiggerManager())
     {
         if (TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit())
