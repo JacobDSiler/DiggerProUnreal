@@ -116,6 +116,14 @@ struct FDebugBrushSettings
     float SelectionMarkerSize = 20.0f;
 };
 
+UENUM(BlueprintType)
+enum class EMeshGenerationMethod : uint8
+{
+    Cubic UMETA(DisplayName = "Cubic"),
+    MarchingCubes UMETA(DisplayName = "Marching Cubes"),
+    DualContouring UMETA(DisplayName = "Dual Contouring")
+};
+
 
 #if WITH_EDITOR
 class FDiggerEdModeToolkit;
@@ -217,6 +225,7 @@ public:
 
     // NEW (stub): will be broadcast once after routing a brush across chunks
     FOnBrushFinished OnBrushFinished;
+
 
 
     void SpawnLight(const FBrushStroke& Stroke);
@@ -803,6 +812,14 @@ public:
     {
         this->TerrainMaterial = SetTerrainMaterial;
     }
+
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Generation")
+    EMeshGenerationMethod MeshGenerationMethod = EMeshGenerationMethod::MarchingCubes;
+
+    EMeshGenerationMethod GetMeshGenerationMethod() const;
+    
+    void SetMeshGenerationMethod(const FString& Method);
 
     UPROPERTY()
     UWorld* World;

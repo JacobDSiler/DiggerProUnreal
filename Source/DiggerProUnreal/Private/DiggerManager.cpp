@@ -102,21 +102,43 @@ class FDiggerEdMode;
 class MeshDescriptors;
 class StaticMeshAttributes;
 
-
+static UHoleShapeLibrary* CreateTransientHoleLibrary();
 
 
 static UHoleShapeLibrary* LoadDefaultHoleLibrary()
 {
-    if (!GDefaultHoleLibraryPath || !*GDefaultHoleLibraryPath) return nullptr;
+    if (!GDefaultHoleLibraryPath || !*GDefaultHoleLibraryPath)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("GDefaultHoleLibraryPath is not set. Using transient fallback."));
+        return CreateTransientHoleLibrary();
+    }
     UObject* Obj = StaticLoadObject(UHoleShapeLibrary::StaticClass(), nullptr, GDefaultHoleLibraryPath);
+    if (!Obj)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Failed to load HoleShapeLibrary from path: %s"), GDefaultHoleLibraryPath);
+        return CreateTransientHoleLibrary();
+    }
     return Cast<UHoleShapeLibrary>(Obj);
 }
 
 static TSubclassOf<AActor> LoadDefaultHoleBPClass()
 {
+    if (!GDefaultHoleBPPath || !*GDefaultHoleBPPath)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("GDefaultHoleBPPath is not set. Skipping HoleBP load."));
+        return nullptr;
+    }
+
     UClass* Cls = StaticLoadClass(AActor::StaticClass(), nullptr, GDefaultHoleBPPath);
+    if (!Cls)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to load HoleBP class from path: %s"), GDefaultHoleBPPath);
+    }
+
     return Cls;
 }
+
+
 
 static UHoleShapeLibrary* CreateTransientHoleLibrary()
 {
@@ -1513,7 +1535,7 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
 
     const float BrushEffectRadius = BrushStroke.BrushRadius + BrushStroke.BrushFalloff;
     const float ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::LocalVoxelSize;
-    const float ChunkDiagonal = ChunkWorldSize * 1.732f; // sqrt(3) for full 3D diagonal
+    const float ChunkDiagonal = ChunkWorldSize * 2;//1.732f; // sqrt(3) for full 3D diagonal
 
     const float MaxInfluenceRadius = BrushEffectRadius + ChunkDiagonal * 2.0f;
 
@@ -3331,6 +3353,33 @@ void ADiggerManager::PopulateLandscapeHeightCache(ALandscapeProxy* Landscape)
     UE_LOG(LogTemp, Warning, TEXT("Synchronous height cache complete for landscape: %s (%d entries)"), *Landscape->GetName(), LocalMap.Num());
 }
 
+void ADiggerManager::SetMeshGenerationMethod(const FString& Method)
+{
+    if (Method == "Cubic")
+    {
+        MeshGenerationMethod = EMeshGenerationMethod::Cubic;
+    }
+    else if (Method == "Marching Cubes")
+    {
+        MeshGenerationMethod = EMeshGenerationMethod::MarchingCubes;
+    }
+    else if (Method == "Dual Contouring")
+    {
+        MeshGenerationMethod = EMeshGenerationMethod::DualContouring;
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Unknown mesh generation method: %s"), *Method);
+    }
+}
+
+
+EMeshGenerationMethod ADiggerManager::GetMeshGenerationMethod() const
+{
+    return MeshGenerationMethod;
+}
+
+
 void ADiggerManager::PopulateLandscapeHeightCacheAsync(ALandscapeProxy* Landscape)
 {
     if (!Landscape) return;
@@ -3741,7 +3790,7 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
             UE_LOG(LogTemp, Warning, TEXT("No terrain height at %s — skipping subterranean check."), *SpawnLocation.ToString());
         }
     }
-    else if (TerrainHeight.GetValue() > SpawnLocation.Z + HoleSize * 0.5f)
+    else if (TerrainHeight.GetValue() > SpawnLocation.Z + HoleSize)
     {
         if (DiggerDebug::Casts() || DiggerDebug::Holes())
         {

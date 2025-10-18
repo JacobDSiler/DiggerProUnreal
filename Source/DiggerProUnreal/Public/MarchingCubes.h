@@ -76,10 +76,18 @@ public:
 
 	bool IsDebugging() {return bIsDebugging;}
 
-	
+
+	void GenerateCubicMesh(
+		USparseVoxelGrid* InVoxelGrid,
+		const FVector& Origin,
+		float VoxelSize,
+		TArray<FVector>& OutVertices,
+		TArray<int32>& OutTriangles,
+		TArray<FVector>& OutNormals
+	);
 	
 	void GenerateMeshFromGrid(
-		USparseVoxelGrid* VoxelGrid,
+		USparseVoxelGrid* InVoxelGrid,
 		const FVector& Origin,
 		float VoxelSize,
 		TArray<FVector>& OutVertices,
@@ -88,45 +96,63 @@ public:
 		// Add TArray<FVector2D>& OutUVs, TArray<FColor>& OutColors, TArray<FProcMeshTangent>& OutTangents if needed
 	);
 
-	void GenerateMeshFromGridSyncronous(
-	USparseVoxelGrid* InVoxelGrid,
-	const FVector& Origin,
-	float VoxelSize,
-	TArray<FVector>& OutVertices,
-	TArray<int32>& OutTriangles,
-	TArray<FVector>& OutNormals
+	void GenerateMCMeshFromGrid(
+		USparseVoxelGrid* InVoxelGrid,
+		const FVector& Origin,
+		float VoxelSize,
+		TArray<FVector>& OutVertices,
+		TArray<int32>& OutTriangles,
+		TArray<FVector>& OutNormals
 	);
-	
-	
+
+	void GenerateDCMeshFromGrid(
+		USparseVoxelGrid* InVoxelGrid,
+		const FVector& Origin,
+		float VoxelSize,
+		TArray<FVector>& OutVertices,
+		TArray<int32>& OutTriangles,
+		TArray<FVector>& OutNormals
+	);
+
+	void GenerateMCMeshFromGridSyncronous(
+		USparseVoxelGrid* InVoxelGrid,
+		const FVector& Origin,
+		float VoxelSize,
+		TArray<FVector>& OutVertices,
+		TArray<int32>& OutTriangles,
+		TArray<FVector>& OutNormals
+	);
+
+
 	void PopulateHeightValues(
-	TArray<float>& OutHeights,
-	TSharedPtr<TMap<FIntPoint, float>>* HeightCachePtr,
-	const FVector& Origin,
-	float VoxelSize,
-	int32 N
+		TArray<float>& OutHeights,
+		TSharedPtr<TMap<FIntPoint, float>>* HeightCachePtr,
+		const FVector& Origin,
+		float VoxelSize,
+		int32 N
 	) const;
 
 	void IdentifyAirVoxelsBelowTerrain(
-	USparseVoxelGrid* Grid,
-	TSet<FIntVector>& OutSet,
-	const TArray<float>& HeightValues,
-	const FVector& Origin,
-	int32 N,
-	float VoxelSize
+		USparseVoxelGrid* Grid,
+		TSet<FIntVector>& OutSet,
+		const TArray<float>& HeightValues,
+		const FVector& Origin,
+		int32 N,
+		float VoxelSize
 	) const;
 
 	float EstimateSDFForMissingCorner(
-	const USparseVoxelGrid* Grid,
-	const FIntVector& CornerCoords,
-	const FVector& CornerWorldPos,
-	float TerrainHeight,
-	float VoxelSize,
-	const FVector& Origin
+		const USparseVoxelGrid* Grid,
+		const FIntVector& CornerCoords,
+		const FVector& CornerWorldPos,
+		float TerrainHeight,
+		float VoxelSize,
+		const FVector& Origin
 	) const;
 
 	float GetCornerHeight(
-	const FVector& CornerWorldPos,
-	float CachedTerrainHeight
+		const FVector& CornerWorldPos,
+		float CachedTerrainHeight
 	) const;
 	
 	void LogDebug(const FString& Message);
@@ -149,18 +175,18 @@ public:
 	);
 
 
-	
-
 	void AddSkirtMesh(
-	const TArray<int32>& RimVertexIndices,
-	TArray<FVector>& Vertices,
-	TArray<int32>& Triangles,
-	TArray<FVector>& Normals) const;
+		const TArray<int32>& RimVertexIndices,
+		TArray<FVector>& Vertices,
+		TArray<int32>& Triangles,
+		TArray<FVector>& Normals
+		) const;
 
 	void FindRimVertices(
-	const TArray<FVector>& Vertices,
-	const TArray<int32>& Triangles,
-	TArray<int32>& OutRimVertexIndices);
+		const TArray<FVector>& Vertices,
+		const TArray<int32>& Triangles,
+		TArray<int32>& OutRimVertexIndices
+		);
 	
 	static FVector InterpolateVertex(const FVector& P1, const FVector& P2, float SDF1, float SDF2);
 

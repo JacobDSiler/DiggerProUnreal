@@ -12,6 +12,8 @@ public class DiggerProUnreal : ModuleRules
         });
 
         PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private"));
+        PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "../../Plugins/Eigen"));
+
 
         // Core runtime dependencies
         PublicDependencyModuleNames.AddRange(new string[] {

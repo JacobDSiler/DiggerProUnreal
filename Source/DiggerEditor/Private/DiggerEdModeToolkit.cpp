@@ -2450,6 +2450,12 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
                 MakeOperationSection()
             ]
 
+            // --- Generation (Generation Settings) Section ---
+            + SVerticalBox::Slot().AutoHeight().Padding(4)
+            [
+                MakeGenerationSection()
+            ]
+
             // --- Advanced Cube Settings (only for Cube) ---
             + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 4)
             [
@@ -5376,6 +5382,82 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOperationSection()
             ]
         ];
 }
+
+// Section for Mesh Generation Settings/*
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeGenerationSection()
+{
+    return SNew(SExpandableArea)
+        .AreaTitle(FText::FromString("Mesh Generation"))
+        .InitiallyCollapsed(true)
+        .BodyContent()
+        [
+            SNew(SVerticalBox)
+
+            // Section Title
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString("Mesh Generation Settings"))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
+            ]
+
+            // Mesh Generation Method Dropdown
+            + SVerticalBox::Slot().AutoHeight().Padding(4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("Generation Method:"))
+                    .Font(IDetailLayoutBuilder::GetDetailFont())
+                ]
+                + SHorizontalBox::Slot().FillWidth(1.0f).Padding(4)
+                [
+                    SNew(SComboBox<TSharedPtr<FString>>)
+                    .OptionsSource(&MeshGenerationOptions)
+                    .OnGenerateWidget_Lambda([](TSharedPtr<FString> InOption)
+                    {
+                        return SNew(STextBlock).Text(FText::FromString(*InOption));
+                    })
+                    .OnSelectionChanged_Lambda([this](TSharedPtr<FString> NewSelection, ESelectInfo::Type)
+                    {
+                        SelectedMeshGenerationMethod = NewSelection;
+                        if (Manager == GetDiggerManager())
+                        {
+                            Manager->SetMeshGenerationMethod(*NewSelection);
+                        }
+                    })
+                    .InitiallySelectedItem(SelectedMeshGenerationMethod)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]() {
+                            return FText::FromString(SelectedMeshGenerationMethod.IsValid() ? *SelectedMeshGenerationMethod : TEXT("Select Method"));
+                        })
+                    ]
+                ]
+            ]
+
+            // Optional: Hidden Seam Toggle
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                [
+                    SAssignNew(HiddenSeamCheckbox, SCheckBox)
+                    .IsChecked(this, &FDiggerEdModeToolkit::GetHiddenSeamCheckState)
+                    .OnCheckStateChanged(this, &FDiggerEdModeToolkit::OnHiddenSeamChanged)
+                    .ToolTipText(LOCTEXT("HiddenSeamTooltip", "Hidden Seam: Creates flush cuts with no raised rim. Unchecked creates natural excavation with realistic disturbed earth."))
+                ]
+                + SHorizontalBox::Slot().Padding(8, 0, 0, 0).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(LOCTEXT("HiddenSeam", "Hidden Seam"))
+                    .Font(IDetailLayoutBuilder::GetDetailFont())
+                ]
+            ]
+        ];
+}
+
 
 
 
