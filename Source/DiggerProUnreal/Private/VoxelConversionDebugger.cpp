@@ -25,9 +25,9 @@ void AVoxelConversionDebugger::TestPositionConversion(FVector WorldPosition)
     FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(WorldPosition);
     UE_LOG(LogTemp, Warning, TEXT("WorldToChunk: %s"), *ChunkCoords.ToString());
     
-    // Test ChunkToWorld
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
-    UE_LOG(LogTemp, Warning, TEXT("ChunkToWorld: %s"), *ChunkOrigin.ToString());
+    // Test ChunkMinCornerToWorld
+    FVector ChunkOrigin = FVoxelConversion::ChunkMinCornerToWorld(ChunkCoords);
+    UE_LOG(LogTemp, Warning, TEXT("ChunkMinCornerToWorld: %s"), *ChunkOrigin.ToString());
     
     // Test WorldToLocalVoxel
     FIntVector LocalVoxel = FVoxelConversion::WorldToLocalVoxel(WorldPosition);
@@ -74,7 +74,7 @@ void AVoxelConversionDebugger::VisualizeChunkBoundaries(FVector WorldPosition, f
 
 void AVoxelConversionDebugger::DrawDebugChunk(const FIntVector& ChunkCoords, float Duration)
 {
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
+    FVector ChunkOrigin = FVoxelConversion::ChunkMinCornerToWorld(ChunkCoords);
     float ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::TerrainGridSize;
     
     FVector Min = ChunkOrigin;
