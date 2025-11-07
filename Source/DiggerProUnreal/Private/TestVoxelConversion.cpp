@@ -125,36 +125,14 @@ void ATestVoxelConversion::TestPositionAtDistance(float Distance)
            Distance, *ChunkCoords.ToString(), *LocalVoxel.ToString());
 }
 
-static FVector LocalVoxelToWorld(const FIntVector& GlobalVoxelCoords)
+FVector LocalVoxelToWorld_Authoritative(const FIntVector& GlobalVoxelCoords)
 {
-    // Calculate voxels per chunk dimension
-    int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
-    
-    // Determine which chunk this voxel belongs to
-    const FIntVector ChunkCoords(
-        FMath::FloorToInt((float)GlobalVoxelCoords.X / VoxelsPerChunk),
-        FMath::FloorToInt((float)GlobalVoxelCoords.Y / VoxelsPerChunk),
-        FMath::FloorToInt((float)GlobalVoxelCoords.Z / VoxelsPerChunk)
-    );
-    
-    // Calculate local coordinates within the chunk
-    FIntVector LocalInChunk(
-        GlobalVoxelCoords.X - ChunkCoords.X * VoxelsPerChunk,
-        GlobalVoxelCoords.Y - ChunkCoords.Y * VoxelsPerChunk,
-        GlobalVoxelCoords.Z - ChunkCoords.Z * VoxelsPerChunk
-    );
-    
-    // Get the world position of the chunk's origin
-    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
-    
-    // Calculate final world position (center of voxel)
-    FVector WorldPos = ChunkOrigin 
-        + FVector(LocalInChunk) * FVoxelConversion::LocalVoxelSize 
-        + FVector(FVoxelConversion::LocalVoxelSize * 0.5f);  // Center offset
-        
-    UE_LOG(LogTemp, Verbose, TEXT("[LocalVoxelToWorld] GlobalVoxelCoords: %s, ChunkCoords: %s, LocalInChunk: %s, WorldPos: %s"),
-           *GlobalVoxelCoords.ToString(), *ChunkCoords.ToString(), *LocalInChunk.ToString(), *WorldPos.ToString());
-           
+    const FVector WorldPos = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(GlobalVoxelCoords);
+
+    if (DiggerDebug::VoxelConv)
+        UE_LOG(LogTemp, Verbose, TEXT("[Test] GlobalVoxel=%s -> World=%s"),
+            *GlobalVoxelCoords.ToString(), *WorldPos.ToString());
+
     return WorldPos;
 }
 

@@ -1187,22 +1187,36 @@ void USparseVoxelGrid::RenderVoxels()
 	Solid.Reserve(Count);
 	Surface.Reserve(Count);
 
-	for (const auto& V : VoxelData)
-	{
-		const FIntVector& Local = V.Key;
-		const float SDF = V.Value.SDFValue;
+	// Prepare arrays ...
+	for (const auto& Voxel : VoxelData) {
+		const FIntVector& LocalVoxelCoords = Voxel.Key;
+		const FVoxelData& VoxelDataValue = Voxel.Value;
 
-                const FIntVector Global = FVoxelConversion::ChunkAndLocalToGlobalVoxel_MinCornerAligned(ChunkCoords, Local);
-                const FVector VoxelCenter = FVoxelConversion::GlobalVoxelToWorld(Global);
+		// Convert local voxel coordinates to global voxel coordinates
+		FIntVector GlobalVoxelCoords = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(
+			ChunkCoords, LocalVoxelCoords);
 
-		if (SDF >  0.0f) Air.Add(VoxelCenter);
-		else if (SDF < 0.0f) Solid.Add(VoxelCenter);
-		else Surface.Add(VoxelCenter);
+		// Convert global voxel index to world position (authoritative, no +0.5)
+		const FVector VoxelCenterWS = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(GlobalVoxelCoords) + DebugRenderOffset;
+
+		const float SDFValue = VoxelDataValue.SDFValue;
+		if (SDFValue > 0.0f) {
+			Air.Add(VoxelCenterWS);
+		} else if (SDFValue < 0.0f) {
+			Solid.Add(VoxelCenterWS);
+		} else {
+			Surface.Add(VoxelCenterWS);
+		}
+
+		if (DiggerDebug::Voxels)
+			UE_LOG(LogTemp, VeryVerbose, TEXT("Voxel Debug: Local=%s Global=%s World=%s SDF=%.3f"),
+				*LocalVoxelCoords.ToString(), *GlobalVoxelCoords.ToString(), *VoxelCenterWS.ToString(), SDFValue);
+
+
+		const FVector Extent(FVoxelConversion::LocalVoxelSize / 2.0f);
+
+		if (Air.Num()     > 0) FastDebug->DrawBoxes(Air,     Extent, FFastDebugConfig(FLinearColor::Green,  15.0f, 1.0f));
+		if (Solid.Num()   > 0) FastDebug->DrawBoxes(Solid,   Extent, FFastDebugConfig(FLinearColor::Red,    15.0f, 2.0f));
+		if (Surface.Num() > 0) FastDebug->DrawBoxes(Surface, Extent, FFastDebugConfig(FLinearColor::Yellow, 15.0f, 3.0f));
 	}
-
-	const FVector Extent(FVoxelConversion::LocalVoxelSize / 2.0f);
-
-	if (Air.Num()     > 0) FastDebug->DrawBoxes(Air,     Extent, FFastDebugConfig(FLinearColor::Green,  15.0f, 1.0f));
-	if (Solid.Num()   > 0) FastDebug->DrawBoxes(Solid,   Extent, FFastDebugConfig(FLinearColor::Red,    15.0f, 2.0f));
-	if (Surface.Num() > 0) FastDebug->DrawBoxes(Surface, Extent, FFastDebugConfig(FLinearColor::Yellow, 15.0f, 3.0f));
 }

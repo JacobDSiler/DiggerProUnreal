@@ -292,6 +292,7 @@ public:
 	void BindIslandDelegates();
 
 	TSharedRef<SWidget>  GenerateDebugCheckboxes();
+	TSharedRef<SWidget> MakeAdditionalToolsSection();
 	virtual void Init(const TSharedPtr<IToolkitHost>& InitToolkitHost) override;
 	bool CanPaintWithCustomBrush() const;
 	void ScanCustomBrushFolder();
@@ -797,7 +798,7 @@ private:
 	// We keep the banner always visible (no collapse arrow now)
 	bool bShowMaterialManagerSection = true;
 	
-	bool bShowBrushShapeSection = false; 
+	bool bShowBrushShapeSection = true; 
 	bool bShowProcgenArcanaImporter = false;
 	bool bShowSaveLoadSection = false;
 	bool bShowLobbySection = false;
