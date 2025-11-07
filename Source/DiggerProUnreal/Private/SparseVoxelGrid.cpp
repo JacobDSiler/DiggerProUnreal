@@ -1186,10 +1186,9 @@ void USparseVoxelGrid::RenderVoxels()
         FIntVector GlobalVoxelCoords = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(
             ChunkCoords, LocalVoxelCoords);
         
-        // Convert global voxel coordinates to world position
+        // Convert global voxel coordinates to world position (already at voxel center after refactor)
         FVector WorldPosition = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(GlobalVoxelCoords);
-        FVector Center = WorldPosition + DebugRenderOffset;
-        FVector VoxelCenter = Center + FVector(FVoxelConversion::LocalVoxelSize / 2.0f);
+        FVector VoxelCenter = WorldPosition + DebugRenderOffset;
 
         const float SDFValue = VoxelDataValue.SDFValue;
 
