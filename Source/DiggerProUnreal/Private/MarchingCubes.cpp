@@ -394,7 +394,7 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 	
     // Use FVoxelConversion to get the chunk's world position
     FIntVector ChunkCoords = ChunkPtr->GetChunkCoordinates();
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
+    FVector ChunkOrigin = FVoxelConversion::ChunkMinCornerToWorld(ChunkCoords);
     
 	float VoxelSize = FVoxelConversion::LocalVoxelSize; // Use the consistent voxel size
 
@@ -402,8 +402,8 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
     TArray<int32> OutTriangles;
     TArray<FVector> OutNormals;
 
-    // Call the modular function, passing the offset
-    GenerateMeshFromGrid(InVoxelGrid, ChunkOrigin , VoxelSize, OutVertices, OutTriangles, OutNormals);
+    // Call the modular function, passing the chunk coordinates
+    GenerateMeshFromGrid(InVoxelGrid, ChunkCoords, ChunkOrigin , VoxelSize, OutVertices, OutTriangles, OutNormals);
 
     if (OutVertices.Num() > 0 && OutTriangles.Num() > 0 && OutNormals.Num() > 0) {
         AsyncTask(ENamedThreads::GameThread, [this, SectionIndex, OutVertices, OutTriangles, OutNormals]()
@@ -446,7 +446,7 @@ void UMarchingCubes::GenerateMeshSyncronous(const UVoxelChunk* ChunkPtr)
 	
 	// Use FVoxelConversion to get the chunk's world position
 	FIntVector ChunkCoords = ChunkPtr->GetChunkCoordinates();
-	FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
+	FVector ChunkOrigin = FVoxelConversion::ChunkMinCornerToWorld(ChunkCoords);
     
 	float VoxelSize = FVoxelConversion::LocalVoxelSize; // Use the consistent voxel size
 
@@ -454,8 +454,8 @@ void UMarchingCubes::GenerateMeshSyncronous(const UVoxelChunk* ChunkPtr)
 	TArray<int32> OutTriangles;
 	TArray<FVector> OutNormals;
 
-	// Call the modular function, passing the offset
-	GenerateMeshFromGridSyncronous(InVoxelGrid, ChunkOrigin , VoxelSize, OutVertices, OutTriangles, OutNormals);
+	// Call the modular function, passing the chunk coordinates
+	GenerateMeshFromGridSyncronous(InVoxelGrid, ChunkCoords, ChunkOrigin , VoxelSize, OutVertices, OutTriangles, OutNormals);
 
 	if (OutVertices.Num() > 0 && OutTriangles.Num() > 0 && OutNormals.Num() > 0) {
 		AsyncTask(ENamedThreads::GameThread, [this, SectionIndex, OutVertices, OutTriangles, OutNormals]()
@@ -610,6 +610,7 @@ void UMarchingCubes::FindRimVertices(
 
 void UMarchingCubes::GenerateMeshFromGrid(
     USparseVoxelGrid* InVoxelGrid,
+    const FIntVector& ChunkCoords,
     const FVector& Origin,
     float VoxelSize,
     TArray<FVector>& OutVertices,
@@ -780,18 +781,20 @@ void UMarchingCubes::GenerateMeshFromGrid(
             float CornerSDFValues[8];
 
             for (int32 i = 0; i < 8; i++) {
-                FIntVector CornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
-                CornerWSPositions[i] = Origin + FVector(
-                    CornerCoords.X * VoxelSize,
-                    CornerCoords.Y * VoxelSize,
-                    CornerCoords.Z * VoxelSize
-                );
+                FIntVector LocalCornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
+                
+                // Convert local voxel coordinates to global voxel coordinates
+                FIntVector GlobalCornerCoords = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(
+                    ChunkCoords, LocalCornerCoords);
+                
+                // Use unified conversion to get world position at voxel center
+                CornerWSPositions[i] = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(GlobalCornerCoords);
                 
                 // Handle voxel values
-                if (InVoxelGrid->VoxelData.Contains(CornerCoords))
+                if (InVoxelGrid->VoxelData.Contains(LocalCornerCoords))
                 {
                     // Use the explicit voxel value
-                    CornerSDFValues[i] = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
+                    CornerSDFValues[i] = InVoxelGrid->GetVoxel(LocalCornerCoords.X, LocalCornerCoords.Y, LocalCornerCoords.Z);
                 }
                 else
                 {
@@ -819,7 +822,7 @@ void UMarchingCubes::GenerateMeshFromGrid(
                         {
                             if (dx == 0 && dy == 0 && dz == 0) continue;
                             
-                            FIntVector SearchCoords = CornerCoords + FIntVector(dx, dy, dz);
+                            FIntVector SearchCoords = LocalCornerCoords + FIntVector(dx, dy, dz);
                             
                             if (InVoxelGrid->VoxelData.Contains(SearchCoords))
                             {
@@ -987,6 +990,7 @@ void UMarchingCubes::GenerateMeshFromGrid(
 
 void UMarchingCubes::GenerateMeshFromGridSyncronous(
     USparseVoxelGrid* InVoxelGrid,
+    const FIntVector& ChunkCoords,
     const FVector& Origin,
     float VoxelSize,
     TArray<FVector>& OutVertices,
@@ -1182,12 +1186,14 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
             float CornerSDFValues[8];
 
             for (int32 i = 0; i < 8; i++) {
-                FIntVector CornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
-                CornerWSPositions[i] = Origin + FVector(
-                    CornerCoords.X * VoxelSize,
-                    CornerCoords.Y * VoxelSize,
-                    CornerCoords.Z * VoxelSize
-                );
+                FIntVector LocalCornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
+                
+                // Convert local voxel coordinates to global voxel coordinates
+                FIntVector GlobalCornerCoords = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(
+                    ChunkCoords, LocalCornerCoords);
+                
+                // Use unified conversion to get world position at voxel center
+                CornerWSPositions[i] = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(GlobalCornerCoords);
                 
                 // NEW: Check if this is a top corner (corners 4, 5, 6, 7 are typically the top ones)
                 // Assuming GetCornerOffset returns offsets where Z=1 for top corners
@@ -1221,10 +1227,10 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
                 }
                 
                 // Handle voxel values
-                if (InVoxelGrid->VoxelData.Contains(CornerCoords))
+                if (InVoxelGrid->VoxelData.Contains(LocalCornerCoords))
                 {
                     // Use the explicit voxel value
-                    CornerSDFValues[i] = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
+                    CornerSDFValues[i] = InVoxelGrid->GetVoxel(LocalCornerCoords.X, LocalCornerCoords.Y, LocalCornerCoords.Z);
                 }
                 else
                 {
@@ -1260,7 +1266,7 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
                         {
                             if (dx == 0 && dy == 0 && dz == 0) continue;
                             
-                            FIntVector SearchCoords = CornerCoords + FIntVector(dx, dy, dz);
+                            FIntVector SearchCoords = LocalCornerCoords + FIntVector(dx, dy, dz);
                             
                             if (InVoxelGrid->VoxelData.Contains(SearchCoords))
                             {
