@@ -47,7 +47,7 @@ void ATestVoxelConversion::RunTests()
     
     // Test conversions
     FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(ActorPos);
-    FVector ChunkWorldPos = FVoxelConversion::ChunkToWorld(ChunkCoords);
+    FVector ChunkWorldPos = FVoxelConversion::ChunkMinCornerToWorld(ChunkCoords);
     FIntVector LocalVoxel = FVoxelConversion::WorldToLocalVoxel(ActorPos);
     
     UE_LOG(LogTemp, Display, TEXT("  World -> Chunk: %s"), *ChunkCoords.ToString());
@@ -63,8 +63,8 @@ void ATestVoxelConversion::RunTests()
     );
     UE_LOG(LogTemp, Display, TEXT("  Calculated Global Voxel: %s"), *GlobalVoxel.ToString());
     
-    // Test round-trip conversion
-    FVector ReconstructedPos = FVoxelConversion::LocalVoxelToWorld(GlobalVoxel);
+    // Test round-trip conversion using unified FVoxelConversion
+    FVector ReconstructedPos = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(GlobalVoxel);
     UE_LOG(LogTemp, Display, TEXT("  Global Voxel -> World: %s"), *ReconstructedPos.ToString());
     
     float Error = FVector::Distance(ActorPos, ReconstructedPos);
@@ -125,39 +125,6 @@ void ATestVoxelConversion::TestPositionAtDistance(float Distance)
            Distance, *ChunkCoords.ToString(), *LocalVoxel.ToString());
 }
 
-static FVector LocalVoxelToWorld(const FIntVector& GlobalVoxelCoords)
-{
-    // Calculate voxels per chunk dimension
-    int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
-    
-    // Determine which chunk this voxel belongs to
-    const FIntVector ChunkCoords(
-        FMath::FloorToInt((float)GlobalVoxelCoords.X / VoxelsPerChunk),
-        FMath::FloorToInt((float)GlobalVoxelCoords.Y / VoxelsPerChunk),
-        FMath::FloorToInt((float)GlobalVoxelCoords.Z / VoxelsPerChunk)
-    );
-    
-    // Calculate local coordinates within the chunk
-    FIntVector LocalInChunk(
-        GlobalVoxelCoords.X - ChunkCoords.X * VoxelsPerChunk,
-        GlobalVoxelCoords.Y - ChunkCoords.Y * VoxelsPerChunk,
-        GlobalVoxelCoords.Z - ChunkCoords.Z * VoxelsPerChunk
-    );
-    
-    // Get the world position of the chunk's origin
-    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
-    
-    // Calculate final world position (center of voxel)
-    FVector WorldPos = ChunkOrigin 
-        + FVector(LocalInChunk) * FVoxelConversion::LocalVoxelSize 
-        + FVector(FVoxelConversion::LocalVoxelSize * 0.5f);  // Center offset
-        
-    UE_LOG(LogTemp, Verbose, TEXT("[LocalVoxelToWorld] GlobalVoxelCoords: %s, ChunkCoords: %s, LocalInChunk: %s, WorldPos: %s"),
-           *GlobalVoxelCoords.ToString(), *ChunkCoords.ToString(), *LocalInChunk.ToString(), *WorldPos.ToString());
-           
-    return WorldPos;
-}
-
 
 void ATestVoxelConversion::VisualizeChunksAround(float Radius)
 {
@@ -173,7 +140,7 @@ void ATestVoxelConversion::VisualizeChunksAround(float Radius)
     for (int32 Z = MinChunk.Z; Z <= MaxChunk.Z; ++Z)
     {
         FIntVector ChunkCoords(X, Y, Z);
-        FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
+        FVector ChunkOrigin = FVoxelConversion::ChunkMinCornerToWorld(ChunkCoords);
         float ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::TerrainGridSize;
         
         // Draw chunk boundaries

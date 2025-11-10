@@ -1291,15 +1291,15 @@ void ADiggerManager::DrawDiagonalDebugVoxelsFast(FIntVector ChunkCoords)
     const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
     const float DebugDuration = 30.0f;
     
-    // Get the chunk center using the conversion method
-    FVector ChunkCenter = FVoxelConversion::ChunkToWorld(ChunkCoords);
+    // Get the chunk minimum corner using the conversion method
+    FVector ChunkMinCorner = FVoxelConversion::ChunkMinCornerToWorld(ChunkCoords);
     FVector ChunkExtent = FVector(FVoxelConversion::ChunkSize * FVoxelConversion::TerrainGridSize / 2.0f);
     
-    // Calculate the minimum corner based on the center and extent
-    FVector ChunkMinCorner = ChunkCenter - ChunkExtent;
+    // Calculate the center based on the minimum corner and extent
+    FVector ChunkCenter = ChunkMinCorner + ChunkExtent;
     
     UE_LOG(LogTemp, Warning, TEXT("DrawDiagonalDebugVoxelsFast - ChunkCoords: %s"), *ChunkCoords.ToString());
-    UE_LOG(LogTemp, Warning, TEXT("ChunkCenter: %s, ChunkMinCorner: %s"), 
+    UE_LOG(LogTemp, Warning, TEXT("ChunkMinCorner: %s, ChunkCenter: %s"), 
            *ChunkCenter.ToString(), *ChunkMinCorner.ToString());
     UE_LOG(LogTemp, Warning, TEXT("VoxelsPerChunk: %d, LocalVoxelSize: %f"),
            VoxelsPerChunk, FVoxelConversion::LocalVoxelSize);
@@ -1506,7 +1506,7 @@ FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMesh(const FVector& Isla
         return Result;
     }
 
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(Chunk->GetChunkCoordinates());
+    FVector ChunkOrigin = FVoxelConversion::ChunkMinCornerToWorld(Chunk->GetChunkCoordinates());
     FVector LocalPosition = IslandCenter - ChunkOrigin;
 
     FIntVector VoxelCoords = FIntVector(
@@ -1515,7 +1515,10 @@ FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMesh(const FVector& Isla
         FMath::FloorToInt(LocalPosition.Z / VoxelSize)
     );
 
-    FVector VoxelWorldCenter = ChunkOrigin + FVector(VoxelCoords) * VoxelSize + FVector(FVoxelConversion::LocalVoxelSize * 0.5f);
+    // Use unified conversion to get voxel world center
+    FIntVector GlobalVoxelCoords = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(
+        Chunk->GetChunkCoordinates(), VoxelCoords);
+    FVector VoxelWorldCenter = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(GlobalVoxelCoords);
 
     UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Chunk Origin: %s | LocalPosition: %s | VoxelCoords: %s | VoxelWorldCenter: %s"),
         *ChunkOrigin.ToString(),
@@ -2015,7 +2018,7 @@ FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMeshFromData(UVoxelChunk
                IslandData.VoxelCount, IslandData.Voxels.Num());
     }
     
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(Chunk->GetChunkCoordinates());
+    FVector ChunkOrigin = FVoxelConversion::ChunkMinCornerToWorld(Chunk->GetChunkCoordinates());
     
     // Create a temporary grid for the island
     USparseVoxelGrid* ExtractedGrid = NewObject<USparseVoxelGrid>();
@@ -3329,7 +3332,7 @@ void ADiggerManager::DebugDrawChunkSectionIDs()
         if (Chunk)
         {
             Chunk->GetSparseVoxelGrid()->RenderVoxels();
-            const FVector ChunkPosition = FVoxelConversion::ChunkToWorld(Chunk->GetChunkCoordinates());
+            const FVector ChunkPosition = FVoxelConversion::ChunkMinCornerToWorld(Chunk->GetChunkCoordinates());
             const FString SectionIDText = FString::Printf(TEXT("ID: %d"), Chunk->GetSectionIndex());
             DrawDebugString(GetSafeWorld(), ChunkPosition, SectionIDText, nullptr, FColor::Green, 5.0f, true);
         }
@@ -3381,7 +3384,7 @@ UVoxelChunk* ADiggerManager::FindOrCreateNearestChunk(const FVector& Position)
         UVoxelChunk* Chunk = Entry.Value;
         if (!Chunk) continue;
 
-        FVector WorldPos = FVoxelConversion::ChunkToWorld(Chunk->GetChunkCoordinates());
+        FVector WorldPos = FVoxelConversion::ChunkMinCornerToWorld(Chunk->GetChunkCoordinates());
         float Distance = FVector::Dist(Position, WorldPos);
 
         if (Distance < MinDistance)
@@ -3426,7 +3429,7 @@ UVoxelChunk* ADiggerManager::FindNearestChunk(const FVector& Position)
     float MinDistance = FLT_MAX;
     for (auto& Entry : ChunkMap)
     {
-        FVector WorldPos = FVoxelConversion::ChunkToWorld(Entry.Value->GetChunkCoordinates());
+        FVector WorldPos = FVoxelConversion::ChunkMinCornerToWorld(Entry.Value->GetChunkCoordinates());
         float Distance = FVector::Dist(Position, WorldPos);
         if (Distance < MinDistance)
         {

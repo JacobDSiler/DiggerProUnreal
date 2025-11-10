@@ -865,7 +865,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     }
 
     // Get chunk origin and voxel size - cache these values
-    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
+    const FVector ChunkOrigin = FVoxelConversion::ChunkMinCornerToWorld(ChunkCoordinates);
     const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
     const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
     const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
@@ -1051,7 +1051,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     FThreadSafeCounter VoxelsAddedCounter;
 
     // Get chunk origin and voxel size - cache these values
-    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
+    const FVector ChunkOrigin = FVoxelConversion::ChunkMinCornerToWorld(ChunkCoordinates);
     const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
     const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
     const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
@@ -1266,7 +1266,7 @@ void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirV
         return;
     }
 
-    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
+    const FVector ChunkOrigin = FVoxelConversion::ChunkMinCornerToWorld(ChunkCoordinates);
     const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
     const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
     const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;

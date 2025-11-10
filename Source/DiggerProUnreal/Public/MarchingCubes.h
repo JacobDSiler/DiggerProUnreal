@@ -61,6 +61,7 @@ public:
 	
 	void GenerateMeshFromGrid(
 		USparseVoxelGrid* VoxelGrid,
+		const FIntVector& ChunkCoords,
 		const FVector& Origin,
 		float VoxelSize,
 		TArray<FVector>& OutVertices,
@@ -71,6 +72,7 @@ public:
 
 	void GenerateMeshFromGridSyncronous(
 	USparseVoxelGrid* InVoxelGrid,
+	const FIntVector& ChunkCoords,
 	const FVector& Origin,
 	float VoxelSize,
 	TArray<FVector>& OutVertices,

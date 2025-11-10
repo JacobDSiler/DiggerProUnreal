@@ -394,7 +394,7 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
 	
     // Use FVoxelConversion to get the chunk's world position
     FIntVector ChunkCoords = ChunkPtr->GetChunkCoordinates();
-    FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
+    FVector ChunkOrigin = FVoxelConversion::ChunkMinCornerToWorld(ChunkCoords);
     
 	float VoxelSize = FVoxelConversion::LocalVoxelSize; // Use the consistent voxel size
 
@@ -402,8 +402,8 @@ void UMarchingCubes::GenerateMesh(const UVoxelChunk* ChunkPtr)
     TArray<int32> OutTriangles;
     TArray<FVector> OutNormals;
 
-    // Call the modular function, passing the offset
-    GenerateMeshFromGrid(InVoxelGrid, ChunkOrigin , VoxelSize, OutVertices, OutTriangles, OutNormals);
+    // Call the modular function, passing the chunk coordinates
+    GenerateMeshFromGrid(InVoxelGrid, ChunkCoords, ChunkOrigin , VoxelSize, OutVertices, OutTriangles, OutNormals);
 
     if (OutVertices.Num() > 0 && OutTriangles.Num() > 0 && OutNormals.Num() > 0) {
         AsyncTask(ENamedThreads::GameThread, [this, SectionIndex, OutVertices, OutTriangles, OutNormals]()
@@ -446,7 +446,7 @@ void UMarchingCubes::GenerateMeshSyncronous(const UVoxelChunk* ChunkPtr)
 	
 	// Use FVoxelConversion to get the chunk's world position
 	FIntVector ChunkCoords = ChunkPtr->GetChunkCoordinates();
-	FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoords);
+	FVector ChunkOrigin = FVoxelConversion::ChunkMinCornerToWorld(ChunkCoords);
     
 	float VoxelSize = FVoxelConversion::LocalVoxelSize; // Use the consistent voxel size
 
@@ -454,8 +454,8 @@ void UMarchingCubes::GenerateMeshSyncronous(const UVoxelChunk* ChunkPtr)
 	TArray<int32> OutTriangles;
 	TArray<FVector> OutNormals;
 
-	// Call the modular function, passing the offset
-	GenerateMeshFromGridSyncronous(InVoxelGrid, ChunkOrigin , VoxelSize, OutVertices, OutTriangles, OutNormals);
+	// Call the modular function, passing the chunk coordinates
+	GenerateMeshFromGridSyncronous(InVoxelGrid, ChunkCoords, ChunkOrigin , VoxelSize, OutVertices, OutTriangles, OutNormals);
 
 	if (OutVertices.Num() > 0 && OutTriangles.Num() > 0 && OutNormals.Num() > 0) {
 		AsyncTask(ENamedThreads::GameThread, [this, SectionIndex, OutVertices, OutTriangles, OutNormals]()
@@ -610,6 +610,7 @@ void UMarchingCubes::FindRimVertices(
 
 void UMarchingCubes::GenerateMeshFromGrid(
     USparseVoxelGrid* InVoxelGrid,
+    const FIntVector& ChunkCoords,
     const FVector& Origin,
     float VoxelSize,
     TArray<FVector>& OutVertices,
@@ -627,9 +628,6 @@ void UMarchingCubes::GenerateMeshFromGrid(
     {
         InitializeHeightCache(Origin, VoxelSize);
     }
-
-    // WorldSpaceOffset for proper alignment for center aligned chunk schema.
-    FVector TotalOffset = FVector(FVoxelConversion::LocalVoxelSize * 0.25F - FVoxelConversion::ChunkWorldSize * 0.5f);
     
     int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
 
@@ -780,18 +778,20 @@ void UMarchingCubes::GenerateMeshFromGrid(
             float CornerSDFValues[8];
 
             for (int32 i = 0; i < 8; i++) {
-                FIntVector CornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
-                CornerWSPositions[i] = Origin + FVector(
-                    CornerCoords.X * VoxelSize,
-                    CornerCoords.Y * VoxelSize,
-                    CornerCoords.Z * VoxelSize
-                );
+                FIntVector LocalCornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
+                
+                // Convert local voxel coordinates to global voxel coordinates
+                FIntVector GlobalCornerCoords = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(
+                    ChunkCoords, LocalCornerCoords);
+                
+                // Use unified conversion to get world position at voxel center
+                CornerWSPositions[i] = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(GlobalCornerCoords);
                 
                 // Handle voxel values
-                if (InVoxelGrid->VoxelData.Contains(CornerCoords))
+                if (InVoxelGrid->VoxelData.Contains(LocalCornerCoords))
                 {
                     // Use the explicit voxel value
-                    CornerSDFValues[i] = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
+                    CornerSDFValues[i] = InVoxelGrid->GetVoxel(LocalCornerCoords.X, LocalCornerCoords.Y, LocalCornerCoords.Z);
                 }
                 else
                 {
@@ -819,7 +819,7 @@ void UMarchingCubes::GenerateMeshFromGrid(
                         {
                             if (dx == 0 && dy == 0 && dz == 0) continue;
                             
-                            FIntVector SearchCoords = CornerCoords + FIntVector(dx, dy, dz);
+                            FIntVector SearchCoords = LocalCornerCoords + FIntVector(dx, dy, dz);
                             
                             if (InVoxelGrid->VoxelData.Contains(SearchCoords))
                             {
@@ -916,9 +916,9 @@ void UMarchingCubes::GenerateMeshFromGrid(
                     TriangleVertices[j] = ApplyLandscapeTransition(InterpolatedVertex);
                 }
 
-                // Add vertices to mesh with proper offset
+                // Add vertices to mesh using unified conversion (no extra offset needed)
                 for (int32 j = 0; j < 3; ++j) {
-                    FVector FinalVertex = TriangleVertices[j] + TotalOffset;
+                    FVector FinalVertex = TriangleVertices[j];
                     
                     int32* CachedIndex = VertexCache.Find(FinalVertex);
                     if (CachedIndex) {
@@ -987,6 +987,7 @@ void UMarchingCubes::GenerateMeshFromGrid(
 
 void UMarchingCubes::GenerateMeshFromGridSyncronous(
     USparseVoxelGrid* InVoxelGrid,
+    const FIntVector& ChunkCoords,
     const FVector& Origin,
     float VoxelSize,
     TArray<FVector>& OutVertices,
@@ -998,9 +999,6 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
         UE_LOG(LogTemp, Error, TEXT("Invalid VoxelGrid in GenerateMeshFromGrid!"));
         return;
     }
-
-    // WorldSpaceOffset for proper alignment for center aligned chunk schema.
-    FVector TotalOffset = FVector(FVoxelConversion::LocalVoxelSize * 0.25F - FVoxelConversion::ChunkWorldSize * 0.25f);
     
     int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
 
@@ -1182,12 +1180,14 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
             float CornerSDFValues[8];
 
             for (int32 i = 0; i < 8; i++) {
-                FIntVector CornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
-                CornerWSPositions[i] = Origin + FVector(
-                    CornerCoords.X * VoxelSize,
-                    CornerCoords.Y * VoxelSize,
-                    CornerCoords.Z * VoxelSize
-                );
+                FIntVector LocalCornerCoords = FIntVector(x, y, z) + GetCornerOffset(i);
+                
+                // Convert local voxel coordinates to global voxel coordinates
+                FIntVector GlobalCornerCoords = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(
+                    ChunkCoords, LocalCornerCoords);
+                
+                // Use unified conversion to get world position at voxel center
+                CornerWSPositions[i] = FVoxelConversion::GlobalVoxelToWorld_CenterAligned(GlobalCornerCoords);
                 
                 // NEW: Check if this is a top corner (corners 4, 5, 6, 7 are typically the top ones)
                 // Assuming GetCornerOffset returns offsets where Z=1 for top corners
@@ -1221,10 +1221,10 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
                 }
                 
                 // Handle voxel values
-                if (InVoxelGrid->VoxelData.Contains(CornerCoords))
+                if (InVoxelGrid->VoxelData.Contains(LocalCornerCoords))
                 {
                     // Use the explicit voxel value
-                    CornerSDFValues[i] = InVoxelGrid->GetVoxel(CornerCoords.X, CornerCoords.Y, CornerCoords.Z);
+                    CornerSDFValues[i] = InVoxelGrid->GetVoxel(LocalCornerCoords.X, LocalCornerCoords.Y, LocalCornerCoords.Z);
                 }
                 else
                 {
@@ -1260,7 +1260,7 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
                         {
                             if (dx == 0 && dy == 0 && dz == 0) continue;
                             
-                            FIntVector SearchCoords = CornerCoords + FIntVector(dx, dy, dz);
+                            FIntVector SearchCoords = LocalCornerCoords + FIntVector(dx, dy, dz);
                             
                             if (InVoxelGrid->VoxelData.Contains(SearchCoords))
                             {
@@ -1359,15 +1359,15 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
                 }
 
                 for (int32 j = 0; j < 3; ++j) {
-                    // Apply offset to vertex before caching/lookup
-                    FVector OffsetVertex = Vertices[j] + TotalOffset;
+                    // Use unified conversion directly (no extra offset needed)
+                    FVector FinalVertex = Vertices[j];
                     
-                    int32* CachedIndex = VertexCache.Find(OffsetVertex);
+                    int32* CachedIndex = VertexCache.Find(FinalVertex);
                     if (CachedIndex) {
                         OutTriangles.Add(*CachedIndex);
                     } else {
-                        int32 NewIndex = OutVertices.Add(OffsetVertex);
-                        VertexCache.Add(OffsetVertex, NewIndex);
+                        int32 NewIndex = OutVertices.Add(FinalVertex);
+                        VertexCache.Add(FinalVertex, NewIndex);
                         OutTriangles.Add(NewIndex);
                     }
                 }
@@ -1394,11 +1394,6 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
 
     for (int32 i = 0; i < OutNormals.Num(); ++i) {
         OutNormals[i].Normalize();
-    }
-
-    // Apply world space offset to all vertices after mesh generation is complete
-    for (int32 i = 0; i < OutVertices.Num(); ++i) {
-        OutVertices[i] += TotalOffset;
     }
 
     /*TArray<int32> RimVertices;
