@@ -768,7 +768,16 @@ public:
 
     // In ADiggerManager.h
     TSet<FIntVector> PerformCrossChunkFloodFill(const FIntVector& StartGlobalVoxel);
+    
+public:
 
+    //UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mesh Generation")
+    //EMeshGenerationMethod MeshGenerationMethod = EMeshGenerationMethod::MarchingCubes;
+
+    //EMeshGenerationMethod GetMeshGenerationMethod() const;
+    
+    //void SetMeshGenerationMethod(const FString& Method);
+    
 private:
     // Constants for file management
     static const FString VOXEL_DATA_DIRECTORY;

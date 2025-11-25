@@ -3,6 +3,7 @@
 #include "EditorModeRegistry.h"
 #include "DiggerEdMode.h"
 #include "AssetToolsModule.h"
+#include "DiggerFeatureFlags.h"
 #include "IAssetTools.h"
 // If you later use UCustomSDFBrushFactory
 // #include "UCustomSDFBrushFactory.h"
@@ -12,6 +13,10 @@
 
 void FDiggerEditorModule::StartupModule()
 {
+    // Get the editor.ini flag settings.
+    FDiggerFeatureFlags::LoadFlagsFromPluginConfig();
+    
+    // Register the mode.
     FEditorModeRegistry::Get().RegisterMode<FDiggerEdMode>(
         FDiggerEdMode::EM_DiggerEdModeId,
         LOCTEXT("DiggerEdModeName", "Digger Mode"),

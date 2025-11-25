@@ -3316,6 +3316,28 @@ void ADiggerManager::PopulateLandscapeHeightCache(ALandscapeProxy* Landscape)
     UE_LOG(LogTemp, Warning, TEXT("Synchronous height cache complete for landscape: %s (%d entries)"), *Landscape->GetName(), LocalMap.Num());
 }
 
+// void ADiggerManager::SetMeshGenerationMethod(const FString& Method)
+// {
+//     if (Method == "Cubic")
+//     {
+//         MeshGenerationMethod = EMeshGenerationMethod::Cubic;
+//     }
+//     else if (Method == "Marching Cubes")
+//     {
+//         MeshGenerationMethod = EMeshGenerationMethod::MarchingCubes;
+//     }
+//     else if (Method == "Dual Contouring")
+//     {
+//         MeshGenerationMethod = EMeshGenerationMethod::DualContouring;
+//     }
+//     else
+//     {
+//         UE_LOG(LogTemp, Warning, TEXT("Unknown mesh generation method: %s"), *Method);
+//     }
+// }
+
+
+
 void ADiggerManager::PopulateLandscapeHeightCacheAsync(ALandscapeProxy* Landscape)
 {
     if (!Landscape) return;

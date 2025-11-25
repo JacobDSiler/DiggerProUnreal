@@ -292,6 +292,7 @@ public:
 	void BindIslandDelegates();
 
 	TSharedRef<SWidget>  GenerateDebugCheckboxes();
+	TSharedRef<SWidget> MakeAdditionalToolsSection();
 	virtual void Init(const TSharedPtr<IToolkitHost>& InitToolkitHost) override;
 	bool CanPaintWithCustomBrush() const;
 	void ScanCustomBrushFolder();
@@ -537,6 +538,17 @@ private:
 	TSharedRef<SWidget> MakeMirrorButton(double& Target, const FString& Label);
 	TSharedRef<SWidget> MakeRotationSection(float& RotX, float& RotY, float& RotZ);
 	TSharedRef<SWidget> MakeOperationSection();
+	TSharedRef<SWidget> MakeGenerationSection();
+
+	TArray<TSharedPtr<FString>> MeshGenerationOptions = {
+		MakeShared<FString>(TEXT("Cubic")),
+		MakeShared<FString>(TEXT("Marching Cubes")),
+		MakeShared<FString>(TEXT("Dual Contouring"))
+	};
+
+	TSharedPtr<FString> SelectedMeshGenerationMethod = MeshGenerationOptions[0]; // Default selection
+
+	
 	// Hidden Seam checkbox
 	TSharedPtr<SCheckBox> HiddenSeamCheckbox;
 	TSharedRef<SWidget> MakeOffsetSection(FVector& Offset);
@@ -786,7 +798,7 @@ private:
 	// We keep the banner always visible (no collapse arrow now)
 	bool bShowMaterialManagerSection = true;
 	
-	bool bShowBrushShapeSection = false; 
+	bool bShowBrushShapeSection = true; 
 	bool bShowProcgenArcanaImporter = false;
 	bool bShowSaveLoadSection = false;
 	bool bShowLobbySection = false;
