@@ -1,5 +1,5 @@
 #include "VoxelConversion.h"
-#include "Diggermanager.h"
+#include "DiggerManager.h"
 
 // Initialize static members with default values
 int32   FVoxelConversion::ChunkSize = 8;

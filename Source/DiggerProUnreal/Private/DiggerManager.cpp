@@ -1147,7 +1147,7 @@ void ADiggerManager::RemoveIslandAtPosition(const FVector& IslandCenter, const F
     }
 
     FIntVector ChunkCoords, LocalVoxel;
-    FVoxelConversion::GlobalVoxelToChunkAndLocal(ReferenceVoxel, ChunkCoords, LocalVoxel);
+    FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(ReferenceVoxel, ChunkCoords, LocalVoxel);
 
     // Guard 2: Chunk must exist and be valid
     UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
@@ -2268,7 +2268,7 @@ void ADiggerManager::RemoveIslandVoxels(const FIslandData& Island)
         for (const FIntVector& GlobalVoxel : Island.Voxels)
         {
             FIntVector ChunkCoords, LocalVoxel;
-            FVoxelConversion::GlobalVoxelToChunkAndLocal(GlobalVoxel, ChunkCoords, LocalVoxel);
+            FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, ChunkCoords, LocalVoxel);
 
             UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
             if (!ChunkPtr || !*ChunkPtr) continue;
@@ -2415,7 +2415,7 @@ void ADiggerManager::ConvertIslandAtPositionToActor(const FVector& IslandCenter,
 
         // Convert global voxel index to chunk + local voxel
         FIntVector ChunkCoords, LocalVoxel;
-        FVoxelConversion::GlobalVoxelToChunkAndLocal(ReferenceVoxel, ChunkCoords, LocalVoxel);
+        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(ReferenceVoxel, ChunkCoords, LocalVoxel);
 
         // Find the chunk containing this voxel
         UVoxelChunk* Chunk = ChunkMap.FindRef(ChunkCoords);
@@ -2511,7 +2511,7 @@ FIslandMeshData ADiggerManager::ExtractIslandByCenter(const FVector& IslandCente
     for (const FIntVector& Global : ClosestIsland->Voxels)
     {
         FIntVector ChunkCoords, LocalVoxel;
-        FVoxelConversion::GlobalVoxelToChunkAndLocal(Global, ChunkCoords, LocalVoxel);
+        FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(Global, ChunkCoords, LocalVoxel);
 
         UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
         if (!ChunkPtr || !*ChunkPtr) continue;
@@ -4256,7 +4256,7 @@ TArray<FIslandData> ADiggerManager::DetectUnifiedIslands()
             const FIntVector& LocalIndex = VoxelPair.Key;
             const FVoxelData& Data = VoxelPair.Value;
 
-            FIntVector GlobalIndex = FVoxelConversion::ChunkAndLocalToGlobalVoxel_MinCornerAligned(ChunkCoords, LocalIndex);
+            FIntVector GlobalIndex = FVoxelConversion::ChunkAndLocalToGlobalVoxel_CenterAligned(ChunkCoords, LocalIndex);
             
             // Store for deduplicated island detection
             UnifiedVoxelData.Add(GlobalIndex, Data);
@@ -4576,7 +4576,7 @@ TSet<FIntVector> ADiggerManager::PerformCrossChunkFloodFill(const FIntVector& St
             
             // Convert global to local coordinates for this candidate chunk
             FIntVector LocalVoxel, OutChunkCoord;
-            FVoxelConversion::GlobalVoxelToChunkAndLocal(
+            FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(
                 CurrentGlobal,
                 OutChunkCoord,
                 LocalVoxel
@@ -4623,7 +4623,7 @@ TArray<FIntVector> ADiggerManager::GetAllPhysicalStorageChunks(const FIntVector&
     
     // Start with the canonical owning chunk
     FIntVector CanonicalChunk, LocalVoxelOut;
-    FVoxelConversion::GlobalVoxelToChunkAndLocal(GlobalVoxel, CanonicalChunk, LocalVoxelOut);
+    FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(GlobalVoxel, CanonicalChunk, LocalVoxelOut);
     
     // Check all 27 possible chunks (canonical + 26 neighbors) to see which ones actually store this voxel
     for (int32 dx = -1; dx <= 1; dx++)
@@ -4643,7 +4643,7 @@ TArray<FIntVector> ADiggerManager::GetAllPhysicalStorageChunks(const FIntVector&
                 
                 // Convert global to local coordinates for this candidate chunk
                 FIntVector LocalVoxel;
-                FVoxelConversion::GlobalVoxelToChunkAndLocal(
+                FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(
                     GlobalVoxel,
                     CandidateChunk,
                     LocalVoxel
@@ -4696,7 +4696,7 @@ TArray<FIntVector> ADiggerManager::GetPossibleOwningChunks(const FIntVector& Glo
                 FIntVector AdjustedGlobal = GlobalIndex - Offset;
 
                 FIntVector CandidateChunkCoords, LocalVoxel;
-                FVoxelConversion::GlobalVoxelToChunkAndLocal(AdjustedGlobal, CandidateChunkCoords, LocalVoxel);
+                FVoxelConversion::GlobalVoxelToChunkAndLocal_CenterAligned(AdjustedGlobal, CandidateChunkCoords, LocalVoxel);
 
                 if (ChunkMap.Contains(CandidateChunkCoords))
                 {
