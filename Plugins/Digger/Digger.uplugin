@@ -1,20 +1,29 @@
 {
-  "FileVersion": 3,
-  "Version": 1,
-  "VersionName": "1.0",
-  "FriendlyName": "Digger",
-  "Description": "Voxel digging, sculpting, and mesh generation tools.",
-  "Category": "Tools",
-  "Modules": [
-    {
-      "Name": "DiggerRuntime",
-      "Type": "Runtime",
-      "LoadingPhase": "Default"
-    },
-    {
-      "Name": "DiggerEditor",
-      "Type": "Editor",
-      "LoadingPhase": "Default"
-    }
-  ]
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Digger",
+	"Description": "Voxel digging system",
+	"Category": "Other",
+	"CreatedBy": "You",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "Digger",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "DiggerEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
 }

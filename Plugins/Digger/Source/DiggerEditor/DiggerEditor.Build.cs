@@ -18,7 +18,7 @@ public class DiggerEditor : ModuleRules
 		});
 
 		// Link to runtime module for access to core Digger classes
-		PrivateDependencyModuleNames.Add("DiggerRuntime");
+		PrivateDependencyModuleNames.Add("Digger");
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
