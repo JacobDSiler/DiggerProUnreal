@@ -12,9 +12,9 @@ enum class EHoleShapeType : uint8
 	Capsule      UMETA(DisplayName = "Capsule "),
 	Cone      UMETA(DisplayName = "Cone"),
 	Torus      UMETA(DisplayName = "Torus"),
-	IcoSphere      UMETA(DisplayName = "IcoSphere"),
+	//IcoSphere      UMETA(DisplayName = "IcoSphere"),
 	Pyramid      UMETA(DisplayName = "Pyramid"),
-	Stairs      UMETA(DisplayName = "Stairs"),
+	//Stairs      UMETA(DisplayName = "Stairs"),
 };
 
 USTRUCT(BlueprintType)

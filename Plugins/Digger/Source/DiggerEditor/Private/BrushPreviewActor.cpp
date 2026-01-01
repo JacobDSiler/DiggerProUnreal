@@ -103,14 +103,14 @@ void ABrushPreviewActor::EnsureMeshesLoaded()
     {
         if (!Out) Out = LoadObject<UStaticMesh>(nullptr, Path);
     };
-    Load(MeshSphere,   TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-    Load(MeshCube,     TEXT("/Engine/BasicShapes/Cube.Cube"));
-    Load(MeshCapsule,  TEXT("/Engine/BasicShapes/Capsule.Capsule"));
-    Load(MeshCylinder, TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
-    Load(MeshCone,     TEXT("/Engine/BasicShapes/Cone.Cone"));
-    Load(MeshRoundBox,  TEXT("/Game/DynamicHoles/HoleMeshes/DH_Cub.DH_Cub"));
-    Load(MeshEllipsoid, TEXT("/Game/DynamicHoles/HoleMeshes/DH_Sphere.DH_Sphere"));
-    Load(MeshTorus,     TEXT("/Game/DynamicHoles/HoleMeshes/DH_Torus.DH_Torus"));
+    Load(MeshSphere,   TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Sphere.DH_Sphere"));
+    Load(MeshCube,     TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Cube.DH_Cube"));
+    Load(MeshCapsule,  TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Capsule.DH_Capsule"));
+    Load(MeshCylinder, TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Cylinder.DH_Cylinder"));
+    Load(MeshCone,     TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Cone.DH_Cone"));
+    Load(MeshRoundBox,  TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Cube.DH_Cube"));
+    Load(MeshEllipsoid, TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Sphere.DH_Sphere"));
+    Load(MeshTorus,     TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Torus.DH_Torus"));
 }
 
 void ABrushPreviewActor::SetShape(EBrushPreviewShape NewShape)

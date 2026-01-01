@@ -7,6 +7,7 @@
 #include "EditorModeManager.h"
 #include "EdMode.h"
 #include "VoxelBrushTypes.h"
+#include "FLightBrushTypes.h" 
 
 class ABrushPreviewActor;
 class FDiggerEdModeToolkit;
@@ -70,6 +71,9 @@ public:
     static const FEditorModeID EM_DiggerEdModeId;
 
 private:
+    // Helper to update BrushCache and StrokeSpacing from the Toolkit
+    void UpdateBrushSettingsFromUI(const FHitResult& TraceHit, bool bRightClick);
+    
     // Store reference to original viewport client
     FEditorViewportClient* OriginalViewportClient;
     
@@ -122,6 +126,11 @@ private:
     struct FBrushCache
     {
         float Radius = 0.f;
+        float Falloff = 0.0f;
+        float Strength = 1.0f;
+
+        ELightBrushType LightType = ELightBrushType::Point;
+        
         bool bFinalBrushDig = false;
         FRotator Rotation = FRotator::ZeroRotator;
         bool bIsFilled = false;

@@ -5,6 +5,7 @@
 #include "EngineUtils.h"
 #include "Landscape.h"
 #include "DrawDebugHelpers.h"
+#include "DynamicHole.h"
 #include "Editor.h"
 #include "GameFramework/GameModeBase.h"
 #include "Kismet/GameplayStatics.h"
@@ -39,6 +40,37 @@ bool UVoxelBrushShape::EnsureDiggerManager()
         return true;
     }
     return false;
+}
+
+void UVoxelBrushShape::SetupSweptStroke(FBrushStroke& OutStroke, FVector Start, FVector End, float Radius)
+{
+    // The "Position" of a capsule is its center point between start and end
+    OutStroke.BrushPosition = (Start + End) * 0.5f;
+    
+    // The "Length" is the total distance covered
+    float Distance = FVector::Dist(Start, End);
+    
+    // Configure as a Capsule to represent the sweep
+    OutStroke.BrushType = EVoxelBrushType::Capsule;
+    OutStroke.BrushRadius = Radius;
+    OutStroke.BrushLength = Distance; // Length of the movement
+    
+    // Reset Advanced Cube settings so they don't interfere
+    OutStroke.bUseAdvancedCubeBrush = false;
+
+    // Orientation: Rotate the capsule to point along the movement direction
+    if (Distance > KINDA_SMALL_NUMBER)
+    {
+        FVector Direction = (End - Start).GetSafeNormal();
+        
+        // Unreal Capsules default to "Up" (Z-axis). 
+        // We calculate the rotation needed to point "Up" towards our "Direction".
+        OutStroke.BrushRotation = FQuat::FindBetweenNormals(FVector::UpVector, Direction).Rotator();
+    }
+    else
+    {
+        OutStroke.BrushRotation = FRotator::ZeroRotator;
+    }
 }
 
 
@@ -90,101 +122,86 @@ FBrushStroke UVoxelBrushShape::CreateBrushStroke(const FHitResult& HitResult, bo
     NewStroke.BrushStrength = 1.f;
     NewStroke.bDig = bIsDig;
     NewStroke.BrushType = BrushType;
+    // CRITICAL FIX: Pass the Light Type!
+    // Without this, NewStroke.LightType is uninitialized or 0 (Point)
+    NewStroke.LightType = this->LightType; 
 
     return NewStroke;
 }
 
 
+// --- CORE TRACING LOGIC ---
+
 bool UVoxelBrushShape::GetCameraHitLocation(FHitResult& OutHitResult)
 {
+    FVector TraceStart;
+    FVector TraceDir;
+    bool bFoundOrigin = false;
+
 #if WITH_EDITOR
-    if (GIsEditor)
+    // 1. Editor Viewport (Mouse)
+    if (GEditor && GEditor->GetActiveViewport() && !GetWorld()->IsGameWorld())
     {
-        static bool bWarned = false;
-        if (!bWarned)
+        FEditorViewportClient* Client = (FEditorViewportClient*)GEditor->GetActiveViewport()->GetClient();
+        if (Client)
         {
-            if (DiggerDebug::Casts())
+            FIntPoint MousePos;
+            Client->Viewport->GetMousePos(MousePos);
+            
+            FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
+                Client->Viewport, Client->GetScene(), Client->EngineShowFlags));
+            
+            FSceneView* View = Client->CalcSceneView(&ViewFamily);
+            if (View)
             {
-                UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation called in editor mode. This method is intended for runtime use with a PlayerController."));
+                View->DeprojectFVector2D(MousePos, TraceStart, TraceDir);
+                bFoundOrigin = true;
             }
-            bWarned = true;
         }
-        return false;
     }
 #endif
 
-    SetWorld(GetWorld());
-    if (!World)
+    // 2. Runtime Player Camera
+    if (!bFoundOrigin)
     {
-        if (DiggerDebug::Casts() || DiggerDebug::Context())
+        if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
         {
-            UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No valid world found"));
+            FVector CamLoc;
+            FRotator CamRot;
+            PC->GetPlayerViewPoint(CamLoc, CamRot);
+            TraceStart = CamLoc;
+            TraceDir = CamRot.Vector();
+            bFoundOrigin = true;
         }
-        return false;
     }
 
-    APlayerController* PlayerController = World->GetFirstPlayerController();
-    if (!PlayerController)
+    if (!bFoundOrigin) return false;
+
+    FVector TraceEnd = TraceStart + (TraceDir * 100000.0f); // 1km
+
+    if (bEnableDebugDrawing)
     {
-        if (DiggerDebug::Casts())
-        {
-            UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No PlayerController found"));
-        }
-        return false;
+        DrawDebugLine(GetWorld(), TraceStart, TraceEnd, FColor::Green, false, 0.1f);
     }
 
-    float MouseX, MouseY;
-    if (!PlayerController->GetMousePosition(MouseX, MouseY))
-    {
-        if (DiggerDebug::Casts())
-        {
-            UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Could not get mouse position"));
-        }
-        return false;
-    }
-
-    FVector WorldPosition, WorldDirection;
-    if (!PlayerController->DeprojectScreenPositionToWorld(MouseX, MouseY, WorldPosition, WorldDirection))
-    {
-        if (DiggerDebug::Casts())
-        {
-            UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Could not deproject mouse position"));
-        }
-        return false;
-    }
-
-    FVector TraceStart = WorldPosition;
-    FVector TraceEnd = WorldPosition + (WorldDirection * 50000.0f);
-
-    DebugDrawLineIfEnabled(TraceStart, TraceEnd, FColor::Green, 2.0f);
-
-    // Start the recursive trace through holes
+    // Use Recursive Trace to pierce holes
     TArray<AActor*> IgnoredActors;
     FHitResult Hit = RecursiveTraceThroughHoles(TraceStart, TraceEnd, IgnoredActors, false, false, 0);
 
     if (Hit.bBlockingHit)
     {
         OutHitResult = Hit;
-        DebugDrawSphereIfEnabled(OutHitResult.ImpactPoint, FColor::Red, 25.0f, 5.0f);
-
-        if (OutHitResult.GetActor())
+        if (bEnableDebugDrawing)
         {
-            if (DiggerDebug::Casts())
-            {
-                UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: Final Hit Actor: %s, Component: %s"), 
-                    *OutHitResult.GetActor()->GetName(), 
-                    OutHitResult.GetComponent() ? *OutHitResult.GetComponent()->GetName() : TEXT("None"));
-            }
+            DrawDebugSphere(GetWorld(), Hit.ImpactPoint, 10.0f, 12, FColor::Red, false, 0.1f);
         }
         return true;
     }
 
-    if (DiggerDebug::Casts())
-    {
-        UE_LOG(LogTemp, Warning, TEXT("GetCameraHitLocation:: No valid hit found."));
-    }
     return false;
 }
+
+
 
 FHitResult UVoxelBrushShape::PerformComplexTrace(FVector& Start, FVector& End, AActor* IgnoredActor) const
 {
@@ -216,69 +233,61 @@ FHitResult UVoxelBrushShape::RecursiveTraceThroughHoles_Internal(
     bool bPassedThroughHole
 ) const
 {
-    if (Depth > 32)
-        return FHitResult();
+    if (Depth > 32) return FHitResult();
 
-    FCollisionQueryParams Params;
-    Params.bTraceComplex = true;
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(SmartTrace), true);
     Params.AddIgnoredActors(IgnoredActors);
+    Params.bReturnPhysicalMaterial = false;
 
     FHitResult Hit;
-    bool bHit = World->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params);
+    bool bHit = GetSafeWorld()->LineTraceSingleByChannel(Hit, Start, End, ECC_Visibility, Params);
 
-    if (!bHit || !Hit.GetActor())
-        return FHitResult();
+    if (!bHit || !Hit.GetActor()) return FHitResult();
 
     AActor* HitActor = Hit.GetActor();
 
-    // If we hit a HoleBP, ignore it and keep tracing
+    // --- 1. HIT HOLE ACTOR ---
     if (IsHoleBPActor(HitActor))
     {
-        bPassedThroughHole = true;
-        if (!IgnoredActors.Contains(HitActor))
-        {
-            IgnoredActors.Add(HitActor); // Only add HoleBP
-        }
-        FVector NewStart = Hit.Location + OriginalDirection * 0.1f;
+        // Ignore this specific hole cap actor
+        IgnoredActors.Add(HitActor);
+
+        // Nudge forward slightly
+        FVector NewStart = Hit.Location + (OriginalDirection * 10.0f);
+        
+        // Mark that we are entering a hole context
         return RecursiveTraceThroughHoles_Internal(NewStart, End, IgnoredActors, Depth + 1, OriginalDirection, true);
     }
 
-    // When we hit the landscape
+    // --- 2. HIT LANDSCAPE ---
     if (IsLandscape(HitActor))
     {
         if (bPassedThroughHole)
         {
-            if (!IgnoredActors.Contains(HitActor))
-            {
-                IgnoredActors.Add(HitActor); // Only add Landscape
-            }
+            // CRITICAL FIX:
+            // We hit the "Skin" inside the hole. 
+            // We need to skip this surface, BUT we do NOT add Landscape to IgnoredActors.
+            // If we did, we would miss the back wall of the cave/hill.
+            
+            // Just jump forward 100cm to clear the skin thickness
+            FVector NewStart = Hit.Location + (OriginalDirection * 100.0f);
+            
             if (DiggerDebug::Casts())
             {
-                UE_LOG(LogTemp, Error,
-                       TEXT(
-                           "Hit Landscape after passing through a hole, hopping Backward 1cm before the trace continues!"
-                       ));
+                UE_LOG(LogTemp, Warning, TEXT("RecursiveTrace: Skipping Landscape Skin (Jump 100cm)."));
             }
-            FVector NewStart = Hit.Location + OriginalDirection * -1; // Jump back 1cm
-            return RecursiveTraceThroughHoles_Internal(NewStart, End, IgnoredActors, Depth + 1, OriginalDirection,
-                                                       bPassedThroughHole);
+
+            return RecursiveTraceThroughHoles_Internal(NewStart, End, IgnoredActors, Depth + 1, OriginalDirection, true);
         }
         else
         {
-            if (DiggerDebug::Casts())
-            {
-                UE_LOG(LogTemp, Error, TEXT("Returning a landscape hit with !bPassedThroughHole!"));
-            }
-            // If we haven't passed through a hole, return the landscape hit
+            // We hit landscape from the outside (normal ground). Stop here.
             return Hit;
         }
     }
 
-    if (DiggerDebug::Casts())
-    {
-        UE_LOG(LogTemp, Error, TEXT("Returning Fallback Hit!"));
-    }
-    // Return the first non-HoleBP, non-landscape hit (e.g., procedural mesh)
+    // --- 3. HIT VOXEL MESH / OTHER ---
+    // Return whatever we hit (Tunnel Floor, Rock, etc)
     return Hit;
 }
 
@@ -362,56 +371,29 @@ FHitResult UVoxelBrushShape::SmartTrace(const FVector& Start, const FVector& End
 
 bool UVoxelBrushShape::IsHoleBPActor(const AActor* Actor) const
 {
-    if (!Actor)
-    {
-        if (DiggerDebug::Casts())
-        {
-            UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: Actor is null."));
-        }
-        return false;
-    }
-    if (!DiggerManager)
-    {
-        if (DiggerDebug::Casts() || DiggerDebug::Manager())
-        {
-            UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: DiggerManager is null."));
-        }
-        return false;
-    }
-    if (!DiggerManager->HoleBP)
-    {
-        if (DiggerDebug::Casts() || DiggerDebug::Manager())
-        {
-            UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: DiggerManager->HoleBP is null."));
-        }
-        return false;
-    }
-    if (DiggerDebug::Casts() || DiggerDebug::Manager())
-    {
-        UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: Hit actor class: %s, HoleBP class: %s"),
-            *Actor->GetClass()->GetName(),
-            *DiggerManager->HoleBP->GetClass()->GetName());
-    }
+    if (!Actor) return false;
 
-    if (Actor->IsA(DiggerManager->HoleBP))
+    // 1. Check C++ Class (Fastest/Best)
+    if (Actor->IsA(ADynamicHole::StaticClass()))
     {
-        if (DiggerDebug::Casts() || DiggerDebug::Manager())
-        {
-            UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: Hit a HoleBP at location %s."), *Actor->GetActorLocation().ToString());
-        }
         return true;
     }
-    else
+
+    // 2. Check Class Name String (Fallback for Blueprints if C++ cast fails)
+    const FString ClassName = Actor->GetClass()->GetName();
+    if (ClassName.Contains(TEXT("Hole")) && ClassName.Contains(TEXT("BP")))
     {
-        if (DiggerDebug::Casts())
-        {
-            UE_LOG(LogTemp, Warning, TEXT("IsHoleBPActor: Hit actor %s (class: %s) at location %s, not a HoleBP."),
-                *Actor->GetName(),
-                *Actor->GetClass()->GetName(),
-                *Actor->GetActorLocation().ToString());
-        }
-        return false;
+        return true;
     }
+
+    // 3. Check Actor Label/Name (Last Resort)
+    const FString ActorName = Actor->GetName();
+    if (ActorName.Contains(TEXT("HoleBP")))
+    {
+        return true;
+    }
+
+    return false;
 }
 
 
@@ -419,7 +401,15 @@ bool UVoxelBrushShape::IsHoleBPActor(const AActor* Actor) const
 // Helper to identify a Landscape actor
 bool UVoxelBrushShape::IsLandscape(const AActor* Actor) const
 {
-    return Actor && Actor->IsA(ALandscapeProxy::StaticClass());
+    bool Result = Actor && Actor->IsA(ALandscapeProxy::StaticClass());
+    
+    // FIX: Added () to call the function
+    // Also tweaked logging to print True/False text instead of 0/1 for readability
+    if (DiggerDebug::Holes())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Is it a landscape actor? %s"), Result ? TEXT("True") : TEXT("False"));
+    }
+    return Result;
 }
 
 // Helper to identify a Procedural Mesh actor

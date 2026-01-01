@@ -13,9 +13,9 @@ bool FDiggerFeatureFlags::bEnableEnvironment = true;
 bool FDiggerFeatureFlags::bEnableIslands = false;
 bool FDiggerFeatureFlags::bEnableAdditionalTools = false;
 bool FDiggerFeatureFlags::bEnableDMM = false;
-bool FDiggerFeatureFlags::bEnableExportData = false;
+bool FDiggerFeatureFlags::bEnableExportData = true;
 bool FDiggerFeatureFlags::bEnableBuild = false;
-bool FDiggerFeatureFlags::bEnableDeveloperSettings = true;
+bool FDiggerFeatureFlags::bEnableDeveloperSettings = false;
 
 // Per-brush defaults (true = enabled by default; false = disabled)
 bool FDiggerFeatureFlags::bEnableBrush_Sphere      = true;
@@ -32,7 +32,7 @@ bool FDiggerFeatureFlags::bEnableBrush_Smooth      = false;
 bool FDiggerFeatureFlags::bEnableBrush_Noise       = false;
 bool FDiggerFeatureFlags::bEnableBrush_Light       = true;
 bool FDiggerFeatureFlags::bEnableBrush_Debug       = false;
-bool FDiggerFeatureFlags::bEnableGenerationSection = true;
+bool FDiggerFeatureFlags::bEnableGenerationSection = false;
 
 void FDiggerFeatureFlags::LoadFlagsFromPluginConfig()
 {
@@ -81,7 +81,7 @@ void FDiggerFeatureFlags::LoadFlagsFromPluginConfig()
 
 	// Read booleans from the found ini file. If a key is missing, the default (already set above) remains.
 	bool TempBool = false;
-
+	
 	GConfig->GetBool(Section, TEXT("bEnableBrushTools"), TempBool, *FoundPath);
 	bEnableBrushTools = TempBool;
 

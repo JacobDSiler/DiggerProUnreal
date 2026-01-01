@@ -253,6 +253,7 @@ public:
 		CachedViewportClient = InClient;
 	}
 
+	void DestroyWorklight();
 	
         void SpawnOrUpdateWorklight(class FEditorViewportClient* ViewportClient);
 	void GetElevationInfo(float& AbsoluteOut, float& RelativeOut) const;
@@ -262,6 +263,10 @@ public:
         void UpdateWorklightColor(const FLinearColor& NewColor);
         void ToggleWorklight(bool bEnable);
 
+
+	// Clear all Digger Data
+	TSharedRef<SWidget> MakeResetDiggerDataWidget();
+	FReply OnClearAllClicked();
 	
 public:
 	
@@ -300,6 +305,8 @@ public:
 	virtual FText GetBaseToolkitName() const override;
 	virtual class FEdMode* GetEditorMode() const override;
 	virtual TSharedPtr<SWidget> GetInlineContent() const override;
+	
+	FString GetCurrentSaveFileName() const;
 	
 	bool GetWorklightEnabled()
 	{

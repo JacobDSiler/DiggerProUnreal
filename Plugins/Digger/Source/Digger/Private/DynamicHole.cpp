@@ -5,6 +5,7 @@
 #include "HoleShapeLibrary.h"
 #include "VoxelChunk.h"
 #include "Components/StaticMeshComponent.h"
+#include "UObject/ConstructorHelpers.h"
 
 ADynamicHole::ADynamicHole()
 {
@@ -18,6 +19,40 @@ ADynamicHole::ADynamicHole()
 
 	// Initialize default hole shape
 	HoleShape = FHoleShape(EHoleShapeType::Sphere);
+
+	// 2. LOAD DEFAULT MATERIAL
+	// Path derived from your screenshot: /Digger/Digger/Materials/LandscapeMaterials/M_OpacityMask
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> MatFinder(TEXT("/Digger/Digger/Materials/LandscapeMaterials/M_OpacityMask.M_OpacityMask"));
+    
+	if (MatFinder.Succeeded())
+	{
+		WriterMaterial = MatFinder.Object;
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("ADynamicHole: Could not find M_OpacityMask! Check path."));
+	}
+}
+
+void ADynamicHole::SetHoleMesh(UStaticMesh* NewMesh)
+{
+	if (HoleMeshComponent && NewMesh)
+	{
+		// 1. Set the Shape
+		HoleMeshComponent->SetStaticMesh(NewMesh);
+
+		// 2. Force the Material
+		// This overrides whatever material was set on the Static Mesh asset (e.g., WorldGridMaterial)
+		if (WriterMaterial)
+		{
+			// Set it to Slot 0 (covers 99% of simple shapes)
+			// HoleMeshComponent->SetMaterial(0, WriterMaterial);
+            
+			// If you have complex meshes with multiple slots, you might want to loop:
+			for(int32 i=0; i < NewMesh->GetStaticMaterials().Num(); i++)
+				HoleMeshComponent->SetMaterial(i, WriterMaterial);
+		}
+	}
 }
 
 void ADynamicHole::BeginPlay()

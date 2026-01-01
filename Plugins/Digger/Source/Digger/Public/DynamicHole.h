@@ -17,9 +17,22 @@ class DIGGER_API ADynamicHole : public ASelectableBase
 public:
 	ADynamicHole();
 
+public:
+	// Add this simple setter
+	void SetHoleMesh(UStaticMesh* NewMesh);
+
 	// The hole shape type (can be chosen from the HoleShapeLibrary)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Hole Properties")
 	FHoleShape HoleShape;
+	
+	// Store the shape type so we can save it later
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hole Data")
+	EHoleShapeType HoleShapeType = EHoleShapeType::Sphere;
+
+	// The material to apply to create the hole (M_OpacityMask)
+	// We set this default in the C++ constructor so it's auto-filled
+	UPROPERTY(EditDefaultsOnly, Category = "Hole Config")
+	UMaterialInterface* WriterMaterial;
 	
 
 	// Reference to the owning chunk of the hole

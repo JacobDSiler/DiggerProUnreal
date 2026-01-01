@@ -54,9 +54,13 @@ float USphereBrushShape::CalculateSDF_Implementation(
 
 bool USphereBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const
 {
-    // Temporary fallback - use simple sphere bounds
-    const FVector Delta = WorldPos - Stroke.BrushPosition;
+    // Calculate distance from center
+    const FVector Delta = WorldPos - (Stroke.BrushPosition + Stroke.BrushOffset);
     const float DistanceSq = Delta.SizeSquared();
-    const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
-    return DistanceSq <= RadiusSq;
+    
+    // We must include Falloff in the radius check
+    const float TotalRadius = Stroke.BrushRadius + Stroke.BrushFalloff + 1.0f; // +1.0f for safety
+    const float TotalRadiusSq = TotalRadius * TotalRadius;
+
+    return DistanceSq <= TotalRadiusSq;
 }

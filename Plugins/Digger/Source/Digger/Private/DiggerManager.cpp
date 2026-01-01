@@ -584,6 +584,23 @@ UMaterialInstanceConstant* ADiggerManager::BuildMaterialInstanceFromProfile(UDig
 #endif
 }
 
+
+ADiggerManager* ADiggerManager::FindDiggerManager(const UObject* WorldContextObject)
+{
+    // 1. Safety Checks
+    if (!WorldContextObject) return nullptr;
+
+    UWorld* World = WorldContextObject->GetWorld();
+    if (!World) return nullptr;
+
+    // 2. The Lookup
+    // GetActorOfClass is reliable. It iterates the actor list for *that specific world*.
+    // This makes it safe for PIE (which has its own world) vs Editor.
+    AActor* FoundActor = UGameplayStatics::GetActorOfClass(World, ADiggerManager::StaticClass());
+
+    return Cast<ADiggerManager>(FoundActor);
+}
+
 void ADiggerManager::BuildAndApplyProfileMaterial(UDiggerMaterialProfile* Profile)
 {
 #if WITH_EDITOR
@@ -598,12 +615,12 @@ void ADiggerManager::BuildAndApplyProfileMaterial(UDiggerMaterialProfile* Profil
     if (!Parent)
     {
         // Fallback: hardcode your default master path or store it in settings
-        Parent = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/Digger/Materials/M_SedimentMaster_Inst.M_SedimentMaster_Inst"));
+        Parent = LoadObject<UMaterialInterface>(nullptr, TEXT("/Digger/Content/Digger/Materials/M_SedimentMaster_Inst.M_SedimentMaster_Inst"));
     }
     if (!Parent) return;
 
     // Build or update a MIC asset
-    const FString TargetFolder = TEXT("/Game/Digger/Materials/Generated");
+    const FString TargetFolder = TEXT("/Digger/Digger/Materials/Generated");
     const FString BaseName     = TEXT("MI_Digger_Sediment");
     UMaterialInstanceConstant* MIC = BuildMaterialInstanceFromProfile(Profile, TargetFolder, BaseName, Parent);
     if (!MIC) return;
@@ -718,6 +735,20 @@ bool ADiggerManager::SaveChunk(const FIntVector& ChunkCoords, const FString& Sav
     return bSaveSuccess;
 }
 
+void ADiggerManager::RestoreHolesInEditor()
+{
+    // Only allow this in Editor World, not PIE
+    if (GetWorld()->IsGameWorld()) return;
+
+    for (auto& Pair : ChunkMap)
+    {
+        if (UVoxelChunk* Chunk = Pair.Value)
+        {
+            Chunk->RegenerateHolesFromData();
+        }
+    }
+}
+
 // Overload for backward compatibility
 bool ADiggerManager::SaveChunk(const FIntVector& ChunkCoords)
 {
@@ -776,6 +807,21 @@ bool ADiggerManager::LoadChunk(const FIntVector& ChunkCoords)
 bool ADiggerManager::SaveAllChunks(const FString& SaveFileName)
 {
     EnsureSaveFileDirectoryExists(SaveFileName);
+
+    // 1. Distribute Lights to Chunks (Spatial Partitioning)
+    for (AActor* LightActor : SpawnedLights)
+    {
+        if (!IsValid(LightActor)) continue;
+
+        FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(LightActor->GetActorLocation());
+        
+        UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords);
+        if (Chunk)
+        {
+            // You need to add this method to UVoxelChunk
+            Chunk->CaptureLightForSave(LightActor); 
+        }
+    }
     
     if (ChunkMap.Num() == 0)
     {
@@ -804,9 +850,16 @@ bool ADiggerManager::SaveAllChunks(const FString& SaveFileName)
     
     UE_LOG(LogTemp, Log, TEXT("Finished saving chunks to save file '%s': %d successful, %d failed"), 
         *SaveFileName, SavedCount, FailedCount);
+
+    // 3. IMPORTANT: Clear the temporary light data from chunks so we don't duplicate on next save
+    for (auto& Pair : ChunkMap)
+    {
+        Pair.Value->ClearSavedLights();
+    }
     
     // Invalidate cache after batch save
     InvalidateSavedChunkCache(SaveFileName);
+    
     
     return FailedCount == 0;
 }
@@ -819,35 +872,58 @@ bool ADiggerManager::SaveAllChunks()
 
 bool ADiggerManager::LoadAllChunks(const FString& SaveFileName)
 {
-    TArray<FIntVector> SavedChunkCoords = GetAllSavedChunkCoordinates(SaveFileName, true); // Force refresh
+    TArray<FIntVector> SavedChunkCoords = GetAllSavedChunkCoordinates(SaveFileName, true);
     
     if (SavedChunkCoords.Num() == 0)
     {
-        UE_LOG(LogTemp, Log, TEXT("No saved chunks found to load from save file '%s'"), *SaveFileName);
         return true;
     }
     
-    int32 LoadedCount = 0;
-    int32 FailedCount = 0;
+    // 1. Setup the Queue
+    PendingChunksToLoad = SavedChunkCoords;
     
-    UE_LOG(LogTemp, Log, TEXT("Starting to load %d chunks from save file '%s'..."), SavedChunkCoords.Num(), *SaveFileName);
+    // 2. STORE THE FILENAME (This is the fix)
+    AsyncLoadingFileName = SaveFileName;
+
+    // 3. Clear old timer if exists
+    GetWorldTimerManager().ClearTimer(LoadQueueTimerHandle);
+
+    UE_LOG(LogTemp, Log, TEXT("Queued %d chunks for async loading from '%s'..."), PendingChunksToLoad.Num(), *AsyncLoadingFileName);
+
+    // 4. Start Timer
+    // Notice we do NOT pass arguments here. The function will look at 'AsyncLoadingFileName'.
+    GetWorldTimerManager().SetTimer(LoadQueueTimerHandle, this, &ADiggerManager::ProcessChunkLoadQueue, 0.01f, true);
     
-    for (const FIntVector& ChunkCoords : SavedChunkCoords)
+    return true;
+}
+
+void ADiggerManager::ProcessChunkLoadQueue()
+{
+    // Safety check
+    if (PendingChunksToLoad.Num() == 0)
     {
-        if (LoadChunk(ChunkCoords, SaveFileName))
-        {
-            LoadedCount++;
-        }
-        else
-        {
-            FailedCount++;
-        }
+        GetWorldTimerManager().ClearTimer(LoadQueueTimerHandle);
+        // We can now reference AsyncLoadingFileName
+        UE_LOG(LogTemp, Log, TEXT("Finished Async Chunk Loading from '%s'."), *AsyncLoadingFileName);
+        return;
+    }
+
+    int32 ProcessedThisFrame = 0;
+    
+    while (PendingChunksToLoad.Num() > 0 && ProcessedThisFrame < ChunksPerBatch)
+    {
+        FIntVector ChunkCoords = PendingChunksToLoad.Pop(false);
+
+        // USE THE MEMBER VARIABLE HERE
+        LoadChunk(ChunkCoords, AsyncLoadingFileName); 
+
+        ProcessedThisFrame++;
     }
     
-    UE_LOG(LogTemp, Log, TEXT("Finished loading chunks from save file '%s': %d successful, %d failed"), 
-        *SaveFileName, LoadedCount, FailedCount);
-    
-    return FailedCount == 0;
+    if (PendingChunksToLoad.Num() == 0)
+    {
+        PendingChunksToLoad.Empty();
+    }
 }
 
 // Overload for backward compatibility
@@ -1096,7 +1172,6 @@ void ADiggerManager::ApplyBrushInEditor(bool bDig)
     }
 
     ApplyBrushToAllChunks(BrushStroke);
-    ProcessDirtyChunks();
 
 #if WITH_EDITOR
     if (GEditor)
@@ -1186,6 +1261,7 @@ void ADiggerManager::ApplyLightBrushInEditor(const FBrushStroke& BrushStroke)
     // - BrushStroke.LightType
     // - Any other properties you add later
 
+    UE_LOG(LogTemp, Warning, TEXT("Spawning light of type: %i"), BrushStroke.LightType);
     SpawnLight(BrushStroke);
 
     // Redraw viewports to show the new light
@@ -1218,12 +1294,7 @@ void ADiggerManager::OnConstruction(const FTransform& Transform)
         return;
     }
 #endif
-
-    if (!bRuntimeInitDone)
-    {
-        InitRuntimeHeavy();
-        bRuntimeInitDone = true;
-    }
+    
 }
 
 
@@ -1272,13 +1343,16 @@ ADiggerManager::ADiggerManager()
     SparseVoxelGrid = CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid"));
     MarchingCubes = CreateDefaultSubobject<UMarchingCubes>(TEXT("MarchingCubes"));
 
+    // Create the subsystem
+    HeightCacheSystem = CreateDefaultSubobject<UDiggerLandscapeCache>(TEXT("HeightCacheSystem"));
+
     if (!HoleBP)
     {
         HoleBP = LoadDefaultHoleBPClass();
     }
 
     // Load the material instance in the constructor
-    static ConstructorHelpers::FObjectFinder<UMaterialInterface> Material(TEXT("/Game/Digger/Materials/M_SedimentMaster_Inst.M_SedimentMaster_Inst"));
+    static ConstructorHelpers::FObjectFinder<UMaterialInterface> Material(TEXT("/Digger/Digger/Materials/M_SedimentMaster_Inst.M_SedimentMaster_Inst"));
     if (Material.Succeeded())
     {
         TerrainMaterial = Material.Object;
@@ -1295,34 +1369,33 @@ ADiggerManager::ADiggerManager()
 
 void ADiggerManager::SpawnLight(const FBrushStroke& BrushStroke)
 {
-    if (!GetWorld())
-    {
-        if (DiggerDebug::Lights() || DiggerDebug::Brush() || DiggerDebug::Context())
-        UE_LOG(LogTemp, Error, TEXT("SpawnLight: World is null"));
-        return;
-    }
+    if (!GetWorld()) return;
 
     FVector FinalPosition = BrushStroke.BrushPosition + BrushStroke.BrushOffset;
     FRotator Rotation = BrushStroke.BrushRotation;
 
+    // 1. Spawn
     ADynamicLightActor* Light = GetWorld()->SpawnActor<ADynamicLightActor>(
         ADynamicLightActor::StaticClass(), FinalPosition, Rotation);
-    Light->InitLight(BrushStroke.LightType); // BrushType is your ELightBrushType
-    UE_LOG(LogTemp, Warning, TEXT("Light Type Passed to InitLight: %s"), *GetLightTypeName(BrushStroke.LightType));
-    Light->SetFolderPath(FName("Digger/DynamicLights"));
 
     if (Light)
     {
+        // 2. Initialize (This handles Type, Intensity, Color, and Component Creation all in one)
+        // We do NOT need to call InitLight() separately.
         Light->InitializeFromBrush(BrushStroke);
+
+        // 3. Track it
         SpawnedLights.Add(Light);
 
-        if (DiggerDebug::Lights() || DiggerDebug::Brush())
-        UE_LOG(LogTemp, Warning, TEXT("Successfully spawned dynamic light actor of type %d"), (int32)BrushStroke.LightType);
-    }
-    else
-    {
-        if (DiggerDebug::Lights() || DiggerDebug::Brush())
-        UE_LOG(LogTemp, Error, TEXT("Failed to spawn dynamic light actor"));
+        // 4. Editor Organization (Wrapped safely)
+#if WITH_EDITOR
+        Light->SetFolderPath(FName("Digger/DynamicLights"));
+#endif
+
+        if (DiggerDebug::Lights())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Spawned Light Type: %s"), *GetLightTypeName(BrushStroke.LightType));
+        }
     }
 }
 
@@ -1400,48 +1473,6 @@ UVoxelBrushShape* ADiggerManager::GetBrushShapeForType(EVoxelBrushType BrushType
 
 
 
-/*void ADiggerManager::ApplyBrushAtCameraHit()
-{
-    // Get the active brush shape
-    const UVoxelBrushShape* ActiveBrushShape = GetActiveBrushShape(ActiveBrush->GetBrushType());
-    if (!ActiveBrushShape)
-    {
-        UE_LOG(LogTemp, Error, TEXT("ActiveBrushShape is null"));
-        return;
-    }
-
-    // Get hit location
-    FHitResult HitResult;
-    if (!ActiveBrushShape->GetCameraHitLocation(HitResult))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("No valid hit found"));
-        return;
-    }
-
-    // Create brush stroke with correct data
-    FBrushStroke BrushStroke;
-    BrushStroke.BrushPosition = HitResult.Location;
-    BrushStroke.BrushRadius = ActiveBrush->GetBrushSize();
-    BrushStroke.BrushFalloff = 0.f;
-    BrushStroke.BrushStrength = 1.f;
-    BrushStroke.bDig = ActiveBrush->GetDig();
-    BrushStroke.BrushType = ActiveBrush->GetBrushType();
-
-    //Log the brushstrok details
-    UE_LOG(LogTemp, Warning, TEXT("PIE: === BRUSH STROKE DEBUG ==="));
-    UE_LOG(LogTemp, Warning, TEXT("PIE: Position: %s"), *BrushStroke.BrushPosition.ToString());
-    UE_LOG(LogTemp, Warning, TEXT("PIE: Radius: %f"), BrushStroke.BrushRadius);
-    UE_LOG(LogTemp, Warning, TEXT("PIE: Falloff: %f"), BrushStroke.BrushFalloff);
-    UE_LOG(LogTemp, Warning, TEXT("PIE: Strength: %f"), BrushStroke.BrushStrength);
-    UE_LOG(LogTemp, Warning, TEXT("PIE: bDig: %s"), BrushStroke.bDig ? TEXT("true") : TEXT("false"));
-
-    UE_LOG(LogTemp, Warning, TEXT("Applying brush at location: %s, radius: %f"), 
-           *BrushStroke.BrushPosition.ToString(), BrushStroke.BrushRadius);
-
-    // Apply the brush
-    ApplyBrushToAllChunks(BrushStroke);
-}*/
-
 void ADiggerManager::ApplyBrushToAllChunksPIE(FBrushStroke& BrushStroke)
 {
     // Get the hit location from camera first
@@ -1484,6 +1515,8 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
         return;
     }
 
+
+    
     /*UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: === BRUSH STROKE DEBUG ==="));
     UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Position: %s"), *BrushStroke.BrushPosition.ToString());
     UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Radius: %f"), BrushStroke.BrushRadius);
@@ -1499,9 +1532,44 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
     // Handle hole spawn ONCE per brush stroke, before processing chunks
     if (BrushStroke.bDig)
     {
-        if(BrushStroke.BrushPosition.Z - BrushStroke.BrushRadius + BrushStroke.BrushFalloff <= GetLandscapeHeightAt(BrushStroke.BrushPosition))
+        // 1. Get Height
+        float TerrainHeight = GetLandscapeHeightAt(BrushStroke.BrushPosition);
+
+        // 2. Check for Sentinel (Cache Miss)
+        bool bHeightValid = (TerrainHeight > (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f));
+
+        if (!bHeightValid)
         {
+            // CASE A: Cache Missed.
+            // We assume we are digging on a valid surface that just hasn't cached yet.
+            // Force the spawn attempt. HandleHoleSpawn has its own internal checks if needed.
+            if (DiggerDebug::Holes())
+            {
+                UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Height Cache Miss at %s. Attempting Hole Spawn anyway."), 
+                    *BrushStroke.BrushPosition.ToString());
+            }
             HandleHoleSpawn(BrushStroke);
+        }
+        else
+        {
+            // CASE B: Valid Height.
+            // Check if the bottom of the brush penetrates the surface.
+            // Formula: BrushBottom (Center - Radius + Falloff) <= SurfaceHeight
+            float BrushBottom = BrushStroke.BrushPosition.Z - BrushStroke.BrushRadius + BrushStroke.BrushFalloff;
+            
+            if (BrushBottom <= TerrainHeight)
+            {
+                HandleHoleSpawn(BrushStroke);
+            }
+            else
+            {
+                // We are digging in the air above the terrain? Don't spawn a black cap.
+                if (DiggerDebug::Holes())
+                {
+                    // Optional verbose log
+                    // UE_LOG(LogTemp, Warning, TEXT("Skipped Hole Spawn: Brush is above terrain."));
+                }
+            }
         }
     }
 
@@ -1781,6 +1849,8 @@ void ADiggerManager::DebugBrushPlacement(const FVector& ClickPosition)
         UE_LOG(LogTemp, Warning, TEXT("DebugBrushPlacement: completed"));
     }
 }
+
+
 // Updated ADiggerManager::DebugDrawVoxelAtWorldPosition()
 void ADiggerManager::DebugDrawVoxelAtWorldPositionFast(const FVector& WorldPosition, const FLinearColor& BoxColor, float Duration, float Thickness)
 {
@@ -1810,6 +1880,87 @@ void ADiggerManager::DebugDrawVoxelAtWorldPositionFast(const FVector& WorldPosit
         UE_LOG(LogTemp, Log, TEXT("Drew voxel at world position %s: Chunk %s, VoxelIndex %s, Center %s"),
             *WorldPosition.ToString(), *ChunkCoords.ToString(), *VoxelIndex.ToString(), *VoxelCenter.ToString());
     }
+}
+
+bool ADiggerManager::PerformPlayerDig()
+{
+    // 1. Safety Checks
+    if (!IsValid(ActiveBrush))
+    {
+        // Auto-create brush if missing (lazy initialization)
+        ActiveBrush = NewObject<UVoxelBrushShape>(this, UVoxelBrushShape::StaticClass());
+        ActiveBrush->InitializeBrush(EVoxelBrushType::Sphere, 150.0f, FVector::ZeroVector, this);
+    }
+
+    // 2. Get the Hit (Delegated to Brush Logic)
+    FHitResult HitResult;
+    // Ensure GetCameraHitLocation uses APlayerController, NOT GEditor
+    if (!ActiveBrush->GetCameraHitLocation(HitResult)) 
+    {
+        if (DiggerDebug::Brush())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("PerformPlayerDig: No valid hit found"));
+        }
+        return false; // Tell BP we failed
+    }
+
+    // 3. Construct the Stroke
+    // Note: ensure GetDig() returns the correct boolean state for the current tool
+    FBrushStroke BrushStroke = ActiveBrush->CreateBrushStroke(HitResult, ActiveBrush->GetDig());
+
+    if (DiggerDebug::UserConv())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Player Dig applied at: %s"), *BrushStroke.BrushPosition.ToString());
+    }
+    
+    // 4. Execute
+    ApplyBrushToAllChunks(BrushStroke);
+    
+    return true; // Tell BP we succeeded
+}
+
+bool ADiggerManager::PerformDig(FVector StartLocation, FVector Direction, float TraceRange, float Radius, float Falloff, EVoxelBrushType Shape, bool bIsDigging)
+{
+    // 1. Calculate Trace End
+    FVector TraceEnd = StartLocation + (Direction * TraceRange);
+
+    // 2. Safety: Ensure ActiveBrush exists for the calculation logic
+    if (!IsValid(ActiveBrush))
+    {
+        ActiveBrush = NewObject<UVoxelBrushShape>(this, UVoxelBrushShape::StaticClass());
+        // Init with dummy values, we will override them in the stroke anyway
+        ActiveBrush->InitializeBrush(Shape, Radius, FVector::ZeroVector, this);
+    }
+
+    // 3. Perform Smart Trace (Ignores existing holes, hits terrain)
+    FHitResult Hit = ActiveBrush->SmartTrace(StartLocation, TraceEnd);
+
+    if (Hit.bBlockingHit)
+    {
+        // 4. Construct the Stroke manually
+        FBrushStroke Stroke;
+        Stroke.BrushPosition = Hit.ImpactPoint;
+        Stroke.BrushRadius = Radius;
+        Stroke.BrushFalloff = Falloff;
+        Stroke.BrushType = Shape;
+        Stroke.BrushStrength = 1.0f; // Default strength
+        Stroke.bDig = bIsDigging;
+        
+        // Handle Advanced settings if needed (Rotation, etc.)
+        Stroke.BrushRotation = FRotator::ZeroRotator; 
+
+        // 5. Execute
+        ApplyBrushToAllChunks(Stroke);
+
+        if (DiggerDebug::Brush())
+        {
+            UE_LOG(LogTemp, Log, TEXT("PerformDig: Hit at %s, Applied %s"), *Hit.ImpactPoint.ToString(), bIsDigging ? TEXT("Dig") : TEXT("Add"));
+        }
+
+        return true;
+    }
+
+    return false;
 }
 
 // Updated ADiggerManager::DrawDiagonalDebugVoxels()
@@ -1942,7 +2093,8 @@ UStaticMesh* ADiggerManager::ConvertIslandToStaticMesh(const FIslandData& Island
     TArray<FColor> Colors;
     TArray<FProcMeshTangent> Tangents;
 
-/* Single Island Mesh Generation in DiggerManager
+/*
+            // Single Island Mesh Generation in DiggerManager
             // You may need to create a temporary SparseVoxelGrid for just this island
             USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
             
@@ -1952,8 +2104,8 @@ UStaticMesh* ADiggerManager::ConvertIslandToStaticMesh(const FIslandData& Island
             MarchingCubes->GenerateMeshForIsland(TempGrid, Vertices, Triangles, Normals, UVs, Colors, Tangents);
 
             // 4. Remove island voxels from the main grid
-            //TempGrid->RemoveVoxels(IslandVoxels);
-    */
+            //TempGrid->RemoveVoxels(IslandVoxels);*/
+    
 
     // For demonstration, we'll log and return nullptr if not implemented
     if (Vertices.Num() == 0 || Triangles.Num() == 0)
@@ -2001,11 +2153,17 @@ UStaticMesh* ADiggerManager::ConvertIslandToStaticMesh(const FIslandData& Island
     return NewStaticMesh;
 }
 
-void ADiggerManager::UpdateAllDirtyChunks()
+void ADiggerManager::RefreshLandscapeCache()
+{
+    HeightCacheSystem->RefreshLandscapeCache();
+}
+
+
+void ADiggerManager::ProcessDirtyChunksLoop()
 {
     if (DiggerDebug::Islands())
     {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Running ADM::UpdateAllDirtyChunks..."));
+        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Running ADM::ProcessDirtyChunksLoop..."));
     }
 
     for (const auto& ChunkPair : ChunkMap)
@@ -2021,6 +2179,85 @@ void ADiggerManager::UpdateAllDirtyChunks()
     {
         UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Finished updating dirty chunks."));
     }
+}
+
+void ADiggerManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    // Cleanup
+    if (HeightCacheSystem)
+    {
+        HeightCacheSystem->Clear();
+    }
+    
+    // If the game is ending (EndPIE) or the Level is unloading, 
+    // we must wipe the slate clean so the Editor doesn't inherit garbage data.
+    if (EndPlayReason == EEndPlayReason::EndPlayInEditor || 
+        EndPlayReason == EEndPlayReason::LevelTransition || 
+        EndPlayReason == EEndPlayReason::Destroyed)
+    {
+        ClearAllVoxelData();
+    }
+
+    // Call the parent class (Standard practice)
+    Super::EndPlay(EndPlayReason);
+}
+
+void ADiggerManager::ClearAllVoxelData()
+{
+#if WITH_EDITOR
+    if (GIsEditor && !GetWorld()->IsGameWorld())
+    {
+        Modify(); 
+    }
+#endif
+    
+    UE_LOG(LogTemp, Warning, TEXT("DiggerManager: Clearing all voxel data..."));
+
+    // --- 1. CLEAR LIGHTS ---
+    // Iterate backwards or just loop and check validity
+    for (AActor* Light : SpawnedLights)
+    {
+        if (IsValid(Light))
+        {
+            Light->Destroy();
+        }
+    }
+    SpawnedLights.Empty();
+
+    // --- 2. CLEAR CHUNKS ---
+    if (ChunkMap.Num() > 0)
+    {
+        for (auto& Pair : ChunkMap)
+        {
+            UVoxelChunk* Chunk = Pair.Value;
+
+            if (IsValid(Chunk))
+            {
+                // A. Destroy physical holes
+                Chunk->ClearSpawnedHoles();
+
+                // B. Clear the Data Grid explicitly
+                // Check IsValid to be safe
+                if (USparseVoxelGrid* Grid = Chunk->GetSparseVoxelGrid())
+                {
+                    // Assuming you added Clear() to SparseVoxelGrid as discussed previously.
+                    // If not, use: Grid->VoxelData.Empty();
+                    Grid->Clear(); 
+                }
+                
+                // C. Mark the chunk object for GC
+                Chunk->MarkAsGarbage(); 
+            }
+        }
+    }
+
+    // --- 3. CLEAN UP CONTAINERS ---
+    ChunkMap.Empty();
+    
+    // --- 4. CLEAR PROCEDURAL MESHES ---
+    ClearProceduralMeshes();
+
+    UE_LOG(LogTemp, Warning, TEXT("DiggerManager: Cleanup Complete."));
 }
 
 
@@ -2170,9 +2407,22 @@ FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMesh(const FVector& Isla
     // Step 4: Generate mesh
     UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Starting mesh generation using Marching Cubes."));
 
-    // Use the chunk origin for mesh generation
+    int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    int32 SampleSize = N + 1; // <--- FIX
+    TArray<float> HeightMap;
+    HeightMap.SetNumUninitialized(SampleSize * SampleSize); // <--- FIX
+
+    for (int32 x = 0; x < SampleSize; ++x) { // <--- FIX LOOP LIMIT
+        for (int32 y = 0; y < SampleSize; ++y) { // <--- FIX LOOP LIMIT
+            FVector Pos = ChunkOrigin + FVector(x * VoxelSize, y * VoxelSize, 0);
+            HeightMap[y * SampleSize + x] = GetLandscapeHeightAt(Pos); // <--- FIX INDEX
+        }
+    }
+
+    // Generate mesh using marching cubes
     MarchingCubes->GenerateMeshFromGrid(
         ExtractedGrid, ChunkOrigin, VoxelSize,
+        HeightMap, // <--- Replaces TODO
         Result.Vertices, Result.Triangles, Result.Normals
     );
     
@@ -2283,18 +2533,18 @@ void ADiggerManager::RemoveIslandVoxels(const FIslandData& Island)
             UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] Island cleanup: Removed %d voxels across %d chunks"),
                    TotalRemoved, AffectedChunks.Num());
         }
-        UpdateAllDirtyChunks();
+        ProcessDirtyChunksLoop();
     };
 
     if (!IsInGameThread())
     {
         AsyncTask(ENamedThreads::GameThread, MoveTemp(RefreshChunks));
-        UpdateAllDirtyChunks();
+        ProcessDirtyChunksLoop();
     }
     else
     {
         RefreshChunks();
-        UpdateAllDirtyChunks();
+        ProcessDirtyChunksLoop();
     }
 }
 
@@ -2444,16 +2694,13 @@ void ADiggerManager::ConvertIslandAtPositionToActor(const FVector& IslandCenter,
 FIslandMeshData ADiggerManager::ExtractIslandByCenter(const FVector& IslandCenter, bool bRemoveAfter, bool bEnablePhysics)
 {
     FIslandMeshData Result;
+    Result.bValid = false;
 
-    // Step 1: Get all islands from unified grid
+    // Step 1: Get all islands
     TArray<FIslandData> AllIslands = DetectUnifiedIslands();
-    if (AllIslands.Num() == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[DiggerPro] No islands found during extraction."));
-        return Result;
-    }
+    if (AllIslands.Num() == 0) return Result;
 
-    // Step 2: Find closest island to center
+    // Step 2: Find closest island
     FIslandData* ClosestIsland = nullptr;
     float MinDist = FLT_MAX;
 
@@ -2467,54 +2714,91 @@ FIslandMeshData ADiggerManager::ExtractIslandByCenter(const FVector& IslandCente
         }
     }
 
-    if (!ClosestIsland)
-    {
-        UE_LOG(LogTemp, Error, TEXT("[DiggerPro] No matching island found near %s"), *IslandCenter.ToString());
-        return Result;
-    }
+    if (!ClosestIsland) return Result;
 
-    // Step 3: Build temporary grid from island voxels
+    // Step 3: Normalize Coordinates (World -> Local)
+    // We need to shift the voxels so they start at 0,0,0 relative to a local origin,
+    // otherwise the Marching Cubes loop (which runs 0..N) won't find them.
+    
+    FIntVector MinBound = FIntVector(2147483647, 2147483647, 2147483647);
+    for (const FIntVector& Global : ClosestIsland->Voxels)
+    {
+        MinBound.X = FMath::Min(MinBound.X, Global.X);
+        MinBound.Y = FMath::Min(MinBound.Y, Global.Y);
+        MinBound.Z = FMath::Min(MinBound.Z, Global.Z);
+    }
+    
+    // Add a small padding of 1 voxel to prevent mesh clipping at the edge
+    MinBound -= FIntVector(1, 1, 1);
+
+    // Build the grid with RE-CENTERED keys
     USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
     TMap<FIntVector, FVoxelData> IslandVoxelMap;
 
     for (const FIntVector& Global : ClosestIsland->Voxels)
     {
+        // Find the original data
         FIntVector ChunkCoords, LocalVoxel;
         FVoxelConversion::GlobalVoxelToChunkAndLocal(Global, ChunkCoords, LocalVoxel);
 
-        UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords);
-        if (!ChunkPtr || !*ChunkPtr) continue;
-
-        USparseVoxelGrid* Grid = (*ChunkPtr)->GetSparseVoxelGrid();
-        if (!Grid) continue;
-
-        const FVoxelData* Data = Grid->GetVoxelData(LocalVoxel);
-        if (Data)
+        if (UVoxelChunk** ChunkPtr = ChunkMap.Find(ChunkCoords))
         {
-            IslandVoxelMap.Add(Global, *Data);
+            if (USparseVoxelGrid* Grid = (*ChunkPtr)->GetSparseVoxelGrid())
+            {
+                if (const FVoxelData* Data = Grid->GetVoxelData(LocalVoxel))
+                {
+                    // Shift the key: Global 100 -> Local 1 (if MinBound is 99)
+                    FIntVector LocalKey = Global - MinBound;
+                    IslandVoxelMap.Add(LocalKey, *Data);
+                }
+            }
         }
     }
 
     TempGrid->SetVoxelData(IslandVoxelMap);
-    TempGrid->Initialize(nullptr); // no parent
+    TempGrid->Initialize(nullptr);
 
-    // Step 4: Generate mesh
+    // Step 4: Calculate Origins & Heights
+    VoxelSize = FVoxelConversion::LocalVoxelSize;
+    
+    // The World Origin for this mesh generation is the MinBound position
+    FVector GridOrigin = FVoxelConversion::GlobalVoxelToWorld(MinBound);
+
+    // Prepare Height Map aligned to the GridOrigin
+    int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    int32 SampleSize = N + 1; // <--- FIX
+    TArray<float> HeightMap;
+    HeightMap.SetNumUninitialized(SampleSize * SampleSize); // <--- FIX
+
+    for (int32 x = 0; x < SampleSize; ++x) { // <--- FIX LOOP LIMIT
+        for (int32 y = 0; y < SampleSize; ++y) { // <--- FIX LOOP LIMIT
+            FVector Pos = GridOrigin + FVector(x * VoxelSize, y * VoxelSize, 0);
+            HeightMap[y * SampleSize + x] = GetLandscapeHeightAt(Pos); // <--- FIX INDEX
+        }
+    }
+
+    // Generate mesh using the TempGrid (now containing local keys) and the GridOrigin
     MarchingCubes->GenerateMeshFromGrid(
-        TempGrid, FVector::ZeroVector, VoxelSize,
+        TempGrid,      // <--- Corrected variable name
+        GridOrigin,    // <--- Corrected Origin (not Zero)
+        VoxelSize,
+        HeightMap,
         Result.Vertices, Result.Triangles, Result.Normals
     );
 
-    Result.MeshOrigin = FVector::ZeroVector;
+    Result.MeshOrigin = GridOrigin;
     Result.bValid = Result.Vertices.Num() > 0;
 
-    // Step 5: Optionally remove island from grid
-    if (bRemoveAfter)
+    // Step 5: Remove original voxels
+    if (bRemoveAfter && Result.bValid)
     {
         RemoveIslandVoxels(*ClosestIsland);
     }
 
     return Result;
 }
+
+
 
 // New function to extract island mesh from a specific voxel
 FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMeshFromData(UVoxelChunk* Chunk, const FIslandData& IslandData)
@@ -2615,9 +2899,24 @@ FIslandMeshData ADiggerManager::ExtractAndGenerateIslandMeshFromData(UVoxelChunk
     UE_LOG(LogTemp, Log, TEXT("[DiggerPro] Extracted grid contains %d voxels (%d solid + %d boundary)"), 
            ExtractedVoxelData.Num(), ValidVoxels, BoundaryVoxels.Num());
     
-    // Generate mesh using marching cubes
+    // 1. Prepare Height Map
+    int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    int32 SampleSize = N + 1; // <--- FIX
+    
+    TArray<float> HeightMap;
+    HeightMap.SetNumUninitialized(SampleSize * SampleSize); // <--- FIX
+
+    for (int32 x = 0; x < SampleSize; ++x) { // <--- FIX LOOP LIMIT
+        for (int32 y = 0; y < SampleSize; ++y) { // <--- FIX LOOP LIMIT
+            FVector Pos = ChunkOrigin + FVector(x * VoxelSize, y * VoxelSize, 0);
+            HeightMap[y * SampleSize + x] = GetLandscapeHeightAt(Pos); // <--- FIX INDEX
+        }
+    }
+
+    // 2. Call Generation
     MarchingCubes->GenerateMeshFromGrid(
         ExtractedGrid, ChunkOrigin, VoxelSize,
+        HeightMap, // <--- Replaces TODO
         Result.Vertices, Result.Triangles, Result.Normals
     );
     
@@ -2690,6 +2989,7 @@ void ADiggerManager::SaveIslandMeshAsStaticMesh(
 }
 
 
+
 bool ADiggerManager::EnsureWorldReference()
 {
     if (World)
@@ -2721,104 +3021,99 @@ void ADiggerManager::RecreateIslandFromSaveData(const FIslandSaveData& SaveData)
 }
 
 
-void ADiggerManager::PopulateAllCachedLandscapeHeights()
-{
-    // Clear caches if needed
-    LandscapeHeightCaches.Empty();
-    HeightCacheLoadingSet.Empty();
-
-    return;
-    // Find all landscapes and start async cache
-    for (TActorIterator<ALandscapeProxy> It(GetWorld()); It; ++It)
-    {
-        ALandscapeProxy* Landscape = *It;
-        if (Landscape)
-        {
-            HeightCacheLoadingSet.Add(Landscape);
-            PopulateLandscapeHeightCacheAsync(Landscape);
-        }
-    }
-}
-
 void ADiggerManager::BeginPlay()
 {
     Super::BeginPlay();
 
     UE_LOG(LogTemp, Warning, TEXT("=== PIE STARTED - CHUNK STATUS ==="));
-    UE_LOG(LogTemp, Warning, TEXT("ChunkMap contains %d chunks"), ChunkMap.Num());
-
-    QuickDebugTest();
-
-    if (!bRuntimeInitDone)
-    {
-        InitRuntimeHeavy();
-        bRuntimeInitDone = true;
-    }
     
-    int ChunkCount = 0;
-    for (auto& ChunkPair : ChunkMap)
-    {
-        ChunkCount++;
-        UE_LOG(LogTemp, Warning, TEXT("Found chunk at: %s"), *ChunkPair.Key.ToString());
-    }
-    UE_LOG(LogTemp, Warning, TEXT("ChunkCount: %i"), ChunkCount);
-
+    // 1. Validate World
     if (!EnsureWorldReference())
     {
-        UE_LOG(LogTemp, Error, TEXT("World is null in DiggerManager BeginPlay()! Continuing with default behavior."));
+        UE_LOG(LogTemp, Error, TEXT("World is null in DiggerManager BeginPlay!"));
+        return;
     }
 
-    UpdateVoxelSize();
+    // 2. Initialize the New Height Cache System
+    // This prepares the subsystem but does NOT scan the world yet (Lazy!)
+    if (HeightCacheSystem)
+    {
+        HeightCacheSystem->Initialize(GetSafeWorld());
+    }
 
-    StartHeightCaching();
-        
-    // ensure brushes are ready for PIE usage
-    ActiveBrush->InitializeBrush(ActiveBrush->GetBrushType(),ActiveBrush->GetBrushSize(),ActiveBrush->GetBrushLocation(),this);
+    // 3. Update Configurations
+    UpdateVoxelSize();
+    
+    // 4. Initialize Brushes
+    if (IsValid(ActiveBrush))
+    {
+        ActiveBrush->InitializeBrush(ActiveBrush->GetBrushType(), ActiveBrush->GetBrushSize(), ActiveBrush->GetBrushLocation(), this);
+    }
     InitializeBrushShapes();
 
+    // 5. Clean Slate (Critical for PIE)
+    // Remove any ghost holes or meshes left over from Editor Mode
     DestroyAllHoleBPs();
-    ClearProceduralMeshes();
-    //ClearAllVoxelData();
-    //InitializeTerrainCache(); // or lazy-init fallback
-    LoadAllChunks();
+    ClearAllVoxelData(); 
 
-    // Delay the height caching logic until after level has loaded
-    FTimerHandle UnusedHandle;
-    GetWorld()->GetTimerManager().SetTimer(UnusedHandle, this, &ADiggerManager::StartHeightCaching, 1.0f, false);
-
-
-    // Set the ProceduralMesh material if it's valid
-    if (TerrainMaterial)
+    // 6. Setup Materials
+    if (TerrainMaterial && ProceduralMesh)
     {
-        if (ProceduralMesh && ProceduralMesh->GetMaterial(0) != TerrainMaterial)
+        if (ProceduralMesh->GetMaterial(0) != TerrainMaterial)
         {
             ProceduralMesh->SetMaterial(0, TerrainMaterial);
-            UE_LOG(LogTemp, Warning, TEXT("Set Material M_ProcGrid at index 0"));
         }
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("Material M_ProcGrid is null. Please ensure it is loaded properly."));
+        UE_LOG(LogTemp, Warning, TEXT("Material M_ProcGrid missing or ProceduralMesh invalid."));
     }
 
-    // Recreate saved islands when entering PIE
-    for (const FIslandSaveData& SavedIsland : SavedIslands)
+    // 7. DEFERRED LOADING (The Performance Fix)
+    // We use a Lambda here to avoid needing a separate "StartHeightCaching" function declaration.
+    // This waits 0.1s to let the engine finish rendering the first frame, then starts loading.
+    FTimerHandle InitHandle;
+    GetWorld()->GetTimerManager().SetTimer(InitHandle, [this]()
     {
-        RecreateIslandFromSaveData(SavedIsland);
-    }
+        if (!IsValid(this)) return;
+
+        UE_LOG(LogTemp, Log, TEXT("DiggerManager: Starting Deferred Load..."));
+
+        // A. Load Chunks
+        // This puts chunks into the load queue. 
+        // As they process, they will call GetLandscapeHeightAt(), which triggers Lazy Caching.
+        LoadAllChunks("Default"); 
+
+        // B. Restore Islands
+        for (const FIslandSaveData& SavedIsland : SavedIslands)
+        {
+            RecreateIslandFromSaveData(SavedIsland);
+        }
+        
+        // Ensure the chunk refresh loop is running in Game
+        GetWorld()->GetTimerManager().SetTimer(ChunkUpdateTimerHandle, this, &ADiggerManager::ProcessDirtyChunksLoop, 0.1f, true);
+        
+    }, 0.5f, false);
 }
 
-void ADiggerManager::StartHeightCaching()
-{
-    // Call your async height caching method here
-    PopulateAllCachedLandscapeHeights();
-}
+
 
 void ADiggerManager::InitEditorLightweight()
 {
     // Keep this near zero cost. No voxel allocation, no terrain scan.
     // e.g., set default preview radius/type so the EdMode can draw gizmos.
     // EditorBrushRadius = FMath::Max(EditorBrushRadius, 50.f);
+
+#if WITH_EDITOR
+    // Ensure the loop is running in Editor
+    if (GEditor && !GetWorld()->IsGameWorld())
+    {
+        if (!GetWorld()->GetTimerManager().IsTimerActive(ChunkUpdateTimerHandle))
+        {
+            GetWorld()->GetTimerManager().SetTimer(ChunkUpdateTimerHandle, this, &ADiggerManager::ProcessDirtyChunksLoop, 0.1f, true);
+        }
+    }
+#endif
 }
 
 void ADiggerManager::EditorDeferredInit()
@@ -2826,20 +3121,6 @@ void ADiggerManager::EditorDeferredInit()
 #if WITH_EDITOR
     if (IsRuntimeLike()) return;        // safety
     if (bEditorInitDone)  return;
-
-    // If you want the landscape cache for preview, do it once here (not in OnConstruction)
-    HeightCacheLoadingSet.Reset();
-    for (TActorIterator<ALandscapeProxy> It(GetWorld()); It; ++It)
-    {
-        if (ALandscapeProxy* Landscape = *It)
-        {
-            HeightCacheLoadingSet.Add(Landscape);
-            PopulateLandscapeHeightCache(Landscape); // consider yielding/throttling if this is big
-        }
-    }
-
-    // Light voxel/grid prep if you absolutely need it for preview (otherwise leave to runtime)
-    // FVoxelConversion::InitFromConfig(ChunkSize, Subdivisions, TerrainGridSize, GetActorLocation());
 
     bEditorInitDone = true;
 #endif
@@ -2866,29 +3147,6 @@ void ADiggerManager::EnsureHoleShapeLibrary()
     HoleShapeLibrary = Transient;
 
     SeedHoleShapesFromFolder(HoleShapeLibrary);
-}
-
-
-
-void ADiggerManager::InitRuntimeHeavy()
-{
-    // Full system init (runtime/PIE only)
-    // 1) Library is ensured already
-    // 2) Landscape cache
-    HeightCacheLoadingSet.Reset();
-    for (TActorIterator<ALandscapeProxy> It(GetWorld()); It; ++It)
-    {
-        if (ALandscapeProxy* Landscape = *It)
-        {
-            HeightCacheLoadingSet.Add(Landscape);
-            PopulateLandscapeHeightCache(Landscape);
-        }
-    }
-
-    // 3) Voxel config & chunk systems
-    FVoxelConversion::InitFromConfig(ChunkSize, Subdivisions, TerrainGridSize, GetActorLocation());
-
-    // 4) Any threads/async, proc mesh setup, etc.
 }
 
 
@@ -3039,42 +3297,13 @@ UStaticMesh* ADiggerManager::CreateStaticMeshFromRawData(
     return StaticMesh;
 }
 
-void ADiggerManager::ClearAllVoxelData()
-{
-    UE_LOG(LogTemp, Warning, TEXT("Clearing all voxel data..."));
-
-    // // Clear the sparse voxel grid
-    // if (SparseVoxelGrid)
-    // {
-    //     SparseVoxelGrid->Clear(); // Assumes you have a Clear() method in your grid class
-    // }
-
-    // Destroy all spawned voxel chunks (Actors or Components)
-    // for (AActor* ChunkActor : SpawnedChunks)
-    // {
-    //     if (IsValid(ChunkActor))
-    //     {
-    //         ChunkActor->Destroy();
-    //     }
-    // }
-    // SpawnedChunks.Empty();
-
-    // Destroy any mesh components stored directly on the DiggerManager
-    ClearProceduralMeshes();
-
-    // Reset any saved brush stroke data or undo queues
-    //UndoQueue.Empty(); // if you have one
-    // StrokeHistory.Empty(); // if applicable
-
-    UE_LOG(LogTemp, Warning, TEXT("All voxel data cleared."));
-}
 
 void ADiggerManager::ClearProceduralMeshes()
 {
         if (ProceduralMesh)
         {
             ProceduralMesh->ClearAllMeshSections();
-            ProceduralMesh->MarkRenderStateDirty(); // Optional: forces update to visual
+            //ProceduralMesh->MarkRenderStateDirty(); // Optional: forces update to visual
             UE_LOG(LogTemp, Warning, TEXT("Procedural mesh cleared."));
         }
         else
@@ -3184,20 +3413,6 @@ void ADiggerManager::InitializeSingleChunk(UVoxelChunk* Chunk)
     }
 }
 
-void ADiggerManager::UpdateLandscapeProxies()
-{
-    CachedLandscapeProxies.Empty();
-    TArray<AActor*> FoundLandscapes;
-    UGameplayStatics::GetAllActorsOfClass(GetSafeWorld(), ALandscapeProxy::StaticClass(), FoundLandscapes);
-
-    for (AActor* Actor : FoundLandscapes)
-    {
-        if (ALandscapeProxy* Proxy = Cast<ALandscapeProxy>(Actor))
-        {
-            CachedLandscapeProxies.Add(Proxy);
-        }
-    }
-}
 
 void ADiggerManager::EnforceZeroLocation()
 {
@@ -3211,413 +3426,14 @@ void ADiggerManager::EnforceZeroLocation()
     }
 }
 
-TSharedPtr<TMap<FIntPoint, float>> ADiggerManager::GetOrCreateLandscapeHeightCache(ALandscapeProxy* Landscape)
+
+float ADiggerManager::GetLandscapeHeightAt(const FVector& Location)
 {
-    if (!IsValid(Landscape))
+    if (HeightCacheSystem)
     {
-        UE_LOG(LogTemp, Warning, TEXT("Invalid LandscapeProxy passed to GetOrCreateLandscapeHeightCache."));
-        return nullptr;
+        return HeightCacheSystem->GetHeight(Location);
     }
-
-    if (!LandscapeHeightCaches.Contains(Landscape))
-    {
-        LandscapeHeightCaches.Add(Landscape, MakeShared<TMap<FIntPoint, float>>());
-    }
-
-    return LandscapeHeightCaches[Landscape];
-}
-
-
-float ADiggerManager::GetLandscapeHeightAt(FVector WorldPosition)
-{
-    ALandscapeProxy* LandscapeProxy = nullptr;
-
-    // First, try the last used landscape if it's still valid
-    if (LastUsedLandscape && IsValid(LastUsedLandscape) && 
-        LastUsedLandscape->GetComponentsBoundingBox().IsInsideXY(WorldPosition))
-    {
-        LandscapeProxy = LastUsedLandscape;
-    }
-    else
-    {
-        // Use the more reliable iterator-based search
-        LandscapeProxy = GetLandscapeProxyAt(WorldPosition);
-        
-        // Update the cache with the found proxy
-        if (LandscapeProxy)
-        {
-            LastUsedLandscape = LandscapeProxy;
-        }
-    }
-
-    if (!LandscapeProxy)
-    {
-        if (DiggerDebug::Landscape())
-        UE_LOG(LogTemp, Warning, TEXT("No landscape found at location %s"), *WorldPosition.ToString());
-        return -100000.0f;
-    }
-
-    // Try getting height using different sources in order of complexity
-    TOptional<float> HeightResult;
-
-    HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Simple);
-
-    if (!HeightResult.IsSet())
-    {
-        HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Complex);
-    }
-
-    if (!HeightResult.IsSet() && GIsEditor)
-    {
-        HeightResult = LandscapeProxy->GetHeightAtLocation(WorldPosition, EHeightfieldSource::Editor);
-    }
-
-    if (!HeightResult.IsSet())
-    {
-        UE_LOG(LogTemp, Error, TEXT("Failed to get height at location: %s for landscape: %s"), 
-               *WorldPosition.ToString(), 
-               LandscapeProxy ? *LandscapeProxy->GetName() : TEXT("NULL"));
-        return -100000.0f;
-    }
-
-    return HeightResult.GetValue();
-}
-
-// Keep your more reliable GetLandscapeProxyAt function
-ALandscapeProxy* ADiggerManager::GetLandscapeProxyAt(const FVector& WorldPos)
-{
-    for (TActorIterator<ALandscapeProxy> It(GetSafeWorld()); It; ++It)
-    {
-        ALandscapeProxy* Proxy = *It;
-        if (Proxy && IsValid(Proxy) && Proxy->GetComponentsBoundingBox().IsInsideXY(WorldPos))
-        {
-            return Proxy;
-        }
-    }
-
-    return nullptr;
-}
-
-void ADiggerManager::PopulateLandscapeHeightCache(ALandscapeProxy* Landscape)
-{
-    if (!Landscape) return;
-
-    const float LocalVoxelSize = VoxelSize;
-    FBox Bounds = Landscape->GetComponentsBoundingBox();
-
-    TMap<FIntPoint, float> LocalMap;
-
-    FVector Min = Bounds.Min;
-    FVector Max = Bounds.Max;
-
-    for (float X = Min.X; X < Max.X; X += LocalVoxelSize)
-    {
-        for (float Y = Min.Y; Y < Max.Y; Y += LocalVoxelSize)
-        {
-            FVector SamplePos(X, Y, 0);
-            TOptional<float> Sampled = SampleLandscapeHeight(Landscape, SamplePos);
-            if (Sampled.IsSet())
-            {
-                int32 GridX = FMath::FloorToInt(X / LocalVoxelSize);
-                int32 GridY = FMath::FloorToInt(Y / LocalVoxelSize);
-                FIntPoint Key(GridX, GridY);
-                LocalMap.Add(Key, Sampled.GetValue());
-            }
-        }
-    }
-
-    LandscapeHeightCaches.FindOrAdd(Landscape) = MakeShared<TMap<FIntPoint, float>>(LocalMap);
-    HeightCacheLoadingSet.Remove(Landscape);
-
-    UE_LOG(LogTemp, Warning, TEXT("Synchronous height cache complete for landscape: %s (%d entries)"), *Landscape->GetName(), LocalMap.Num());
-}
-
-// void ADiggerManager::SetMeshGenerationMethod(const FString& Method)
-// {
-//     if (Method == "Cubic")
-//     {
-//         MeshGenerationMethod = EMeshGenerationMethod::Cubic;
-//     }
-//     else if (Method == "Marching Cubes")
-//     {
-//         MeshGenerationMethod = EMeshGenerationMethod::MarchingCubes;
-//     }
-//     else if (Method == "Dual Contouring")
-//     {
-//         MeshGenerationMethod = EMeshGenerationMethod::DualContouring;
-//     }
-//     else
-//     {
-//         UE_LOG(LogTemp, Warning, TEXT("Unknown mesh generation method: %s"), *Method);
-//     }
-// }
-
-
-
-void ADiggerManager::PopulateLandscapeHeightCacheAsync(ALandscapeProxy* Landscape)
-{
-    if (!Landscape) return;
-
-    const float LocalVoxelSize = VoxelSize;
-    FBox Bounds = Landscape->GetComponentsBoundingBox();
-
-    // Prepare data for async task
-    FVector Min = Bounds.Min;
-    FVector Max = Bounds.Max;
-    TWeakObjectPtr<ALandscapeProxy> WeakLandscape = Landscape;
-    TWeakObjectPtr<ADiggerManager> WeakSelf = this;
-
-    AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [WeakSelf, WeakLandscape, Min, Max, LocalVoxelSize]()
-    {
-        if (!WeakSelf.IsValid() || !WeakLandscape.IsValid()) return;
-
-        TMap<FIntPoint, float> LocalMap;
-
-        for (float X = Min.X; X < Max.X; X += LocalVoxelSize)
-        {
-            for (float Y = Min.Y; Y < Max.Y; Y += LocalVoxelSize)
-            {
-                FVector SamplePos(X, Y, 0);
-                TOptional<float> Sampled = WeakSelf->SampleLandscapeHeight(WeakLandscape.Get(), SamplePos);
-                if (Sampled.IsSet())
-                {
-                    int32 GridX = FMath::FloorToInt(X / LocalVoxelSize);
-                    int32 GridY = FMath::FloorToInt(Y / LocalVoxelSize);
-                    FIntPoint Key(GridX, GridY);
-                    LocalMap.Add(Key, Sampled.GetValue());
-                }
-            }
-        }
-
-        // Copy back on game thread
-        AsyncTask(ENamedThreads::GameThread, [WeakSelf, WeakLandscape, LocalMap = MoveTemp(LocalMap)]()
-        {
-            if (!WeakSelf.IsValid() || !WeakLandscape.IsValid()) return;
-
-            WeakSelf->LandscapeHeightCaches.FindOrAdd(WeakLandscape.Get()) = MakeShared<TMap<FIntPoint, float>>(LocalMap);
-            WeakSelf->HeightCacheLoadingSet.Remove(WeakLandscape.Get());
-
-            UE_LOG(LogTemp, Warning, TEXT("Async height cache complete for landscape: %s (%d entries)"), *WeakLandscape->GetName(), LocalMap.Num());
-        });
-    });
-}
-
-
-
-
-
-/*ALandscapeProxy* ADiggerManager::GetLandscapeProxyAt(const FVector& WorldPos)
-{
-    for (TActorIterator<ALandscapeProxy> It(GetSafeWorld()); It; ++It)
-    {
-        ALandscapeProxy* Proxy = *It;
-        if (Proxy && Proxy->GetComponentsBoundingBox().IsInsideXY(WorldPos))
-        {
-            return Proxy;
-        }
-    }
-
-    return nullptr;
-}*/
-
-TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos, bool bForcePrecise)
-{
-    if (!Landscape)
-    {
-        if (DiggerDebug::Landscape())
-        {UE_LOG(LogTemp, Warning, TEXT("Landscape Proxy is NULL for position: %s"), *WorldPos.ToString());}
-        return TOptional<float>(); // Early exit if there's no valid landscape
-    }
-
-    // Sample terrain height using Landscape's method
-    TOptional<float> SampledHeight = Landscape->GetHeightAtLocation(WorldPos);
-
-    if (SampledHeight.IsSet())
-    {
-        if (DiggerDebug::Landscape())
-        {
-            // Log if the sampled height is successful
-            UE_LOG(LogTemp, Log, TEXT("Successfully sampled terrain height at %s: %.2f"), *WorldPos.ToString(), SampledHeight.GetValue());
-        }
-        return SampledHeight;
-    }
-    else
-    {
-        if (DiggerDebug::Landscape())
-        {
-            // Log if the height sampling failed
-            UE_LOG(LogTemp, Warning, TEXT("Failed to sample terrain height at %s"), *WorldPos.ToString());
-        }
-    }
-
-    // If no valid height was sampled, return empty
-    return TOptional<float>(); // This can be adjusted to return a default value if needed
-}
-
-
-/* //Deprecated diggerManager height cach version of SampleLandscapeHeight
-TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos)
-{
-    // Null check for Landscape
-    if (!Landscape || !IsValid(Landscape))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("SampleLandscapeHeight: Invalid Landscape pointer"));
-        return TOptional<float>();
-    }
-
-    // Check if we have a valid cache for the landscape height
-    if (LandscapeHeightCaches.Contains(Landscape))
-    {
-        // SAFE ACCESS: Get the pointer first and null check it
-        TSharedPtr<TMap<FIntPoint, float>>* CachePtr = LandscapeHeightCaches.Find(Landscape);
-        if (CachePtr && CachePtr->IsValid())
-        {
-            const FVector LandscapeLocal = Landscape->GetTransform().InverseTransformPosition(WorldPos);
-            int32 X = FMath::FloorToInt(LandscapeLocal.X / VoxelSize);
-            int32 Y = FMath::FloorToInt(LandscapeLocal.Y / VoxelSize);
-
-            TMap<FIntPoint, float>& CachedHeights = **CachePtr;
-            FIntPoint Key(X, Y);
-
-            if (CachedHeights.Contains(Key))
-            {
-                return CachedHeights[Key];
-            }
-        }
-    }
-
-    // If cache is not available, fall back to sampling height directly
-    TOptional<float> SampledHeight = Landscape->GetHeightAtLocation(WorldPos);
-    
-    if (SampledHeight.IsSet())
-    {
-        // If sampled height is valid, cache it and return
-        if (LandscapeHeightCaches.Contains(Landscape))
-        {
-            TSharedPtr<TMap<FIntPoint, float>>* CachePtr = LandscapeHeightCaches.Find(Landscape);
-            if (CachePtr && CachePtr->IsValid())
-            {
-                FVector LandscapeLocal = Landscape->GetTransform().InverseTransformPosition(WorldPos);
-                int32 X = FMath::FloorToInt(LandscapeLocal.X / VoxelSize);
-                int32 Y = FMath::FloorToInt(LandscapeLocal.Y / VoxelSize);
-
-                TMap<FIntPoint, float>& CachedHeights = **CachePtr;
-                FIntPoint Key(X, Y);
-                CachedHeights.Add(Key, SampledHeight.GetValue());
-            }
-        }
-
-        return SampledHeight;
-    }
-
-    // If sampling from the terrain fails, return a fallback value
-    UE_LOG(LogTemp, Warning, TEXT("Failed to sample terrain height at %s"), *WorldPos.ToString());
-    return TOptional<float>();
-}
-*/
-// Currently used precise Height Sampling Method
-TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos)
-{
-    // Null check for Landscape
-    if (!Landscape || !IsValid(Landscape))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("SampleLandscapeHeight: Invalid Landscape pointer"));
-        return TOptional<float>();
-    }
-
-    // Always use direct sampling - bypass cache completely
-    TOptional<float> SampledHeight = Landscape->GetHeightAtLocation(WorldPos);
-    
-    if (SampledHeight.IsSet())
-    {
-        return SampledHeight;
-    }
-
-    // If sampling from the terrain fails, return a fallback value
-    UE_LOG(LogTemp, Warning, TEXT("Failed to sample terrain height at %s"), *WorldPos.ToString());
-    return TOptional<float>();
-}
-
-// Delete this please after it works well!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-// In DiggerManager.cpp  
-void ADiggerManager::QuickDebugTest()
-{
-    UE_LOG(LogTemp, Warning, TEXT("Testing Fast Debug Renderer..."));
-    
-    // Test single shapes
-    FAST_DEBUG_BOX(FVector(0, 0, 200), FVector(100), FLinearColor::Red);
-    FAST_DEBUG_SPHERE(FVector(300, 0, 200), 75.0f, FLinearColor::Green);
-    
-    // Test batch rendering (the real performance boost)
-    TArray<FVector> TestLocations;
-    for (int32 i = 0; i < 100; i++)
-    {
-        TestLocations.Add(FVector(i * 50, 0, 100));
-    }
-    
-    FAST_DEBUG_BOXES_BATCH(TestLocations, FVector(25), FLinearColor::Blue);
-    
-    UE_LOG(LogTemp, Warning, TEXT("Fast Debug Test Complete - Should see red box, green sphere, and 100 blue boxes"));
-}
-
-
-float ADiggerManager::GetSmartLandscapeHeightAt(const FVector& WorldPos)
-{
-    return GetSmartLandscapeHeightAt(WorldPos, false);
-}
-
-float ADiggerManager::GetSmartLandscapeHeightAt(const FVector& WorldPos, bool bForcePrecise)
-{
-    //const float HeightTolerance = VoxelSize * 0.5f; // Allowable vertical margin for refinement
-
-   // float CachedHeight = GetCachedLandscapeHeightAt(WorldPos);
-
-   // if (bForcePrecise)
-    //{
-        return GetLandscapeHeightAt(WorldPos);
-   /* }
-
-    // Compare Z difference (height) only, not full vector
-    float VerticalDifference = FMath::Abs(WorldPos.Z - CachedHeight);
-
-    if (VerticalDifference <= HeightTolerance)
-    {
-        // We're close enough — use precise sample
-        return GetLandscapeHeightAt(WorldPos);
-    }
-
-    return CachedHeight;*/
-}
-
-
-
-bool ADiggerManager::GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector& Location, float& OutHeight)
-{
-    if (!LandscapeProxy || !LandscapeProxy->GetLandscapeInfo())
-    {
-        return false;
-    }
-
-    // Convert world location to landscape local space
-    FVector LocalPosition = LandscapeProxy->GetTransform().InverseTransformPosition(Location);
-
-    // Try getting height using different sources
-    TOptional<float> HeightResult = LandscapeProxy->GetHeightAtLocation(LocalPosition, EHeightfieldSource::Simple);
-
-    if (!HeightResult.IsSet())
-    {
-        HeightResult = LandscapeProxy->GetHeightAtLocation(LocalPosition, EHeightfieldSource::Complex);
-    }
-
-    if (HeightResult.IsSet())
-    {
-        // Convert the height to world space
-        OutHeight = static_cast<float>(HeightResult.GetValue() * LandscapeProxy->GetActorScale3D().Z +
-            LandscapeProxy->GetActorLocation().Z);
-        return true;
-    }
-
-    return false;
+    return Location.Z;
 }
 
 
@@ -3648,10 +3464,10 @@ FVector ADiggerManager::GetLandscapeNormalAt(const FVector& WorldPosition)
     FVector PosY = WorldPosition + FVector(0, Delta, 0);
     FVector NegY = WorldPosition - FVector(0, Delta, 0);
 
-    float HeightX1 = GetLandscapeHeightAt(PosX);
-    float HeightX0 = GetLandscapeHeightAt(NegX);
-    float HeightY1 = GetLandscapeHeightAt(PosY);
-    float HeightY0 = GetLandscapeHeightAt(NegY);
+    float HeightX1 = GetLandscapeHeightAt(WorldPosition);
+    float HeightX0 = GetLandscapeHeightAt(WorldPosition);
+    float HeightY1 = GetLandscapeHeightAt(WorldPosition);
+    float HeightY0 = GetLandscapeHeightAt(WorldPosition);
 
     // Calculate gradient
     FVector Gradient;
@@ -3701,105 +3517,162 @@ void ADiggerManager::EnsureDefaultHoleBP()
 
 void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 {
+    // --- 1. CRITICAL VALIDATION ---
     if (!HoleBP)
     {
         EnsureDefaultHoleBP();
         if (!HoleBP)
         {
-            UE_LOG(LogTemp, Error, TEXT("HoleBP or ActiveBrush is null"));
+            UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: HoleBP is NULL! Check GDefaultHoleBPPath."));
             return;
         }
     }
 
     if (!ActiveBrush)
     {
+        // Try to recover ActiveBrush (Runtime or Editor)
 #if WITH_EDITOR
-        // Editor-only brush logic
+        // In Editor, we assume the tool manages this, but we can't spawn if missing.
+        UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: ActiveBrush is NULL in Editor!"));
+        return;
 #else
-        if (GetWorld() && GetWorld()->IsPlayInEditor())
+        // Runtime Auto-Create
+        if (GetWorld())
         {
-            ActiveBrush = CreateDefaultSubobject<UVoxelBrushShape>(TEXT("ActiveBrush"));
-            if (ActiveBrush)
-            {
-                ActiveBrush->InitializeBrush(
-                    ActiveBrush->GetBrushType(),
-                    ActiveBrush->GetBrushSize(),
-                    ActiveBrush->GetBrushLocation(),
-                    this);
-                InitializeBrushShapes();
-            }
+            ActiveBrush = NewObject<UVoxelBrushShape>(this, UVoxelBrushShape::StaticClass());
+            ActiveBrush->InitializeBrush(Stroke.BrushType, Stroke.BrushRadius, Stroke.BrushPosition, this);
+            InitializeBrushShapes();
         }
-
         if (!ActiveBrush)
+        {
+            UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: Failed to create ActiveBrush at Runtime!"));
             return;
+        }
 #endif
     }
 
-    // 🔧 Modulate scale based on terrain voxel size
-    VoxelSize = FVoxelConversion::LocalVoxelSize;
-    const float HoleSize = Stroke.BrushRadius;
-    const float GridUnits = HoleSize / VoxelSize;
-    
-    const FVector& BrushPos = Stroke.BrushPosition;
-    FVector  OffsetCorrection = FVector(5);
-    FVector BrushActualPos = BrushPos - OffsetCorrection;
-    FVector SpawnLocation = SnapToGrid(BrushActualPos, VoxelSize);
+    // --- 2. LOCATION & ROTATION STRATEGY ---
+    FVector SpawnLocation = Stroke.BrushPosition;
     FRotator SpawnRotation = Stroke.BrushRotation;
+    bool bHitLandscape = false;
 
-    // Adjust scale to match voxel grid footprint
-    FVector SpawnScale = FVector(GridUnits * VoxelSize / 38.0f); // Normalize to mesh scale
-
-    // 🛑 Early out if subterranean
-    if (GetLandscapeHeightAt(SpawnLocation) > SpawnLocation.Z + HoleSize * 0.5f)
-    {
-        if (DiggerDebug::Casts() || DiggerDebug::Holes())
-            UE_LOG(LogTemp, Warning, TEXT("Subterranean hit at %s, not spawning hole."), *SpawnLocation.ToString());
-        return;
-    }
-
-    if (SpawnLocation.IsNearlyZero())
-    {
-        SpawnLocation.Z = 100.f;
-    }
-
+    // STRATEGY A: Use Camera Hit (The "Old Reliable" way)
+    // This works perfectly for the player/editor mouse.
     FHitResult HitResult;
     if (ActiveBrush->GetCameraHitLocation(HitResult))
     {
         AActor* HitActor = HitResult.GetActor();
-        if (!HitActor || !ActiveBrush->IsLandscape(HitActor))
+        
+        // Strict check: Must hit Landscape to spawn a hole cap
+        // (Uses your existing IsLandscape helper)
+        if (HitActor && ActiveBrush->IsLandscape(HitActor))
         {
-            if (DiggerDebug::Casts() || DiggerDebug::Holes())
-                UE_LOG(LogTemp, Warning, TEXT("Invalid hit actor, not spawning hole."));
+            SpawnLocation = HitResult.Location;
+            
+            // Align to normal
+            FVector SafeNormal = HitResult.ImpactNormal.GetSafeNormal();
+            if (!SafeNormal.IsNearlyZero() && FMath::Abs(FVector::DotProduct(SafeNormal, FVector::UpVector)) > 0.1f)
+            {
+                SpawnRotation = FRotationMatrix::MakeFromZ(SafeNormal).Rotator();
+            }
+            else
+            {
+                SpawnRotation = FRotator::ZeroRotator; // Fallback to Up
+            }
+            
+            bHitLandscape = true;
+        }
+        else
+        {
+            // We hit something that wasn't landscape (e.g. a building).
+            // We should NOT spawn a hole cap on a building.
+            UE_LOG(LogTemp, Warning, TEXT("HandleHoleSpawn: Camera hit %s, which is not Landscape. Skipping."), 
+                HitActor ? *HitActor->GetName() : TEXT("None"));
             return;
         }
-
-        FVector SafeNormal = HitResult.ImpactNormal.GetSafeNormal();
-        if (SafeNormal.IsNearlyZero() || FMath::Abs(FVector::DotProduct(SafeNormal, FVector::UpVector)) < 0.1f)
+    }
+    
+    // STRATEGY B: Fallback Trace (For AI / Vehicles / No Camera)
+    // Only run this if Strategy A didn't fire or wasn't used.
+    if (!bHitLandscape)
+    {
+        FVector TraceStart = SpawnLocation + FVector(0, 0, Stroke.BrushRadius * 2.0f);
+        FVector TraceEnd   = SpawnLocation - FVector(0, 0, Stroke.BrushRadius * 2.0f);
+        FCollisionQueryParams Params(SCENE_QUERY_STAT(HoleFallback), false, this);
+        
+        TArray<FHitResult> Hits;
+        if (GetWorld()->LineTraceMultiByChannel(Hits, TraceStart, TraceEnd, ECC_Visibility, Params))
         {
-            SafeNormal = FVector::UpVector;
+            for (const FHitResult& CheckHit : Hits)
+            {
+                if (CheckHit.GetActor() && CheckHit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
+                {
+                    SpawnLocation = CheckHit.Location;
+                    if (!CheckHit.ImpactNormal.IsNearlyZero())
+                    {
+                        SpawnRotation = FRotationMatrix::MakeFromZ(CheckHit.ImpactNormal).Rotator();
+                    }
+                    bHitLandscape = true;
+                    break;
+                }
+            }
         }
-
-        SpawnRotation = FRotationMatrix::MakeFromZ(SafeNormal).Rotator();
-        SpawnLocation = HitResult.Location;
     }
 
+    // --- 3. SUBTERRANEAN CHECK ---
+    // If we didn't hit the landscape with either method, we are likely deep underground or in the sky.
+    // We check the Height Cache to be sure.
+    float TerrainHeight = GetLandscapeHeightAt(SpawnLocation);
+    
+    // Tolerance: Radius * 0.6 (Matches your old reliable code)
+    if (TerrainHeight > (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f))
+    {
+        if (SpawnLocation.Z < (TerrainHeight - (Stroke.BrushRadius * 0.6f)))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("HandleHoleSpawn: Too deep underground. BrushZ=%.2f, TerrainZ=%.2f. Skipping."), 
+                SpawnLocation.Z, TerrainHeight);
+            return;
+        }
+    }
+
+    // --- 4. SCALE CALCULATION ---
+    // Matches your old code (Radius / 47.0f) exactly for consistency.
+    // If you want to use the new "100.0f" logic later, change 47.0f to 100.0f.
+    const float ScaleDivisor = 47.0f; // Old Magic Number
+    FVector SpawnScale = FVector(Stroke.BrushRadius / ScaleDivisor);
+
+    // --- 5. EXECUTION ---
     UVoxelChunk* TargetChunk = GetOrCreateChunkAtWorld(SpawnLocation);
+    
     if (TargetChunk)
     {
-        TargetChunk->SaveHoleData(SpawnLocation, SpawnRotation, SpawnScale);
-        TargetChunk->SpawnHoleFromData(FSpawnedHoleData(SpawnLocation, SpawnRotation, SpawnScale, Stroke.HoleShape));
-        if (DiggerDebug::Holes())
-            UE_LOG(LogTemp, Log, TEXT("Delegated hole spawn to chunk at location %s"), *SpawnLocation.ToString());
+        // Shape Setup
+        FHoleShape FinalShape = Stroke.HoleShape;
+        
+        // Ensure type correctness based on Brush
+        switch (Stroke.BrushType)
+        {
+            case EVoxelBrushType::Cube: FinalShape.ShapeType = EHoleShapeType::Cube; break;
+            case EVoxelBrushType::Sphere: FinalShape.ShapeType = EHoleShapeType::Sphere; break;
+            default: FinalShape.ShapeType = EHoleShapeType::Sphere; break;
+        }
+
+        // Data Package
+        FSpawnedHoleData HoleData(SpawnLocation, SpawnRotation, SpawnScale, FinalShape);
+
+        // ACTION: Spawn
+        // Note: We do NOT call SaveHoleData here manually anymore, because SaveChunkData handles it.
+        // We only call SpawnHoleFromData.
+        TargetChunk->SpawnHoleFromData(HoleData);
+
+        UE_LOG(LogTemp, Log, TEXT("HandleHoleSpawn: SUCCESS. Spawned at %s (Chunk %s)"), 
+            *SpawnLocation.ToString(), *TargetChunk->GetChunkCoordinates().ToString());
     }
     else
     {
-        if (DiggerDebug::Chunks() || DiggerDebug::Holes())
-            UE_LOG(LogTemp, Error, TEXT("No chunk found at location %s"), *SpawnLocation.ToString());
+        UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: FAILED. No chunk found at %s"), *SpawnLocation.ToString());
     }
 }
-
-
-
 
 
 
@@ -3930,35 +3803,6 @@ void ADiggerManager::DebugVoxels()
     }
 }
 
-void ADiggerManager::ProcessDirtyChunks()
-{
-    // for (auto& Elem : ChunkMap)
-    // {
-    //     UVoxelChunk* Chunk = Elem.Value;
-    //     if (Chunk)
-    //     {
-    //         Chunk->ForceUpdate();
-    //     }
-    // }
-
-    UpdateAllDirtyChunks();
-
-    /*if (World)
-    {
-        AsyncTask(ENamedThreads::GameThread, [this]()
-        {
-            if (World)
-            {
-                World->GetTimerManager().ClearTimer(ChunkProcessTimerHandle);
-                World->GetTimerManager().SetTimer(ChunkProcessTimerHandle, this, &ADiggerManager::ProcessDirtyChunks, 2.0f, true);
-            }
-            else
-            {
-                UE_LOG(LogTemp, Error, TEXT("World is null when resetting the ProcessDirtyChunks timer."));
-            }
-        });
-    }*/
-}
 
 
 
@@ -4046,6 +3890,7 @@ void ADiggerManager::ApplyBrush()
     BrushStroke.BrushRadius = BrushRadius;
     BrushStroke.bDig = ActiveBrush->GetDig();
     BrushStroke.BrushType = ActiveBrush->GetBrushType();
+    
 
     ApplyBrushToAllChunks(BrushStroke);
 
@@ -4653,9 +4498,6 @@ void ADiggerManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 
     // Enforce the 0,0,0 position for the DiggerManager
     EnforceZeroLocation();
-    
-    // Respond to property changes (e.g., ChunkSize, TerrainGridSize, etc.)
-    EditorUpdateChunks();
 }
 
 
@@ -4670,10 +4512,6 @@ void ADiggerManager::PostEditMove(bool bFinished)
     {
         EditorDeferredInit();
     }
-    else if (bFinished)
-    {
-        EditorUpdateChunks();
-    }
     
     // Enforce the 0,0,0 position for the DiggerManager
     EnforceZeroLocation();
@@ -4685,14 +4523,7 @@ void ADiggerManager::PostEditUndo()
 
     // Update FVoxelConversion in case undo/redo changed position or settings
     FVoxelConversion::InitFromConfig(ChunkSize, Subdivisions, TerrainGridSize, GetActorLocation());
-
-    EditorUpdateChunks();
-}
-
-void ADiggerManager::EditorUpdateChunks()
-{
-    // Call your chunk update logic here
-    ProcessDirtyChunks();
+    
 }
 
 void ADiggerManager::EditorRebuildAllChunks()
@@ -4732,6 +4563,14 @@ void ADiggerManager::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
+    // Process background loading
+    if (HeightCacheSystem)
+    {
+        HeightCacheSystem->TickProcessQueue();
+    }
+
+    // 2. THE MISSING LINK: Process Dirty Chunks
+    // This iterates the map and triggers generation for any chunk marked dirty.
     ProcessDirtyChunks();
     
     // Update cache refresh timer
@@ -4744,14 +4583,20 @@ void ADiggerManager::Tick(float DeltaTime)
             RefreshSavedChunkCache();
         }
     }
+    
+}
 
-    // Debug test:
-    if (GetWorld())
+void ADiggerManager::ProcessDirtyChunks()
+{
+    //1. Process chunks
+    // UE_LOG(LogTemp, Log, TEXT("ProcessDirtyChunks running...")); // Optional Debug
+    ProcessDirtyChunksLoop();
+
+    // 2. Process Height Cache Queue (Background Work)
+    if (HeightCacheSystem)
     {
-        UE_LOG(LogTemp, Error, TEXT("World is correct in ADiggerManager::Tick!"));
-        DrawDebugLine(GetWorld(), FVector(0,0,100), FVector(100,0,50), FColor::Red, false, 5.0f, 0, 2.0f);
+        HeightCacheSystem->TickProcessQueue();
     }
-    // Your existing tick code...
 }
 
 void ADiggerManager::QueueBrushPoint(const FVector& HitPointWS, float Radius, float Strength, float Hardness, uint8 Shape, uint8 Op)
@@ -4764,6 +4609,8 @@ void ADiggerManager::QueueBrushPoint(const FVector& HitPointWS, float Radius, fl
         bHasLastSample = true;
     }
 }
+
+
 
 void ADiggerManager::ApplyPendingBrushSamples()
 {
@@ -4802,7 +4649,11 @@ bool ADiggerManager::RemoveHoleNear(FVector WorldPosition, float MaxDistance)
     return false;
 }
 
-
+bool ADiggerManager::ShouldTickIfViewportsOnly() const
+{
+    // 2. Return true to tick in the editor viewport
+    return true;
+}
 
 TArray<FIntVector> ADiggerManager::GetAllSavedChunkCoordinates(bool bForceRefresh) const
 {
@@ -4872,6 +4723,7 @@ void ADiggerManager::RefreshSavedChunkCache()
         LastCachedCount = CachedSavedChunkCoordinates.Num();
     }
 }
+
 
 
 bool ADiggerManager::DeleteChunkFile(const FIntVector& ChunkCoords)

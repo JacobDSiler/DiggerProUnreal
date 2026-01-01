@@ -2,8 +2,10 @@
 
 #include "CoreMinimal.h"
 #include "FLightBrushTypes.h"
+#include "DynamicLightActor.h" // Required to spawn the class
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SpotLightComponent.h"
+#include "Components/PointLightComponent.h"
 #include "Engine/PointLight.h"
 #include "Engine/SpotLight.h"
 #include "Engine/DirectionalLight.h"
@@ -48,8 +50,8 @@ struct FSavedLightData
 		, LightType(ELightBrushType::Point)
 		, LightColor(FLinearColor::White)
 		, Intensity(1000.f)
-		, Radius(100.f)
-		, Falloff(300.f)
+		, Radius(1000.f)
+		, Falloff(2.0f)
 		, Angle(45.f)
 	{}
 
@@ -62,6 +64,37 @@ struct FSavedLightData
 		Rotation = LightActor->GetActorRotation();
 		Scale = LightActor->GetActorScale3D();
 
+		// Check if it is our custom actor first
+		if (const ADynamicLightActor* DynamicLight = Cast<ADynamicLightActor>(LightActor))
+		{
+			// Assuming the actor has a component we can inspect
+			if (ULightComponent* LightComp = DynamicLight->FindComponentByClass<ULightComponent>())
+			{
+				LightColor = LightComp->GetLightColor();
+				Intensity = LightComp->Intensity;
+
+				if (const UPointLightComponent* Point = Cast<UPointLightComponent>(LightComp))
+				{
+					LightType = ELightBrushType::Point;
+					Radius = Point->AttenuationRadius;
+					Falloff = Point->LightFalloffExponent;
+				}
+				else if (const USpotLightComponent* Spot = Cast<USpotLightComponent>(LightComp))
+				{
+					LightType = ELightBrushType::Spot;
+					Radius = Spot->AttenuationRadius;
+					Falloff = Spot->LightFalloffExponent;
+					Angle = Spot->InnerConeAngle;
+				}
+				else if (Cast<UDirectionalLightComponent>(LightComp))
+				{
+					LightType = ELightBrushType::Directional;
+				}
+			}
+			return;
+		}
+
+		// Fallback for standard engine lights (legacy support)
 		if (const APointLight* PointLight = Cast<APointLight>(LightActor))
 		{
 			if (UPointLightComponent* PointComp = Cast<UPointLightComponent>(PointLight->GetLightComponent()))
@@ -92,7 +125,6 @@ struct FSavedLightData
 				LightType = ELightBrushType::Directional;
 				LightColor = DirComp->GetLightColor();
 				Intensity = DirComp->Intensity;
-				// Directional lights don’t use Radius/Falloff/Angle
 			}
 		}
 	}
@@ -102,53 +134,86 @@ struct FSavedLightData
 	{
 		if (!World) return nullptr;
 
-		AActor* NewLight = nullptr;
+		// 1. Spawn the Custom Dynamic Light Actor
+		ADynamicLightActor* NewLight = World->SpawnActor<ADynamicLightActor>(
+			ADynamicLightActor::StaticClass(), Location, Rotation);
 
-		switch (LightType)
+		if (NewLight)
 		{
-		case ELightBrushType::Point:
-		{
-			APointLight* PointLight = World->SpawnActor<APointLight>(Location, Rotation);
-			PointLight->SetActorScale3D(Scale);
-			if (UPointLightComponent* PointComp = Cast<UPointLightComponent>(PointLight->GetLightComponent()))
+			NewLight->SetActorScale3D(Scale);
+
+			// 2. Initialize the Component (Create Point/Spot/Dir component based on enum)
+			NewLight->InitLight(LightType);
+
+			// 3. Find the newly created component to apply settings
+			ULightComponent* LightComp = NewLight->FindComponentByClass<ULightComponent>();
+
+			if (LightComp)
 			{
-				PointComp->SetLightColor(LightColor);
-				PointComp->Intensity = Intensity;
-				PointComp->AttenuationRadius = Radius;
-				PointComp->LightFalloffExponent = Falloff;
+				// Common Settings
+				LightComp->SetLightColor(LightColor);
+				LightComp->SetIntensity(Intensity);
+
+				// Type-Specific Settings
+				switch (LightType)
+				{
+				case ELightBrushType::Point:
+					if (UPointLightComponent* Point = Cast<UPointLightComponent>(LightComp))
+					{
+						Point->SetAttenuationRadius(Radius);
+						Point->SetLightFalloffExponent(Falloff);
+					}
+					break;
+
+				case ELightBrushType::Spot:
+					if (USpotLightComponent* Spot = Cast<USpotLightComponent>(LightComp))
+					{
+						Spot->SetAttenuationRadius(Radius);
+						Spot->SetLightFalloffExponent(Falloff);
+						Spot->SetInnerConeAngle(Angle);
+						Spot->SetOuterConeAngle(Angle + 10.0f); // Standard offset
+					}
+					break;
+
+				case ELightBrushType::Directional:
+					// Directional usually relies on rotation/intensity/color only
+					break;
+				}
 			}
-			NewLight = PointLight;
-			break;
-		}
-		case ELightBrushType::Spot:
-		{
-			ASpotLight* SpotLight = World->SpawnActor<ASpotLight>(Location, Rotation);
-			SpotLight->SetActorScale3D(Scale);
-			if (USpotLightComponent* SpotComp = Cast<USpotLightComponent>(SpotLight->GetLightComponent()))
-			{
-				SpotComp->SetLightColor(LightColor);
-				SpotComp->Intensity = Intensity;
-				SpotComp->AttenuationRadius = Radius;
-				SpotComp->LightFalloffExponent = Falloff;
-				SpotComp->InnerConeAngle = Angle;
-			}
-			NewLight = SpotLight;
-			break;
-		}
-		case ELightBrushType::Directional:
-		{
-			ADirectionalLight* DirLight = World->SpawnActor<ADirectionalLight>(Location, Rotation);
-			DirLight->SetActorScale3D(Scale);
-			if (UDirectionalLightComponent* DirComp = Cast<UDirectionalLightComponent>(DirLight->GetLightComponent()))
-			{
-				DirComp->SetLightColor(LightColor);
-				DirComp->Intensity = Intensity;
-			}
-			NewLight = DirLight;
-			break;
-		}
+            
+            // Ensure folder is set correctly in Editor
+#if WITH_EDITOR
+            NewLight->SetFolderPath(FName("Digger/DynamicLights"));
+#endif
 		}
 
 		return NewLight;
+	}
+
+	friend FArchive& operator<<(FArchive& Ar, FSavedLightData& Data)
+	{
+		Ar << Data.Location;
+		Ar << Data.Rotation;
+		Ar << Data.Scale;
+
+		if (Ar.IsSaving())
+		{
+			uint8 TypeByte = (uint8)Data.LightType;
+			Ar << TypeByte;
+		}
+		else
+		{
+			uint8 TypeByte = 0;
+			Ar << TypeByte;
+			Data.LightType = (ELightBrushType)TypeByte;
+		}
+
+		Ar << Data.LightColor;
+		Ar << Data.Intensity;
+		Ar << Data.Radius;
+		Ar << Data.Falloff;
+		Ar << Data.Angle;
+
+		return Ar;
 	}
 };

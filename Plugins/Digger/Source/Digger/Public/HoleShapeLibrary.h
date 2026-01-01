@@ -25,7 +25,7 @@ struct FHoleMeshMapping
 };
 
 // CHANGE: Inherit from UDataAsset instead of UObject
-UCLASS(Blueprintable, BlueprintType)
+UCLASS(BlueprintType)
 class DIGGER_API UHoleShapeLibrary : public UDataAsset 
 {
 	GENERATED_BODY()

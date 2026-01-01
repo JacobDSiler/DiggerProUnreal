@@ -31,7 +31,7 @@ FORCEINLINE EHoleShapeType GetHoleShapeForBrush(EVoxelBrushType BrushType)
     case EVoxelBrushType::Pyramid:
         return EHoleShapeType::Pyramid;
     case EVoxelBrushType::Stairs:
-        return EHoleShapeType::Stairs;
+        return EHoleShapeType::Sphere;//Stairs;
     case EVoxelBrushType::Smooth:
         return EHoleShapeType::Sphere;
         break;
@@ -135,7 +135,7 @@ struct FBrushStroke
     EHoleShapeType HoleShape;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    ELightBrushType LightType; // <-- Add this
+    ELightBrushType LightType;
 
     UPROPERTY(Transient)
     UVoxelBrushShape* BrushShape;

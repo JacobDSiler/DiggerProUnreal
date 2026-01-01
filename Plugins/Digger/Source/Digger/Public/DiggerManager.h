@@ -30,6 +30,9 @@
 #include "Voxel/VoxelEvents.h"
 #include "Materials/DiggerMaterialTypes.h"
 
+//4.5 Digger Height Cache
+#include "DiggerLandscapeCache.h"
+
 // 5. Editor-Only Headers
 // CRITICAL: These must be wrapped. If you use types from these files 
 // in your class variables/functions, those variables must ALSO be wrapped in #if WITH_EDITOR
@@ -224,6 +227,11 @@ public:
     // NEW (stub): will be broadcast once after routing a brush across chunks
     FOnBrushFinished OnBrushFinished;
 
+    // Simple check to see if we have work unsaved
+    bool HasVoxelData() const
+    {
+        return ChunkMap.Num() > 0 || (SparseVoxelGrid && SparseVoxelGrid->VoxelData.Num() > 0);
+    }
 
     void SpawnLight(const FBrushStroke& Stroke);
     void InitializeBrushShapes();
@@ -243,7 +251,11 @@ public:
     TArray<FIslandData> DetectUnifiedIslands();
     void RemoveUnifiedIslandVoxels(const FIslandData& Island);
 
-
+public:
+    [[nodiscard]] UDiggerLandscapeCache* AccessHeightCacheSystem() const
+    {
+        return HeightCacheSystem;
+    }
     
     UFUNCTION(BlueprintCallable, Category="Digger|Materials")
     void ApplyMaterialProfileToComponent(UDiggerMaterialProfile* Profile, UPrimitiveComponent* TargetComponent, int32 ElementIndex);
@@ -280,7 +292,23 @@ private:
     void PushProfileParamsToMID(UDiggerMaterialProfile* Profile, UMaterialInstanceDynamic* MID, int32 MaxLayers = 12);
     UMaterialInstanceConstant* BuildMaterialInstanceFromProfile(UDiggerMaterialProfile* Profile, const FString& TargetFolder, const FString& BaseAssetName, UMaterialInterface* Parent);
 
+    UPROPERTY()
+    UDiggerLandscapeCache* HeightCacheSystem;
 public:
+    
+
+    // The simplified API
+    UFUNCTION(BlueprintCallable, Category = "Landscape Tools")
+    float GetLandscapeHeightAt(const FVector& Location);
+    
+    // Generic dig function for Vehicles, AI, or Custom Tools
+    UFUNCTION(BlueprintCallable, Category = "Digger Tool")
+    bool PerformDig(FVector StartLocation, FVector Direction, float TraceRange, float Radius, float Falloff, EVoxelBrushType Shape, bool bIsDigging);
+    
+    // Static helper to find the manager in the current world
+    // Safe for PIE, Editor, and Runtime
+    UFUNCTION(BlueprintCallable, Category = "Digger", meta = (WorldContext = "WorldContextObject"))
+    static ADiggerManager* FindDiggerManager(const UObject* WorldContextObject);
 
     // Returns parameter names like "Layer3_BaseColor"
     static FName LayerParam(int32 Index1Based, const TCHAR* Suffix);
@@ -298,10 +326,24 @@ public:
                                            float Thickness);
     void DebugDrawVoxelAtWorldPosition(const FVector& WorldPosition, FColor BoxColor, float Duration, float Thickness);
 
+    UFUNCTION(BlueprintCallable, Category = "Digger Manager")
+    void ClearAllVoxelData();
+    
+    // Return bool so the BP knows if it hit something
+    UFUNCTION(BlueprintCallable, Category = "Digger")
+    bool PerformPlayerDig();
+    
     void DrawDiagonalDebugVoxels(FIntVector ChunkCoords);
     void DrawDiagonalDebugVoxelsFast(FIntVector ChunkCoords);
     UStaticMesh* ConvertIslandToStaticMesh(const FIslandData& Island, bool bWorldOrigin, FString AssetName);
-    void UpdateAllDirtyChunks();
+
+    // Call this button to re-scan the landscape if you sculpted it using Unreal tools
+    UFUNCTION(CallInEditor, Category = "Landscape Tools")
+    void RefreshLandscapeCache();
+    
+    // Allows the actor to tick in the editor viewport
+    virtual bool ShouldTickIfViewportsOnly() const override;
+    
     AIslandActor* SpawnIslandActorFromIslandAtPosition(const FVector& IslandCenter, bool bEnablePhysics);
 
     FIntVector FindNearestSurfaceVoxel(USparseVoxelGrid* VoxelGrid, FIntVector IntVector, int SurfaceSearchRadius);
@@ -500,15 +542,37 @@ public:
 
     
 protected:
+    // Called when the game stops, level changes, or actor is destroyed
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+    
+    // 1. Holds the list of chunks we still need to load. 
+    // Must be a member so it persists across frames.
+    UPROPERTY()
+    TArray<FIntVector> PendingChunksToLoad;
+
+    // 2. Tracks the active timer so we can stop it later.
+    FTimerHandle LoadQueueTimerHandle;
+
+    // 3. Configuration for speed vs. lag. 
+    // Making it EditAnywhere allows you to tune it in the Editor without compiling!
+    UPROPERTY(EditAnywhere, Category = "Digger Performance")
+    int32 ChunksPerBatch = 5;
+
+    // Store the filename here so the async timer can read it every frame
+    UPROPERTY()
+    FString AsyncLoadingFileName;
+
+    // Remove the parameter from the function signature!
+    // The timer needs a void function.
+    UFUNCTION()
+    void ProcessChunkLoadQueue();
+    
     void RecreateIslandFromSaveData(const FIslandSaveData& SavedIsland);
-    void PopulateAllCachedLandscapeHeights();
     virtual void BeginPlay() override;
-    void StartHeightCaching();
     void DestroyAllHoleBPs();
     void ClearHolesFromChunkMap();
     virtual void PostInitProperties() override;
     void UpdateVoxelSize();
-    void ProcessDirtyChunks();
 
 #if WITH_EDITOR
 public:
@@ -519,17 +583,12 @@ public:
     virtual void PostEditMove(bool bFinished) override;
     virtual void PostEditUndo() override;
 
-    // Convenience Methods.
-    void ClearDiggerChanges();
-
-    // Expose manual update/rebuild in editor
-    UFUNCTION(CallInEditor, Category = "Editor Tools")
-    void EditorUpdateChunks();
+    FTimerHandle ChunkUpdateTimerHandle;
+    void ProcessDirtyChunksLoop();
+    
 
     UFUNCTION(CallInEditor, Category = "Editor Tools")
     void EditorRebuildAllChunks();
-    TArray<FIslandData> GetAllIslands() const;
-    //void UpdateIslandsFromChunk(UVoxelChunk* Chunk);
 
 
     FVector SnapToGrid(const FVector& Position, float CellSize)
@@ -543,7 +602,6 @@ public:
 #endif
 
 public:
-    
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Settings")
     int32 ChunkSize = 32;  // Number of grif squares per chunk
@@ -609,34 +667,12 @@ public:
 
     void InitializeChunks();  // Initialize all chunks
     void InitializeSingleChunk(UVoxelChunk* Chunk);  // Initialize a single chunk
-    void UpdateLandscapeProxies();
     
     //The world map of the voxel chunks
     UPROPERTY()
     TMap<FIntVector, UVoxelChunk*> ChunkMap;
 
-    // Cache map from proxy pointer to boolean flag (just for example—can be more complex if needed later)
-    UPROPERTY()
-    TMap<ALandscapeProxy*, bool> CachedLandscapeProxies;
-
-    UPROPERTY()
-    ALandscapeProxy* LastUsedLandscape = nullptr;
-
-
-
-    // Key is world-space X,Y location snapped to voxel grid
-    UPROPERTY()
-    TMap<FIntPoint, float> TerrainHeightCache;
-
-    // Top-level cache by Landscape Proxy
-    //UPROPERTY()
-    TMap<ALandscapeProxy*, TSharedPtr<TMap<FIntPoint, float>>> LandscapeHeightCaches;
-
-    //LoadingCache flag to determine if the height cache on a specific proxy exists. This prevents duplicate async jobs from starting for the same proxy.
-    UPROPERTY()
-    TSet<ALandscapeProxy*> HeightCacheLoadingSet;
-
-
+    
 private:
     // Helper function to enforce the zero location
     void EnforceZeroLocation();
@@ -680,6 +716,10 @@ private:
     TMap<FString, TArray<FIntVector>> SavedChunkCache;
 
 public:
+    // Restore HoleBPs in the chunks after re-entering the editor after a PIE session.
+    UFUNCTION(BlueprintCallable, CallInEditor, Category = "Digger Utilities")
+    void RestoreHolesInEditor();
+    
     // Single chunk serialization methods
     UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
     bool SaveChunk(const FIntVector& ChunkCoords);
@@ -708,6 +748,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Voxel Serialization")
     void EnsureVoxelDataDirectoryExists() const;
     void Tick(float DeltaTime);
+    void ProcessDirtyChunks();
     void QueueBrushPoint(const FVector& HitPointWS, float Radius, float Strength, float Hardness, uint8 Shape,
                          uint8 Op);
 
@@ -726,6 +767,7 @@ public:
     bool SaveAllChunks(const FString& SaveFileName);
     bool LoadAllChunks(const FString& SaveFileName);
 
+
     // Default Save
     TArray<FIntVector> GetAllSavedChunkCoordinates(bool bForceRefresh);
     // Named Save
@@ -734,7 +776,7 @@ public:
     
     bool DeleteSaveFile(const FString& SaveFileName);
     void InvalidateSavedChunkCache(const FString& SaveFileName = TEXT(""));
-    void InvalidateSavedChunkCache();
+
 
 private:
     // Cache for saved chunk coordinates to avoid constant filesystem scanning
@@ -760,7 +802,6 @@ private:
 
     // “tiny” editor preview init vs full init
     void InitEditorLightweight();   // very cheap
-    void InitRuntimeHeavy();        // full system init
     void EditorDeferredInit();      // called when the actor is dropped (not while dragging)
 public:
     // Hole-shape library bootstrap
@@ -805,10 +846,8 @@ private:
         const TArray<FColor>& Colors,
         const TArray<FProcMeshTangent>& Tangents
     );
-    void ClearAllVoxelData();
 
 public:
-    void PopulateLandscapeHeightCache(ALandscapeProxy* Landscape);
     
     [[nodiscard]] UMaterialInterface* GetTerrainMaterial() const
     {
@@ -830,22 +869,9 @@ public:
         else
             return nullptr;
     }
-    UFUNCTION(BlueprintCallable, Category = "Landscape Tools")
-    float GetLandscapeHeightAt(FVector WorldPosition);
-    TSharedPtr<TMap<FIntPoint, float>> GetOrCreateLandscapeHeightCache(ALandscapeProxy* Landscape);
-    void PopulateLandscapeHeightCacheAsync(ALandscapeProxy* Landscape);
-    ALandscapeProxy* GetLandscapeProxyAt(const FVector& WorldPos);
-    TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos, bool bForcePrecise);
-    TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos);
-    // Delete this after it works!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // In DiggerManager.h
-    UFUNCTION(CallInEditor, BlueprintCallable, Category = "Debug")
-    void QuickDebugTest();
     
-    float GetSmartLandscapeHeightAt(const FVector& WorldPos);
-    float GetSmartLandscapeHeightAt(const FVector& WorldPos, bool bForcePrecise);
-    //bool IsNearLandscapeEdge(const FVector& WorldPos, float Threshold);
-    bool GetHeightAtLocation(ALandscapeProxy* LandscapeProxy, const FVector& Location, float& OutHeight);
+
+    
     FVector GetLandscapeNormalAt(const FVector& WorldPosition);
     UWorld* GetSafeWorld() const;
     void EnsureDefaultHoleBP();
@@ -857,7 +883,4 @@ private:
 
     std::queue<FBrushStroke> BrushStrokeQueue;
     const int32 MaxUndoLength = 10; // Example limit
-
-    FTimerHandle ChunkProcessTimerHandle;
-    
 };

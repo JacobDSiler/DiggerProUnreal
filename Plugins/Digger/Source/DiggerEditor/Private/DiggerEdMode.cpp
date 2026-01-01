@@ -19,6 +19,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInterface.h"
 #include "Toolkits/ToolkitManager.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 
 #define LOCTEXT_NAMESPACE "DiggerEditorMode"
 
@@ -108,29 +109,57 @@ static void EnsureDiggerPrereqs()
 {
 #if WITH_EDITOR
     if (!GEditor) return;
+    
+    // 1. Get the Correct World (Handle PIE vs Editor)
     UWorld* World = GEditor->GetEditorWorldContext().World();
     if (!World) return;
 
+    // 2. Find or Spawn Manager
     ADiggerManager* Mgr = FindExistingManager(World);
     if (!Mgr)
     {
         FActorSpawnParameters S;
         S.Name = FName(TEXT("DiggerManager"));
         S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        // Make sure it's transient so it doesn't get saved into the map permanently if you don't want it to
+        S.ObjectFlags = RF_Transactional; 
+        
         Mgr = World->SpawnActor<ADiggerManager>(ADiggerManager::StaticClass(), FTransform::Identity, S);
     }
+
     if (Mgr)
     {
-        // If your property is a UHoleShapeLibrary* replace UObject* and property name as needed
+        // 3. Check if Library is missing
         if (!IsValid(Mgr->HoleShapeLibrary))
         {
-            // Try load a project default if you have one
-            UObject* Lib = StaticLoadObject(UObject::StaticClass(), nullptr, TEXT("/Game/Digger/Defaults/DA_DefaultHoleShapes.DA_DefaultHoleShapes"));
-            if (!Lib)
+            // USE THE CORRECT PATH FROM YOUR LOGS
+            const TCHAR* LibPath = TEXT("/Digger/Digger/BluePrints/HoleShapeLibrary.HoleShapeLibrary");
+            
+            UHoleShapeLibrary* LoadedLib = Cast<UHoleShapeLibrary>(StaticLoadObject(UHoleShapeLibrary::StaticClass(), nullptr, LibPath));
+
+            if (LoadedLib)
             {
-                Lib = CreateTransientHoleShapeLibrary();
+                // ASSIGN IT! This was missing in your previous code.
+                Mgr->HoleShapeLibrary = LoadedLib;
+                UE_LOG(LogTemp, Log, TEXT("DiggerPrereqs: Successfully assigned existing HoleShapeLibrary."));
             }
-            Mgr->EnsureHoleShapeLibrary();
+            else
+            {
+                // Fallback: Create a Transient one
+                // CRITICAL: Pass 'Mgr' as the Outer (1st arg). 
+                // If you pass GetTransientPackage(), the GC might eat it because the Manager doesn't "own" it.
+                Mgr->HoleShapeLibrary = NewObject<UHoleShapeLibrary>(Mgr, UHoleShapeLibrary::StaticClass());
+                
+                // If you have a function to seed it, call it now
+                // SeedHoleShapesFromFolder(Mgr->HoleShapeLibrary); 
+                
+                UE_LOG(LogTemp, Warning, TEXT("DiggerPrereqs: Could not load Library at %s. Created a new transient one."), LibPath);
+            }
+
+            // 4. Update the Manager
+            // Only call this if you are sure it doesn't crash on nulls
+            // Mgr->EnsureHoleShapeLibrary(); 
+            
             Mgr->Modify();
         }
     }
@@ -147,6 +176,32 @@ void FDiggerEdMode::Enter()
         FDiggerEditorAccess::SetEditorModeActive(true);
         Toolkit = MakeShareable(new FDiggerEdModeToolkit);
         Toolkit->Init(Owner->GetToolkitHost());
+        ////////// This commented code is to  check what objects are actually registered in the file system.
+        ////////// Specifically, it helped me know that my plugin objects were loaded.
+        // // 1. Get the Asset Registry
+        // FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+        //
+        // // 2. Define the search root. 
+        // // We suspect it is "/Digger", but let's scan the root to be safe.
+        // // If this returns nothing, change "/Digger" to "/" to scan the whole project (lots of logs, but definitive).
+        // FName SearchPath = FName("/Digger"); 
+        //
+        // TArray<FAssetData> AssetDataList;
+        // AssetRegistryModule.Get().GetAssetsByPath(SearchPath, AssetDataList, true); // 'true' = Recursive
+        //
+        // if (AssetDataList.Num() == 0)
+        // {
+        //     UE_LOG(LogTemp, Error, TEXT("PATH DEBUG: No assets found under path '%s'. The Plugin might not be mounted or 'CanContainContent' is false."), *SearchPath.ToString());
+        // }
+        // else
+        // {
+        //     UE_LOG(LogTemp, Warning, TEXT("PATH DEBUG: Found %d assets. Printing correct paths below:"), AssetDataList.Num());
+        //     for (const FAssetData& Data : AssetDataList)
+        //     {
+        //         // This prints the exact Package Path you need to use in your code
+        //         UE_LOG(LogTemp, Warning, TEXT("FOUND: %s"), *Data.PackageName.ToString());
+        //     }
+        // }
     }
 
     EnsureDiggerPrereqs();
@@ -165,6 +220,13 @@ void FDiggerEdMode::Exit()
 
     if (Toolkit.IsValid())
     {
+        // Scrap the worklight if there is one.
+        TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = StaticCastSharedPtr<FDiggerEdModeToolkit>(Toolkit);
+        if (DiggerToolkit.IsValid())
+        {
+            DiggerToolkit->DestroyWorklight();
+        }
+        
         FDiggerEditorAccess::SetEditorModeActive(false);
         FToolkitManager::Get().CloseToolkit(Toolkit.ToSharedRef());
         Toolkit.Reset();
@@ -258,6 +320,54 @@ bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVec
 
 // ----- Spawning / Destroying -----
 
+void FDiggerEdMode::UpdateBrushSettingsFromUI(const FHitResult& TraceHit, bool bRightClick)
+{
+    TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit();
+    if (!DiggerToolkit.IsValid()) return;
+
+    // 1. Cache Basic Settings
+    BrushCache.Radius = DiggerToolkit->GetBrushRadius();
+    BrushCache.Falloff = DiggerToolkit->GetBrushFalloff();
+    BrushCache.Strength = DiggerToolkit->GetBrushStrength();
+
+    BrushCache.LightType = DiggerToolkit->GetCurrentLightType();
+    if (DiggerDebug::Lights())
+        UE_LOG(LogTemp, Warning, TEXT("Light set as: %i"), DiggerToolkit->GetCurrentLightType());
+    
+    // Logic: Left Click = UI Setting, Right Click = Invert UI Setting
+    bool bUiDig = DiggerToolkit->IsDigMode();
+    BrushCache.bFinalBrushDig = bRightClick ? !bUiDig : bUiDig;
+
+    // 2. Handle Rotation (Normal Alignment)
+    BrushCache.Rotation = DiggerToolkit->GetBrushRotation();
+    if (DiggerToolkit->UseSurfaceNormalRotation())
+    {
+        const FVector Normal = TraceHit.ImpactNormal.GetSafeNormal();
+        const FQuat AlignRotation = FQuat::FindBetweenNormals(FVector::UpVector, Normal);
+        BrushCache.Rotation = (AlignRotation * BrushCache.Rotation.Quaternion()).Rotator();
+    }
+
+    // 3. Cache Advanced Settings
+    BrushCache.bIsFilled = DiggerToolkit->GetBrushIsFilled();
+    BrushCache.Angle = DiggerToolkit->GetBrushAngle();
+    BrushCache.BrushType = DiggerToolkit->GetCurrentBrushType();
+    BrushCache.bHiddenSeam = DiggerToolkit->GetHiddenSeam();
+    
+    // Advanced Cube
+    BrushCache.bUseAdvancedCube = DiggerToolkit->IsUsingAdvancedCubeBrush();
+    BrushCache.CubeHalfExtentX = DiggerToolkit->GetAdvancedCubeHalfExtentX();
+    BrushCache.CubeHalfExtentY = DiggerToolkit->GetAdvancedCubeHalfExtentY();
+    BrushCache.CubeHalfExtentZ = DiggerToolkit->GetAdvancedCubeHalfExtentZ();
+    
+    BrushCache.Offset = DiggerToolkit->GetBrushOffset();
+
+    // 4. Update Spacing
+    float SafeRadius = FMath::Max(BrushCache.Radius, 10.0f);
+    StrokeSpacing = SafeRadius * 0.5f;
+    // CRITICAL: Reset the tracker so we don't sweep from the previous stroke's end point
+    LastStrokeHitLocation = TraceHit.Location; 
+}
+
 void FDiggerEdMode::EnsurePreviewExists()
 {
     if (Preview.IsValid())
@@ -271,7 +381,7 @@ void FDiggerEdMode::EnsurePreviewExists()
 
     // Use engine built-in sphere for quick testing (no custom material yet)
     UStaticMesh* UnitSphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-    UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Game/DiggerEditor/M_DiggerBrushPreview.M_DiggerBrushPreview")); // your path
+    UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Digger/Digger/DiggerEditor/M_DiggerBrushPreview.M_DiggerBrushPreview")); // your path
     Actor->Initialize(UnitSphere, BaseMat);
     Actor->SetVisible(true);
 
@@ -551,63 +661,29 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
 
     if (ADiggerManager* Digger = FindDiggerManager())
     {
-        if (TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit())
-        {
-            // Cache brush settings once
-            BrushCache.Radius = DiggerToolkit->GetBrushRadius();
-            BrushCache.bFinalBrushDig = DiggerToolkit->IsDigMode();
-            if (Click.GetKey() == EKeys::RightMouseButton)
-                BrushCache.bFinalBrushDig = !BrushCache.bFinalBrushDig;
+        // Use the new helper
+        bool bRightClick = (Click.GetKey() == EKeys::RightMouseButton);
+        UpdateBrushSettingsFromUI(Hit, bRightClick);
 
-            BrushCache.Rotation = DiggerToolkit->GetBrushRotation();
-            if (DiggerToolkit->UseSurfaceNormalRotation())
-            {
-                const FVector Normal = Hit.ImpactNormal.GetSafeNormal();
-                const FQuat AlignRotation = FQuat::FindBetweenNormals(FVector::UpVector, Normal);
-                BrushCache.Rotation = (AlignRotation * BrushCache.Rotation.Quaternion()).Rotator();
-            }
+        // Initialize Tracker (Just in case they drag after a single click without Paint Mode)
+        LastStrokeHitLocation = HitLocation;
 
-            BrushCache.bIsFilled = DiggerToolkit->GetBrushIsFilled();
-            BrushCache.Angle = DiggerToolkit->GetBrushAngle();
-            BrushCache.BrushType = DiggerToolkit->GetCurrentBrushType();
-            BrushCache.bHiddenSeam = DiggerToolkit->GetHiddenSeam();
-            BrushCache.bUseAdvancedCube = DiggerToolkit->IsUsingAdvancedCubeBrush();
-            BrushCache.CubeHalfExtentX = DiggerToolkit->GetAdvancedCubeHalfExtentX();
-            BrushCache.CubeHalfExtentY = DiggerToolkit->GetAdvancedCubeHalfExtentY();
-            BrushCache.CubeHalfExtentZ = DiggerToolkit->GetAdvancedCubeHalfExtentZ();
-            BrushCache.Offset = DiggerToolkit->GetBrushOffset();
+        // Apply
+        ApplyBrushWithSettings(Digger, HitLocation, Hit, BrushCache);
 
-            StrokeSpacing = BrushCache.Radius * 0.5f;
-            LastStrokeHitLocation = HitLocation;
-
-            // Apply first stamp
-            ApplyBrushWithSettings(Digger, HitLocation, Hit, BrushCache);
-
-            // Continuous setup
-            if (bMouseButtonDown)
-                StartContinuousApplication(Click);
-
-            return true;
-        }
+        return true;
     }
     return false;
 }
 
-
 bool FDiggerEdMode::InputDelta(FEditorViewportClient* InViewportClient, FViewport* InViewport, FVector& InDrag, FRotator& InRot, FVector& InScale)
 {
-    if (bIsContinuouslyApplying && bMouseButtonDown)
-    {
-        FVector2D CurrentMousePosition = FVector2D(InViewport->GetMouseX(), InViewport->GetMouseY());
-        float MouseMoveDelta = FVector2D::Distance(CurrentMousePosition, LastMousePosition);
-        if (MouseMoveDelta > 2.0f)
-        {
-            ApplyContinuousBrush(InViewportClient);
-            LastMousePosition = CurrentMousePosition;
-        }
-    }
+    // Remove the painting logic from here. 
+    // Let CapturedMouseMove handle it to avoid double-processing.
+    
     return FEdMode::InputDelta(InViewportClient, InViewport, InDrag, InRot, InScale);
 }
+
 
 bool FDiggerEdMode::StartTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
 {
@@ -638,15 +714,18 @@ bool FDiggerEdMode::EndTracking(FEditorViewportClient* InViewportClient, FViewpo
 
 bool FDiggerEdMode::CapturedMouseMove(FEditorViewportClient* InViewportClient, FViewport* InViewport, int32 InMouseX, int32 InMouseY)
 {
-    // NEW: Always update the preview to follow the cursor
     UpdatePreviewAtCursor(InViewportClient);
 
     if (bIsPainting && bPaintingEnabled)
     {
+        // Screen space distance check (Optimization)
+        // Only raycast if the mouse actually moved 2 pixels on screen
         FVector2D CurrentMousePos(InMouseX, InMouseY);
         float DistanceMoved = FVector2D::Distance(CurrentMousePos, LastPaintLocation);
-        if (DistanceMoved > 5.0f)
+        
+        if (DistanceMoved > 2.0f) 
         {
+            // Now we check World Distance inside this function
             ApplyContinuousBrush(InViewportClient);
             LastPaintLocation = CurrentMousePos;
         }
@@ -654,6 +733,7 @@ bool FDiggerEdMode::CapturedMouseMove(FEditorViewportClient* InViewportClient, F
     }
     return false;
 }
+
 
 bool FDiggerEdMode::UsesToolkits() const
 {
@@ -698,6 +778,10 @@ void FDiggerEdMode::ApplyBrushWithSettings(ADiggerManager* Digger, const FVector
     Digger->EditorBrushIsFilled = Settings.bIsFilled;
     Digger->EditorBrushAngle = Settings.Angle;
     Digger->EditorBrushType = Settings.BrushType;
+    // --- CRITICAL FIX: Push Cache value to Manager ---
+    // This overwrites whatever was there, so it MUST be correct (from Step 1)
+    Digger->EditorBrushLightType = Settings.LightType;
+    // ------------------------------------------------
     Digger->EditorBrushHoleShape = GetHoleShapeForBrush(Settings.BrushType);
     Digger->EditorBrushHiddenSeam = Settings.bHiddenSeam;
     Digger->EditorbUseAdvancedCubeBrush = Settings.bUseAdvancedCube;
@@ -729,34 +813,83 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
 
     FVector HitLocation;
     FHitResult Hit;
-    if (!GetMouseWorldHit(InViewportClient, HitLocation, Hit))
-        return;
+    if (!GetMouseWorldHit(InViewportClient, HitLocation, Hit)) return;
 
+    // 1. Check Distance
     float DistanceSquared = FVector::DistSquared(HitLocation, LastStrokeHitLocation);
-    if (DistanceSquared < StrokeSpacing * StrokeSpacing)
-        return;
-
-    // Interpolate along the path from last stroke to current to fill gaps
-    FVector Direction = (HitLocation - LastStrokeHitLocation).GetSafeNormal();
-    float Distance = FMath::Sqrt(DistanceSquared);
-
-    const float StepSize = StrokeSpacing * 0.5f;  // smaller steps for smoothness
-    int Steps = FMath::FloorToInt(Distance / StepSize);
+    if (DistanceSquared < 1.0f) return; // Moved virtually nowhere
 
     ADiggerManager* Digger = FindDiggerManager();
     if (!IsValid(Digger)) return;
 
-    for (int i = 1; i <= Steps; i++)
+    // 2. Prepare the Stroke
+    // We start with the user's current settings (Radius, Falloff, etc.)
+    FBrushCache CurrentSettings = BrushCache; 
+    
+    // But we OVERRIDE the Shape/Transform to create the sweep
+    if (CurrentSettings.BrushType == EVoxelBrushType::Sphere || 
+        CurrentSettings.BrushType == EVoxelBrushType::Capsule) // Works best for round brushes
     {
-        FVector InterpLocation = LastStrokeHitLocation + Direction * StepSize * i;
-        // You may want to do a line trace or smart trace here again if precision is critical,
-        // but if performance is a concern, just trust this interpolation.
+        // --- THE OPTIMIZATION: CAPSULE SWEEP ---
+        
+        // Create a temporary brush shape to calculate the struct
+        // (Or access the existing one if safe)
+        if (Digger->ActiveBrush)
+        {
+            FBrushStroke SweptStroke;
+        
+            // --- CRITICAL DATA COPY ---
+            SweptStroke.bDig = BrushCache.bFinalBrushDig;       // Must copy this!
+            SweptStroke.BrushStrength = BrushCache.Strength;    // Must copy this!
+            SweptStroke.BrushFalloff = BrushCache.Falloff;      // Must copy this!
+            // ---------------------------
 
-        ApplyBrushWithSettings(Digger, InterpLocation, Hit, BrushCache);
+            // Now setup the geometry (Radius, Length, Pos, Rot)
+            Digger->ActiveBrush->SetupSweptStroke(
+                SweptStroke, 
+                LastStrokeHitLocation, 
+                HitLocation, 
+                BrushCache.Radius
+            );
+        
+            // Debug Log to prove it fired
+            if (DiggerDebug::Brush())
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Sweeping Capsule: Start=%s End=%s Dig=%d"), 
+                    *LastStrokeHitLocation.ToString(), 
+                    *HitLocation.ToString(), 
+                    SweptStroke.bDig);
+            }
+
+            Digger->ApplyBrushToAllChunks(SweptStroke);
+        }
+    }
+    else
+    {
+        // --- FALLBACK FOR NON-ROUND SHAPES (Cube, etc.) ---
+        // Cubes don't sweep into capsules cleanly. 
+        // For these, we still have to use the interpolation loop, but maybe cap it tighter.
+        
+        float StepSize = CurrentSettings.Radius * 0.5f;
+        float Distance = FMath::Sqrt(DistanceSquared);
+        int32 Steps = FMath::FloorToInt(Distance / StepSize);
+        
+        // Cap steps to prevent freeze
+        Steps = FMath::Min(Steps, 10); 
+
+        FVector Direction = (HitLocation - LastStrokeHitLocation).GetSafeNormal();
+        
+        for (int i = 1; i <= Steps; ++i)
+        {
+            FVector Pos = LastStrokeHitLocation + Direction * StepSize * i;
+            ApplyBrushWithSettings(Digger, Pos, Hit, CurrentSettings);
+        }
     }
 
+    // 3. Update Tracker
     LastStrokeHitLocation = HitLocation;
 }
+
 
 // Add this method to your header file and implement it to handle mouse hover
 bool FDiggerEdMode::MouseEnter(FEditorViewportClient* ViewportClient, FViewport* Viewport, int32 x, int32 y)
@@ -886,14 +1019,35 @@ bool FDiggerEdMode::InputKey(FEditorViewportClient* ViewportClient, FViewport* V
     {
         if (Event == IE_Pressed)
         {
+            // --- THE FIX STARTS HERE ---
+            
+            // 1. Get the hit result NOW so we can setup the brush
+            FVector HitLocation;
+            FHitResult Hit;
+            GetMouseWorldHit(ViewportClient, HitLocation, Hit); 
+            // Note: Even if this fails (sky hit), we still want to init settings, 
+            // but we might default the normal to UpVector.
+
+            // 2. Update Cache BEFORE painting
+            bool bRightClick = (Key == EKeys::RightMouseButton);
+            UpdateBrushSettingsFromUI(Hit, bRightClick);
+
+            // 3. Initialize Location Tracker
+            LastStrokeHitLocation = HitLocation;
+            LastPaintLocation = FVector2D(Viewport->GetMouseX(), Viewport->GetMouseY());
+
+            // 4. Set State
             bMouseButtonDown = true;
             bIsPainting = true;
             ContinuousSettings.bIsValid = true;
-            ContinuousSettings.bRightClick = (Key == EKeys::RightMouseButton);
-            ContinuousSettings.bFinalBrushDig = ContinuousSettings.bRightClick;
-
+            ContinuousSettings.bRightClick = bRightClick;
+            
+            // 5. Apply Initial Stamp
             ApplyContinuousBrush(ViewportClient);
-            return true;
+            
+            // --- THE FIX ENDS HERE ---
+
+            return true; // Consume input (HandleClick will NOT fire)
         }
         else if (Event == IE_Released)
         {
@@ -921,26 +1075,25 @@ void FDiggerEdMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
 {
     FEdMode::Tick(ViewportClient, DeltaTime);
 
-    UpdatePreviewAtCursor(ViewportClient); // always refresh the brush preview
+    UpdatePreviewAtCursor(ViewportClient);
 
+    // Keep your focus logic
     if (ViewportClient && ViewportClient->Viewport)
     {
         const bool bShiftDown = ViewportClient->Viewport->KeyState(EKeys::LeftShift) || 
                                ViewportClient->Viewport->KeyState(EKeys::RightShift);
-        
-        // Maintain focus when shift is held to ensure our input works
-        // Check if the viewport has mouse focus/capture
         if (bShiftDown && ViewportClient->Viewport->HasMouseCapture())
         {
             ViewportClient->Viewport->SetUserFocus(true);
         }
     }
 
+    // Keep Toolkit logic
     if (TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit())
     {
         DiggerToolkit->SpawnOrUpdateWorklight(ViewportClient);
         DiggerToolkit->SetViewportClient(ViewportClient);
-
+        
         if (DiggerToolkit->GetAutoUnderLandscape())
         {
             float AbsoluteZ, RelativeZ;
@@ -954,18 +1107,10 @@ void FDiggerEdMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
         }
     }
 
-    if (ShouldApplyContinuously())
-    {
-        ContinuousApplicationTimer += DeltaTime;
-
-        // Apply every 0.02 seconds (50 times per second) or adjust for your perf needs
-        if (ContinuousApplicationTimer >= 0.02f)
-        {
-            ApplyContinuousBrush(ViewportClient);
-            ContinuousApplicationTimer = 0.0f;
-        }
-    }
-
+    // --- REMOVED THE CONTINUOUS TIMER LOGIC ---
+    // We handle painting in CapturedMouseMove / InputDelta now.
+    // Doing it here caused the "Drill in place" lag.
+    
     if (GEditor)
     {
         GEditor->RedrawAllViewports();

@@ -266,7 +266,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     Manager = GetDiggerManager();
 
     CustomBrushEntries.Empty();
-    RefreshSaveFilesList();
+
 
     LightTypeOptions.Empty();
     for (int32 i = 0; i < StaticEnum<ELightBrushType>()->NumEnums() - 1; ++i)
@@ -277,6 +277,30 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     if (LightTypeOptions.Num() > 0)
     {
         CurrentLightType = *LightTypeOptions[0];
+    }
+
+    // --- CRITICAL FIX: Push Light Type to Manager immediately ---
+    if (GEditor)
+    {
+        UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+        
+        // Use the Static Helper we created!
+        if (ADiggerManager* FoundMgr = ADiggerManager::FindDiggerManager(EditorWorld))
+        {
+            Manager = FoundMgr; // Cache it locally
+            Manager->EditorBrushLightType = CurrentLightType;
+            
+            // Also push to brush if it exists
+            if (Manager->ActiveBrush)
+            {
+                Manager->ActiveBrush->SetLightType(CurrentLightType);
+            }
+            
+            if (DiggerDebug::Lights())
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Toolkit Init: Pushed LightType %d to Manager"), (int32)CurrentLightType);
+            }
+        }
     }
 
     if (!FSlateStyleRegistry::FindSlateStyle("DiggerEditorStyle"))
@@ -348,6 +372,21 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             [
                 MakeMaterialManagerSection()
             ]
+            + SVerticalBox::Slot().AutoHeight().Padding(4)
+            [
+                SNew(SButton)
+                .Text(FText::FromString("Refresh Landscape Cache"))
+                .ToolTipText(FText::FromString(
+                    "Clears the height cache. Use this if you sculpted the terrain and Digger needs to see the changes."))
+                .OnClicked_Lambda([this]() -> FReply
+                {
+                    if (ADiggerManager* Mgr = GetDiggerManager())
+                    {
+                        Mgr->RefreshLandscapeCache();
+                    }
+                    return FReply::Handled();
+                })
+            ]
         ]
     ]
 
@@ -373,6 +412,10 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
                 + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
                 [
                     MakeSaveLoadSection()
+                ]
+                + SVerticalBox::Slot().AutoHeight().Padding(8, 12, 8, 4)
+                [
+                    MakeResetDiggerDataWidget()
                 ]
             ]
         ]
@@ -1428,11 +1471,8 @@ ADiggerManager* FDiggerEdModeToolkit::GetDiggerManager()
 {
     if (GEditor)
     {
-        UWorld* World = GEditor->GetEditorWorldContext().World();
-        for (TActorIterator<ADiggerManager> It(World); It; ++It)
-        {
-            return *It;                 // <-- Return the manager pointer
-        }
+        UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+        return ADiggerManager::FindDiggerManager(EditorWorld);
     }
     return nullptr;
 }
@@ -1978,26 +2018,39 @@ void FDiggerEdModeToolkit::OnLightColorChanged(FLinearColor NewColor)
 
 
 // Make sure your OnLightTypeChanged implementation matches the header exactly:
-void FDiggerEdModeToolkit::OnLightTypeChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
+void FDiggerEdModeToolkit::OnLightTypeChanged(TSharedPtr<ELightBrushType> NewSelection, ESelectInfo::Type)
 {
     if (NewSelection.IsValid())
     {
-        FString SelectedString = *NewSelection;
-        if (SelectedString == TEXT("Point Light"))
+        CurrentLightType = *NewSelection; 
+
+        // --- CRITICAL FIX: Find Manager via Static Helper and Push Update ---
+        if (GEditor)
         {
-            CurrentLightType = ELightBrushType::Point;  // This should work now
+            UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+            
+            if (ADiggerManager* FoundMgr = ADiggerManager::FindDiggerManager(EditorWorld))
+            {
+                FoundMgr->EditorBrushLightType = CurrentLightType;
+                
+                if (FoundMgr->ActiveBrush)
+                {
+                    FoundMgr->ActiveBrush->SetLightType(CurrentLightType);
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Error, TEXT("Active Brush Not Found in OnLightTypeChanged!"));
+                }
+                
+                if (DiggerDebug::Lights())
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("Toolkit Update: Pushed LightType %d to Manager"), (int32)CurrentLightType);
+                }
+            }
         }
-        else if (SelectedString == TEXT("Spot Light"))
-        {
-            CurrentLightType = ELightBrushType::Spot;
-        }
-        else if (SelectedString == TEXT("Directional Light"))
-        {
-            CurrentLightType = ELightBrushType::Directional;
-        }
+        // --------------------------------------------------------------------
     }
 }
-
 void FDiggerEdModeToolkit::SetTemporaryDigOverride(TOptional<bool> Override)
 {
     TemporaryDigOverride = Override;
@@ -2288,10 +2341,476 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
             // (Debug, Light, Cone/Cylinder/Height controls, etc.).  
             // No changes needed — these stay as-is.
             
+               // --- Light Type UI: Only visible for Light brush ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SBox)
+        .Visibility_Lambda([this]()
+        {
+            return (GetCurrentBrushType() == EVoxelBrushType::Light) ? EVisibility::Visible : EVisibility::Collapsed;
+        })
+        [
+            SNew(SVerticalBox) // Changed to vertical box to stack light type and color
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("Light Type"))
+                    .Font(IDetailLayoutBuilder::GetDetailFont())
+                ]
+                + SHorizontalBox::Slot().FillWidth(1.0f).Padding(8, 0)
+                [
+                    SNew(SComboBox<TSharedPtr<ELightBrushType>>)
+                    .OptionsSource(&LightTypeOptions)
+                    .OnGenerateWidget_Lambda([](TSharedPtr<ELightBrushType> InItem)
+                    {
+                        return SNew(STextBlock)
+                            .Text(StaticEnum<ELightBrushType>()->GetDisplayNameTextByValue(
+                                static_cast<int64>(*InItem)));
+                    })
+                    .OnSelectionChanged_Lambda([this](TSharedPtr<ELightBrushType> NewSelection, ESelectInfo::Type)
+                    {
+                        if (NewSelection.IsValid())
+                        {
+                            CurrentLightType = *NewSelection; // Use CurrentLightType consistently
+                        }
+                    })
+                    .InitiallySelectedItem(LightTypeOptions.Num() > 0 ? LightTypeOptions[0] : nullptr)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]()
+                        {
+                            return StaticEnum<ELightBrushType>()->GetDisplayNameTextByValue(
+                                static_cast<int64>(CurrentLightType));
+                        })
+                    ]
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("Light Color"))
+                    .Font(IDetailLayoutBuilder::GetDetailFont())
+                ]
+                + SHorizontalBox::Slot().FillWidth(1.0f).Padding(8, 0)
+                [
+                    SNew(SColorBlock)
+                    .Color_Lambda([this]()
+                    {
+                        return CurrentLightColor;
+                    })
+                    .OnMouseButtonDown_Lambda([this](const FGeometry&, const FPointerEvent&) -> FReply
+                    {
+                        FColorPickerArgs PickerArgs;
+                        PickerArgs.bUseAlpha = false;
+                        PickerArgs.InitialColor = CurrentLightColor;
+                        PickerArgs.OnColorCommitted = FOnLinearColorValueChanged::CreateLambda(
+                            [this](FLinearColor NewColor)
+                            {
+                                CurrentLightColor = NewColor;
+                                OnLightColorChanged(NewColor);
+                            });
+
+                        OpenColorPicker(PickerArgs);
+                        return FReply::Handled();
+                    })
+                ]
+            ]
+        ]
+    ]
+        
+
+    // --- Height/Length UI: Only visible for Cylinder or Cone brush ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SBox)
+        .Visibility_Lambda([this]() {
+            EVoxelBrushType BrushType = GetCurrentBrushType();
+            return (BrushType == EVoxelBrushType::Cylinder || BrushType == EVoxelBrushType::Capsule || BrushType == EVoxelBrushType::Cone) ? EVisibility::Visible : EVisibility::Collapsed;
+        })
+        [
+            MakeLabeledSliderRow(
+                FText::FromString("Height"),
+                [this]() { return BrushLength; },
+                [this](float NewValue) { BrushLength = FMath::Clamp(NewValue, MinBrushLength, MaxBrushLength); },
+                float(MinBrushLength), float(MaxBrushLength),
+                TArray<float>({float(MinBrushLength), float((MinBrushLength+MaxBrushLength)/2.f), float(MaxBrushLength)}),
+                float(MinBrushLength), 1.0f,
+                false, &DummyFloat
+            )
+        ]
+    ]
+
+    // --- Filled/Hollow UI: Visible for shapes that support it ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SBox)
+        .Visibility_Lambda([this]()
+        {
+            EVoxelBrushType BrushType = GetCurrentBrushType();
+            return (BrushType == EVoxelBrushType::Cone ||
+                       BrushType == EVoxelBrushType::Cylinder)
+                       ? EVisibility::Visible
+                       : EVisibility::Collapsed;
+        })
+        [
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this]()
+            {
+                return bIsFilled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+            })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+            {
+                bIsFilled = (NewState == ECheckBoxState::Checked);
+            })
+            [
+                SNew(STextBlock).Text(FText::FromString("Filled"))
+            ]
+        ]
+    ]
+
+
+    // --- Advanced Cube Brush Checkbox and Roll-down ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SBox)
+        .Visibility_Lambda([this]()
+        {
+            return (GetCurrentBrushType() == EVoxelBrushType::Cube) ? EVisibility::Visible : EVisibility::Collapsed;
+        })
+        [
+            SNew(SVerticalBox)
             + SVerticalBox::Slot().AutoHeight()
             [
-                MakeOperationSection()
+                SNew(SCheckBox)
+                .IsChecked_Lambda([this]()
+                {
+                    return bUseAdvancedCubeBrush ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+                })
+                .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+                {
+                        bUseAdvancedCubeBrush = (NewState == ECheckBoxState::Checked);
+                        UE_LOG(LogTemp, Warning, TEXT("UI: bUseAdvancedCubeBrush: %s"), bUseAdvancedCubeBrush ? TEXT("true") : TEXT("false"));
+                        
+                })
+                [
+                    SNew(STextBlock).Text(FText::FromString("Use Advanced Cube Brush"))
+                ]
             ]
+            + SVerticalBox::Slot().AutoHeight()
+            [
+                SNew(SBox)
+                .Visibility_Lambda([this]()
+                {
+                    return bUseAdvancedCubeBrush ? EVisibility::Visible : EVisibility::Collapsed;
+                })
+                [
+                    // Roll-down menu for advanced parameters
+                    SNew(SVerticalBox)
+                    // Half Extents X
+                    + SVerticalBox::Slot().AutoHeight().Padding(2)
+                    [
+                        MakeLabeledSliderRow(
+                            FText::FromString("Half Extent X"),
+                            [this]() { return AdvancedCubeHalfExtentX; },
+                            [this](float NewValue)
+                            {
+                                AdvancedCubeHalfExtentX = FMath::Clamp(NewValue, MinCubeExtent, MaxCubeExtent);
+                            },
+                            static_cast<float>(MinCubeExtent), static_cast<float>(MaxCubeExtent),
+                            TArray<float>({
+                                static_cast<float>(MinCubeExtent),
+                                static_cast<float>((MinCubeExtent + MaxCubeExtent) / 2.f),
+                                static_cast<float>(MaxCubeExtent)
+                            }),
+                            static_cast<float>(MinCubeExtent), 1.0f,
+                            false, &DummyFloat
+                        )
+                    ]
+                    // Half Extents Y
+                    + SVerticalBox::Slot().AutoHeight().Padding(2)
+                    [
+                        MakeLabeledSliderRow(
+                            FText::FromString("Half Extent Y"),
+                            [this]() { return AdvancedCubeHalfExtentY; },
+                            [this](float NewValue)
+                            {
+                                AdvancedCubeHalfExtentY = FMath::Clamp(NewValue, MinCubeExtent, MaxCubeExtent);
+                            },
+                            static_cast<float>(MinCubeExtent), static_cast<float>(MaxCubeExtent),
+                            TArray<float>({
+                                static_cast<float>(MinCubeExtent),
+                                static_cast<float>((MinCubeExtent + MaxCubeExtent) / 2.f),
+                                static_cast<float>(MaxCubeExtent)
+                            }),
+                            static_cast<float>(MinCubeExtent), 1.0f,
+                            false, &DummyFloat
+                        )
+                    ]
+                    // Half Extents Z
+                    + SVerticalBox::Slot().AutoHeight().Padding(2)
+                    [
+                        MakeLabeledSliderRow(
+                            FText::FromString("Half Extent Z"),
+                            [this]() { return AdvancedCubeHalfExtentZ; },
+                            [this](float NewValue)
+                            {
+                                AdvancedCubeHalfExtentZ = FMath::Clamp(NewValue, MinCubeExtent, MaxCubeExtent);
+                            },
+                            static_cast<float>(MinCubeExtent), static_cast<float>(MaxCubeExtent),
+                            TArray<float>({
+                                static_cast<float>(MinCubeExtent),
+                                static_cast<float>((MinCubeExtent + MaxCubeExtent) / 2.f),
+                                static_cast<float>(MaxCubeExtent)
+                            }),
+                            static_cast<float>(MinCubeExtent), 1.0f,
+                            false, &DummyFloat
+                        )
+                    ]
+                    // Rotation (if you want to expose it)
+                    // Add more sliders or controls as needed for other parameters
+                ]
+            ]
+        ]
+    ]
+
+
+    // --- Inner Radius UI: Only visible for Torus brush ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SBox)
+        .Visibility_Lambda([this]()
+        {
+            return (GetCurrentBrushType() == EVoxelBrushType::Torus) ? EVisibility::Visible : EVisibility::Collapsed;
+        })
+        [
+            MakeLabeledSliderRow(
+                FText::FromString("Inner Radius"),
+                [this]() { return TorusInnerRadius; },
+                [this](float NewValue)
+                {
+                    TorusInnerRadius = FMath::Clamp(NewValue, MinTorusInnerRadius, MaxTorusInnerRadius);
+                },
+                static_cast<float>(MinTorusInnerRadius), static_cast<float>(MaxTorusInnerRadius),
+                TArray<float>({
+                    static_cast<float>(MinTorusInnerRadius),
+                    static_cast<float>((MinTorusInnerRadius + MaxTorusInnerRadius) / 2.f),
+                    static_cast<float>(MaxTorusInnerRadius)
+                }),
+                static_cast<float>(MinTorusInnerRadius), 1.0f,
+                false, &DummyFloat
+            )
+        ]
+    ]
+
+       
+        
+        
+
+    // --- Cone Angle UI: Only visible for Cone and cylinder brushes ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SBox)
+        .Visibility_Lambda([this]() {
+            return (GetCurrentBrushType() == EVoxelBrushType::Cone || GetCurrentBrushType() == EVoxelBrushType::Cylinder || GetCurrentBrushType() == EVoxelBrushType::Light) ? EVisibility::Visible : EVisibility::Collapsed;
+        })
+        [
+            MakeLabeledSliderRow(
+                FText::FromString("Cone Angle"),
+                [this]() { return float(ConeAngle); },
+                [this](float NewValue) { ConeAngle = FMath::Clamp(double(NewValue), MinConeAngle, MaxConeAngle); },
+                float(MinConeAngle), float(MaxConeAngle),
+                TArray<float>({float(MinConeAngle), float((MinConeAngle+MaxConeAngle)/2.f), float(MaxConeAngle)}),
+                float(MinConeAngle), 1.0f,
+                false, &DummyFloat // No mirror for cone angle
+            )
+        ]
+    ]
+
+
+        
+    // --- Smooth Iterations (Smooth only) ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        SNew(SBox)
+        .Visibility_Lambda([this]() {
+            return (GetCurrentBrushType() == EVoxelBrushType::Smooth) ? EVisibility::Visible : EVisibility::Collapsed;
+        })
+        [
+            MakeLabeledSliderRow(
+                FText::FromString("Smooth Iterations"),
+                [this]() { return float(SmoothIterations); },
+                [this](float NewValue) { SmoothIterations = FMath::Clamp(static_cast<int16>(FMath::RoundToInt(NewValue)), int16(1), int16(10)); },
+                1.0f, 10.0f,
+                TArray<float>({1.f, 5.f, 10.f}),
+                1.0f, 1.0f,
+                false, &DummyFloat
+            )
+        ]
+    ]
+
+    // --- Operation (Add/Subtract) Section ---
+    + SVerticalBox::Slot().AutoHeight().Padding(4)
+    [
+        MakeOperationSection()
+    ]
+
+    // --- Brush Radius, Strength, Falloff ---
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 16, 8, 4)
+    [
+        MakeLabeledSliderRow(
+            FText::FromString("Radius"),
+            [this]() { return BrushRadius; },
+            [this](float NewValue) { BrushRadius = FMath::Clamp(NewValue, 10.0f, 256.0f); },
+            10.0f, 256.0f,
+            TArray<float>({10.f, 64.f, 128.f, 256.f}),
+            10.0f, 1.0f,
+            false, &DummyFloat
+        )
+    ]
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 4)
+    [
+        MakeLabeledSliderRow(
+            FText::FromString("Strength"),
+            [this]() { return BrushStrength; },
+            [this](float NewValue) { BrushStrength = FMath::Clamp(NewValue, 0.0f, 1.0f); },
+            0.0f, 1.0f,
+            TArray<float>({0.1f, 0.5f, 1.0f}),
+            1.0f, 0.01f,
+            false, &DummyFloat
+        )
+    ]
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 8)
+    [
+        MakeLabeledSliderRow(
+            FText::FromString("Falloff"),
+            [this]() { return BrushFalloff; },
+            [this](float NewValue) { BrushFalloff = FMath::Clamp(NewValue, 0.0f, 1.0f); },
+            0.0f, 1.0f,
+            TArray<float>({0.0f, 0.5f, 1.0f}),
+            0.0f, 0.01f,
+            false, &DummyFloat
+        )
+    ]
+
+        /// --- Rotate Brush Section (roll-down) ---
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
+    [
+        SNew(SButton)
+        .Text(FText::FromString("Rotate Brush"))
+        .OnClicked_Lambda([this]() { bShowRotation = !bShowRotation; return FReply::Handled(); })
+    ]
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 8)
+    [
+        SNew(SVerticalBox)
+        .Visibility_Lambda([this]() { return bShowRotation ? EVisibility::Visible : EVisibility::Collapsed; })
+
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            MakeRotationRow(FText::FromString("X"), BrushRotX)
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            MakeRotationRow(FText::FromString("Y"), BrushRotY)
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            MakeRotationRow(FText::FromString("Z"), BrushRotZ)
+        ]
+
+        // Checkbox for surface normal rotation
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+        [
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this]()
+            {
+                return bUseSurfaceNormalRotation ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+            })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+            {
+                bUseSurfaceNormalRotation = (NewState == ECheckBoxState::Checked);
+            })
+            [
+                SNew(STextBlock).Text(FText::FromString("Align Rotation to Normal"))
+            ]
+        ]
+
+        // ✅ Reset Button - newly added
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 4)
+        [
+            SNew(SButton)
+            .Text(FText::FromString("Reset All Rotations"))
+            .HAlign(HAlign_Fill)
+            .ButtonStyle(FAppStyle::Get(), "FlatButton.Success")
+            .OnClicked_Lambda([this]()
+            {
+                BrushRotX = 0.0f;
+                BrushRotY = 0.0f;
+                BrushRotZ = 0.0f;
+                return FReply::Handled();
+            })
+        ]
+    ]
+
+    // --- Offset Brush Section (roll-down) ---
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 8, 8, 4)
+    [
+        SNew(SButton)
+        .Text(FText::FromString("Offset Brush"))
+        .OnClicked_Lambda([this]() { bShowOffset = !bShowOffset; return FReply::Handled(); })
+    ]
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 8)
+    [
+        SNew(SVerticalBox)
+        .Visibility_Lambda([this]() { return bShowOffset ? EVisibility::Visible : EVisibility::Collapsed; })
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            MakeOffsetRow(FText::FromString("X"), BrushOffset.X)
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            MakeOffsetRow(FText::FromString("Y"), BrushOffset.Y)
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+        [
+            MakeOffsetRow(FText::FromString("Z"), BrushOffset.Z)
+        ]
+        //Checkbox for surface normal alignment
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+        [
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this]()
+            {
+                return bRotateToSurfaceNormal ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+            })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState NewState)
+            {
+                bRotateToSurfaceNormal = (NewState == ECheckBoxState::Checked);
+            })
+            [
+                SNew(STextBlock).Text(FText::FromString("Rotate to Surface Normal"))
+            ]
+        ]
+
+        // ✅ Reset Button - newly added
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 4)
+        [
+            SNew(SButton)
+            .Text(FText::FromString("Reset All Offsets"))
+            .HAlign(HAlign_Fill)
+            .ButtonStyle(FAppStyle::Get(), "FlatButton.Success")
+            .OnClicked_Lambda([this]()
+            {
+                BrushOffset = FVector::ZeroVector;
+                return FReply::Handled();
+            })
+        ]
+    ]
 
             + SVerticalBox::Slot().AutoHeight()
             [
@@ -3377,6 +3896,39 @@ void FDiggerEdModeToolkit::ToggleWorklight(bool bEnable)
 
     DiggerWorklightComponent->SetVisibility(bEnable);
     bWorklightEnabled = bEnable;
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeResetDiggerDataWidget()
+{
+    return SNew(SButton)
+        .Text(FText::FromString("Clear All Digger Data"))
+        .HAlign(HAlign_Center)
+        .VAlign(VAlign_Center)
+        .OnClicked(this, &FDiggerEdModeToolkit::OnClearAllClicked)
+        .ButtonColorAndOpacity(FLinearColor(0.8f, 0.1f, 0.1f, 1.0f)); // Warning red
+}
+
+FReply FDiggerEdModeToolkit::OnClearAllClicked()
+{
+    // 1. Prompt User
+    EAppReturnType::Type Result = FMessageDialog::Open(
+        EAppMsgType::YesNo, 
+        FText::FromString("WARNING: This will delete ALL voxel changes, holes, and procedural meshes in the level.\n\nAre you sure?")
+    );
+
+    if (Result == EAppReturnType::Yes)
+    {
+        // 2. Get Manager and Clear
+        // (Assuming you have a helper to get the manager or EdMode)
+        ADiggerManager* Mgr = ADiggerManager::FindDiggerManager(GEditor->GetEditorWorldContext().World());
+        if (Mgr)
+        {
+            Mgr->ClearAllVoxelData(); // This is the robust method we fixed earlier
+            Mgr->Modify(); // Mark dirty for Undo (if supported)
+        }
+    }
+
+    return FReply::Handled();
 }
 
 
@@ -5095,35 +5647,75 @@ void FDiggerEdModeToolkit::OnRemoveIslandClicked()
     }
 }
 
+void FDiggerEdModeToolkit::DestroyWorklight()
+{
+    if (WorklightActor.IsValid())
+    {
+        WorklightActor->Destroy();
+        WorklightActor.Reset();
+    }
+}
+
 // Spawn or update the worklight in the scene and keep it aligned with the viewport camera
 void FDiggerEdModeToolkit::SpawnOrUpdateWorklight(FEditorViewportClient* ViewportClient)
 {
     if (!ViewportClient) return;
-
     UWorld* World = ViewportClient->GetWorld();
     if (!World) return;
 
-    const FName WorklightFolder(TEXT("Digger/Worklight"));
+    // Create the dedicated folder for it.
+    // const FName WorklightFolder(TEXT("Digger/Worklight"));
 
-    // Check if we already have a valid reference
+    // 1. Cleanup Duplicates Logic (Self-Healing)
+    // If we lost our reference but actors exist, find them. 
+    // If multiple exist (from previous bugs), kill the extras.
     if (!WorklightActor.IsValid())
     {
-        // Try to find an existing actor in the world
+        AActor* FoundFirst = nullptr;
         for (TActorIterator<AActor> It(World); It; ++It)
         {
-            if (It->GetFName() == TEXT("DiggerWorklight"))
+            if (It->GetActorLabel() == TEXT("DiggerWorklight"))
             {
-                WorklightActor = *It;
-                break;
+                if (!FoundFirst)
+                {
+                    FoundFirst = *It;
+                }
+                else
+                {
+                    // We found a second one? Destroy it. It's garbage.
+                    It->Destroy();
+                }
             }
         }
+        if (FoundFirst) WorklightActor = FoundFirst;
+    }
 
-        // If not found, spawn a new one
-        if (!WorklightActor.IsValid())
+    // 2. Spawn New if needed
+    if (!WorklightActor.IsValid())
+    {
+        FActorSpawnParameters SpawnParams;
+        SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        
+        // CRITICAL FLAGS for Editor Tools
+        SpawnParams.ObjectFlags = RF_Transient; 
+        SpawnParams.bHideFromSceneOutliner = true; // Clean up the outliner
+
+        WorklightActor = World->SpawnActor<AActor>(AActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
+        
+        if (WorklightActor.IsValid())
+        {
+            WorklightActor->SetActorLabel(TEXT("DiggerWorklight"));
+            
+            // CRITICAL: This flag stops it from being copied into PIE
+            WorklightActor->bIsEditorPreviewActor = true; 
+            
+            WorklightActor->SetActorEnableCollision(false);
+
+if (!WorklightActor.IsValid())
         {
             WorklightActor = World->SpawnActor<AActor>();
             WorklightActor->SetActorLabel(TEXT("DiggerWorklight"));
-            WorklightActor->SetFolderPath(WorklightFolder);
+            // WorklightActor->SetFolderPath(WorklightFolder);
             WorklightActor->SetFlags(RF_Transient);
             WorklightActor->SetActorEnableCollision(false);
 
@@ -5154,17 +5746,13 @@ void FDiggerEdModeToolkit::SpawnOrUpdateWorklight(FEditorViewportClient* Viewpor
             UpdateWorklightColor(WorklightColor);
             ToggleWorklight(bWorklightEnabled);
         }
-        else
-        {
-            DiggerWorklightComponent = WorklightActor->FindComponentByClass<ULightComponent>();
         }
     }
 
-    // Update location and rotation every tick
+    // 3. Update Position (Existing Logic)
     if (WorklightActor.IsValid())
     {
         WorklightActor->SetActorLocation(ViewportClient->GetViewLocation());
-
         if (Cast<USpotLightComponent>(DiggerWorklightComponent))
         {
             WorklightActor->SetActorRotation(ViewportClient->GetViewRotation());
@@ -5179,23 +5767,17 @@ void FDiggerEdModeToolkit::GetElevationInfo(float& AbsoluteOut, float& RelativeO
     AbsoluteOut = 0.f;
     RelativeOut = 0.f;
 
-    if (!CachedViewportClient || !Manager)
-        return;
+    if (!CachedViewportClient || !Manager) return;
 
     const FVector ViewLocation = CachedViewportClient->GetViewLocation();
     AbsoluteOut = ViewLocation.Z;
 
-    TOptional<float> TerrainHeight = Manager->SampleLandscapeHeight(
-        Manager->GetLandscapeProxyAt(ViewLocation), ViewLocation);
+    // SIMPLIFIED CALL: No Proxies, no Optionals.
+    float TerrainHeight = Manager->GetLandscapeHeightAt(ViewLocation);
 
-    if (TerrainHeight.IsSet())
-    {
-        RelativeOut = ViewLocation.Z - TerrainHeight.GetValue();
-    }
-    else
-    {
-        RelativeOut = -10000000.f; // Fallback value
-    }
+    // Logic Check: If the Manager returns exactly ViewLocation.Z, it often means "No Data / Miss".
+    // But for UI, calculating relative is safe regardless.
+    RelativeOut = ViewLocation.Z - TerrainHeight;
 }
 
 
@@ -5987,41 +6569,42 @@ TSharedRef<SWidget> CreateComingSoonSection(const FString& FeatureName, const FS
 
 void FDiggerEdModeToolkit::ClearIslands()
 {
-    if (DiggerDebug::Islands())
-        UE_LOG(LogTemp, Warning, TEXT("ClearIslands called on toolkit: %p"), this);
-    
-    // Add safety checks before the crash line
-    if (!this)
+    // 1. THREAD SAFETY CHECK (Bulletproof Fix)
+    if (!IsInGameThread())
     {
-        if (DiggerDebug::Islands())
-        UE_LOG(LogTemp, Error, TEXT("ClearIslands: Invalid 'this' pointer!"));
+        // If called from background thread, send it to the Game Thread safely
+        // 'SharedThis(this)' works because Toolkits inherit TSharedFromThis
+        TWeakPtr<FDiggerEdModeToolkit> WeakSelf = SharedThis(this);
+        
+        AsyncTask(ENamedThreads::GameThread, [WeakSelf]()
+        {
+            if (TSharedPtr<FDiggerEdModeToolkit> StrongSelf = WeakSelf.Pin())
+            {
+                StrongSelf->ClearIslands();
+            }
+        });
         return;
     }
-    
-    // Check if Islands is in a valid state
+
+    // 2. Safety Checks
+    // 'this' is guaranteed valid here due to SharedThis/Pin above, but keep legacy check if desired
     if (DiggerDebug::Islands())
-    UE_LOG(LogTemp, Warning, TEXT("ClearIslands: About to empty Islands array (current size: %d)"), Islands.Num());
-    
-    try
     {
-        Islands.Empty(); // Line 4306 - the crash line
-        if (DiggerDebug::Islands())
-        UE_LOG(LogTemp, Warning, TEXT("ClearIslands: Islands.Empty() succeeded"));
-    }
-    catch (...)
-    {
-        if (DiggerDebug::Islands())
-        UE_LOG(LogTemp, Error, TEXT("ClearIslands: Exception during Islands.Empty()"));
-        return;
+        UE_LOG(LogTemp, Warning, TEXT("ClearIslands called on toolkit. Islands Count: %d"), Islands.Num());
     }
     
+    // 3. Clear Data
+    // No try/catch needed on GameThread; Array ops are safe here
+    Islands.Empty(); 
     SelectedIslandIndex = INDEX_NONE;
 
-    if (DiggerDebug::Islands())
-    UE_LOG(LogTemp, Warning, TEXT("ClearIslands: About to call RebuildIslandGrid"));
+    // 4. Update UI
     RebuildIslandGrid();
+    
     if (DiggerDebug::Islands())
-    UE_LOG(LogTemp, Warning, TEXT("ClearIslands: RebuildIslandGrid completed"));
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ClearIslands: Completed."));
+    }
 }
 
 void FDiggerEdModeToolkit::RequestBrushUIRefresh()
@@ -6040,29 +6623,33 @@ void FDiggerEdModeToolkit::RequestBrushUIRefresh()
 
 void FDiggerEdModeToolkit::RebuildIslandGrid()
 {
-    if (!IslandGridContainer.IsValid())
+    // 1. Thread Safety (Redundant but safe)
+    if (!IsInGameThread())
     {
-        if (DiggerDebug::Islands())
-            UE_LOG(LogTemp, Warning, TEXT("RebuildIslandGrid: IslandGridContainer is invalid."));
         return;
     }
 
-    TSharedRef<SWidget> NewWidget = MakeIslandGridWidget(); // Make sure this returns a valid widget (not SWidget)
-
-    if (DiggerDebug::Islands())
+    // 2. Container Validity
+    if (!IslandGridContainer.IsValid())
     {
-        if (!NewWidget->SupportsKeyboardFocus()) // or other sanity check
+        if (DiggerDebug::Islands())
         {
-            if (DiggerDebug::Islands())
-                UE_LOG(LogTemp, Warning, TEXT("RebuildIslandGrid: MakeIslandGridWidget returned invalid widget."));
-            return;
+            UE_LOG(LogTemp, Warning, TEXT("RebuildIslandGrid: IslandGridContainer is invalid (Window closed?)."));
         }
+        return;
     }
 
+    // 3. Create Content
+    TSharedRef<SWidget> NewWidget = MakeIslandGridWidget();
+
+    // 4. Assign Content
+    // SetContent handles the destruction of old children safely
     IslandGridContainer->SetContent(NewWidget);
 
     if (DiggerDebug::Islands())
+    {
         UE_LOG(LogTemp, Warning, TEXT("RebuildIslandGrid: Grid rebuilt successfully."));
+    }
 }
 
 
@@ -7241,5 +7828,18 @@ FName FDiggerEdModeToolkit::GetToolkitFName() const { return FName("DiggerEdMode
 FText FDiggerEdModeToolkit::GetBaseToolkitName() const { return LOCTEXT("ToolkitName", "Digger Toolkit"); }
 FEdMode* FDiggerEdModeToolkit::GetEditorMode() const { return GLevelEditorModeTools().GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId); }
 TSharedPtr<SWidget> FDiggerEdModeToolkit::GetInlineContent() const { return ToolkitWidget; }
+
+FString FDiggerEdModeToolkit::GetCurrentSaveFileName() const
+{
+    if (SaveFileNameWidget.IsValid())
+    {
+        FString Text = SaveFileNameWidget->GetText().ToString();
+        if (!Text.IsEmpty())
+        {
+            return Text;
+        }
+    }
+    return TEXT("Default");
+}
 
 #undef LOCTEXT_NAMESPACE

@@ -7,6 +7,7 @@
 #include "HoleShapeLibrary.h"
 #include "VoxelBrushTypes.h"
 #include "Voxel/VoxelEvents.h"
+#include "FSavedLightData.h"
 #include "VoxelChunk.generated.h"
 
 class ADynamicHole;
@@ -38,6 +39,9 @@ public:
 
     /** Called by voxel code (CPU/GPU) to broadcast a per-chunk report. */
     void ReportVoxelModification(const FVoxelModificationReport& Report);
+
+    // Called by MarchingCubes when geometry generation is complete
+    void UpdateMeshFromData(const TArray<FVector>& Vertices, const TArray<int32>& Triangles, const TArray<FVector>& Normals);
     
     // Initialization
     void InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerManager* InDiggerManager);
@@ -45,6 +49,9 @@ public:
     void InitializeDiggerManager(ADiggerManager* InDiggerManager);
     void RestoreAllHoles();
     void OnMarchingMeshComplete() const;
+
+    // VoxelChunk.h
+    TArray<FSavedLightData> SavedLights;
 
     UPROPERTY(EditAnywhere)
     UHoleShapeLibrary* HoleShapeLibrary;
@@ -86,9 +93,14 @@ public:
     void ForceUpdate();
     void RefreshSectionMesh();
     void OnMeshReady(FIntVector Coord, int32 SectionIdx);
-    void ClearAndRebuildSection();
     bool SaveChunkData(const FString& FilePath);
     bool LoadChunkData(const FString& FilePath);
+    
+    // Called by Manager to stash a light into this chunk for saving
+    void CaptureLightForSave(AActor* LightActor);
+    
+    // Called by Manager after saving to clear memory
+    void ClearSavedLights();
     bool LoadChunkData(const FString& FilePath, bool bOverwrite);
     void ClearSpawnedHoles();
     void SpawnHoleMeshes();
@@ -109,9 +121,8 @@ public:
 
 
     // Mesh generation
-    void GenerateMesh() const;
-    void GenerateMeshSyncronous() const;
-    void GenerateMesh(bool bIsSyncronous) const;
+    void GenerateMesh();
+    void GenerateMeshSyncronous();
 
     // Getters
     FIntVector GetChunkCoordinates() const { return ChunkCoordinates; }
@@ -127,11 +138,10 @@ public:
     // Setters
     void SetMarchingCubesGenerator(UMarchingCubes* InMarchingCubesGenerator) { MarchingCubesGenerator = InMarchingCubesGenerator; }
     void BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction, const FString& String);
-
-    float BlendSDF(float SDFValue, float ExistingSDF, bool bDig, float TransitionBand);
-    //void ForceRegenerateMesh();
-
-public:
+    
+    // Spawns actors based on stored HoleDataArray
+    void RegenerateHolesFromData();
+    
     // Add a hole to the chunk's hole list
     void AddHoleToChunk(ADynamicHole* Hole);
 

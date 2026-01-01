@@ -5,9 +5,16 @@
 #include "HoleShapeLibrary.h"
 #include "FHoleShape.h"
 
-static const TCHAR* GDefaultHoleLibraryPath = TEXT("/Game/Blueprints/HoleShapeLibrary.HoleShapeLibrary");
-static const TCHAR* GDefaultHoleBPPath = TEXT("/Game/DynamicHoles/BP_MeshHole.BP_MeshHole_C");
-static const TCHAR* GHoleMeshesFolder = TEXT("/Game/DynamicHoles/HoleMeshes");
+// 1. Fixed Case Sensitivity ('Blueprints' -> 'BluePrints')
+static const TCHAR* GDefaultHoleLibraryPath = TEXT("/Digger/Digger/BluePrints/HoleShapeLibrary.HoleShapeLibrary");
+
+// 2. This was actually correct, but ensures we match the folder structure
+static const TCHAR* GDefaultHoleBPPath = TEXT("/Digger/Digger/DynamicHoles/BP_MeshHole.BP_MeshHole_C");
+
+// 3. REMOVED '/Content/' from the path
+static const TCHAR* GHoleMeshesFolder = TEXT("/Digger/Digger/DynamicHoles/HoleMeshes");
+
+
 
 // Ensures the given class reference is loaded from the default path if not set
 inline void EnsureDefaultHoleBP(TSubclassOf<AActor>& HoleBPRef)
@@ -58,6 +65,10 @@ inline void SeedHoleShapesFromFolder(UHoleShapeLibrary* Lib)
         EHoleShapeType ShapeType = static_cast<EHoleShapeType>(EnumIndex);
         const FString ShapeName = EnumPtr->GetNameStringByIndex(EnumIndex);
 
+    	
+    	// ADD THIS LINE to prevent reading past the valid data:
+    	if (ShapeName.Contains(TEXT("MAX"))) { continue; }
+
         const FString AssetPath = FString::Printf(TEXT("%s/DH_%s.DH_%s"), *BasePath, *ShapeName, *ShapeName);
         UStaticMesh* MeshForShape = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *AssetPath));
 
@@ -66,10 +77,14 @@ inline void SeedHoleShapesFromFolder(UHoleShapeLibrary* Lib)
             MeshForShape = FallbackSphereMesh;
         }
 
-        FHoleMeshMapping Mapping;
-        Mapping.ShapeType = ShapeType;
-        Mapping.Mesh = MeshForShape;
-        Lib->ShapeMeshMappings.Add(Mapping);
+    	// Only add mapping if we actually found something (or have a valid fallback)
+    	if (MeshForShape)
+    	{
+    		FHoleMeshMapping Mapping;
+    		Mapping.ShapeType = ShapeType;
+    		Mapping.Mesh = MeshForShape;
+    		Lib->ShapeMeshMappings.Add(Mapping);
+    	}
     }
 
     UE_LOG(LogTemp, Log, TEXT("Seeded %d hole shape mappings"), Lib->ShapeMeshMappings.Num());

@@ -10,63 +10,87 @@ float UCapsuleBrushShape::CalculateSDF_Implementation(
     float TerrainHeight
 ) const
 {
-    // Apply brush offset
-    FVector AdjustedBrushPos = Stroke.BrushPosition + Stroke.BrushOffset;
-    
-    // Transform to local space
-    FVector LocalPos = WorldPos - AdjustedBrushPos;
-    if (!Stroke.BrushRotation.IsZero())
-    {
-        FQuat InverseRotation = Stroke.BrushRotation.Quaternion().Inverse();
-        LocalPos = InverseRotation.RotateVector(LocalPos);
-    }
-    
-    // Use BrushLength for the cylindrical part
-    float CylinderLength = Stroke.BrushLength;
-    float HalfLength = CylinderLength * 0.5f;
-    float Radius = Stroke.BrushRadius;
-    
-    // Clamp the Z coordinate to the cylindrical part
-    float ClampedZ = FMath::Clamp(LocalPos.Z, -HalfLength, HalfLength);
-    
-    // Find the closest point on the central axis
-    FVector ClosestPoint = FVector(0.0f, 0.0f, ClampedZ);
-    
-    // Distance from world position to closest point on axis
-    float Distance = FVector::Dist(LocalPos, ClosestPoint) - Radius;
-    
-    if (Distance > Stroke.BrushFalloff)
-        return 0.0f;
+    // 1. Transform WorldPos to Local Brush Space
+    FVector Center = Stroke.BrushPosition + Stroke.BrushOffset;
+    FVector LocalPos = WorldPos - Center;
 
-    float SDFValue;
-    bool bIsBelowTerrain = WorldPos.Z < TerrainHeight;
+    // Unrotate so the capsule is always vertical (aligned with Z) in local space
+    if (!Stroke.BrushRotation.IsNearlyZero())
+    {
+        LocalPos = Stroke.BrushRotation.UnrotateVector(LocalPos);
+    }
+
+    // 2. Define the Capsule Line Segment (Start to End)
+    // In local space, the capsule is centered at 0,0,0 and extends along Z.
+    float HalfHeight = Stroke.BrushLength * 0.5f;
+    FVector A = FVector(0, 0, -HalfHeight);
+    FVector B = FVector(0, 0,  HalfHeight);
+
+    // 3. Compute Distance to Line Segment (AB)
+    // Vector PA = Point - A
+    // Vector BA = B - A
+    FVector PA = LocalPos - A;
+    FVector BA = B - A;
+
+    // Project Point onto Line (clamped 0..1)
+    float h = FMath::Clamp(FVector::DotProduct(PA, BA) / FVector::DotProduct(BA, BA), 0.0f, 1.0f);
+
+    // Closest point on the line segment
+    FVector ClosestPoint = A + (BA * h);
+    
+    // Distance from our point to that closest point
+    float DistToLine = FVector::Dist(LocalPos, ClosestPoint);
+
+    // 4. SDF Calculation (Distance to Line - Radius)
+    // This gives us the distance to the surface of the capsule
+    // Note: We include Falloff in the effective radius calculation logic later, 
+    // but the raw SDF is Dist - Radius.
+    
+    float SignedDist = DistToLine - Stroke.BrushRadius;
+
+    // 5. Apply Falloff and Dig/Add logic (Standard boilerplate)
+    float SDFValue = 0.0f;
 
     if (Stroke.bDig)
     {
-        if (Distance <= 0.0f)
+        if (SignedDist <= 0.0f) // Inside the hard capsule
         {
             SDFValue = FVoxelConversion::SDF_AIR;
         }
-        else
+        else // In the falloff zone
         {
-            float t = Distance / Stroke.BrushFalloff;
-            t = FMath::SmoothStep(0.0f, 1.0f, t);
-            SDFValue = bIsBelowTerrain ? 
-                FMath::Lerp(FVoxelConversion::SDF_AIR, FVoxelConversion::SDF_SOLID, t) :
-                FMath::Lerp(FVoxelConversion::SDF_AIR, 0.0f, t);
+            float t = 0.0f;
+            if (Stroke.BrushFalloff > 0.001f)
+            {
+                t = FMath::Clamp(SignedDist / Stroke.BrushFalloff, 0.0f, 1.0f);
+                t = FMath::SmoothStep(0.0f, 1.0f, t);
+            }
+            else
+            {
+                t = 1.0f;
+            }
+            SDFValue = FMath::Lerp(FVoxelConversion::SDF_AIR, FVoxelConversion::SDF_SOLID, t);
         }
     }
-    else
+    else // Adding
     {
-        if (Distance <= 0.0f)
+        if (SignedDist <= 0.0f)
         {
             SDFValue = FVoxelConversion::SDF_SOLID;
         }
         else
         {
-            float t = Distance / Stroke.BrushFalloff;
-            t = FMath::SmoothStep(0.0f, 1.0f, t);
-            SDFValue = FMath::Lerp(FVoxelConversion::SDF_SOLID, 0.0f, t);
+            float t = 0.0f;
+            if (Stroke.BrushFalloff > 0.001f)
+            {
+                t = FMath::Clamp(SignedDist / Stroke.BrushFalloff, 0.0f, 1.0f);
+                t = FMath::SmoothStep(0.0f, 1.0f, t);
+            }
+            else
+            {
+                t = 1.0f;
+            }
+            SDFValue = FMath::Lerp(FVoxelConversion::SDF_SOLID, FVoxelConversion::SDF_AIR, t);
         }
     }
 
@@ -75,9 +99,31 @@ float UCapsuleBrushShape::CalculateSDF_Implementation(
 
 bool UCapsuleBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const
 {
-    // Temporary fallback - use simple sphere bounds
-    const FVector Delta = WorldPos - Stroke.BrushPosition;
-    const float DistanceSq = Delta.SizeSquared();
-    const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
-    return DistanceSq <= RadiusSq;
+    // Quick Bounding Box check first
+    // Capsule Bounds = Radius + HalfHeight
+    
+    // We already handle this in UVoxelChunk::CalculateBrushBounds, 
+    // but for the per-voxel iteration inside the chunk, we can do a quick local check.
+    
+    FVector Center = Stroke.BrushPosition + Stroke.BrushOffset;
+    FVector LocalPos = WorldPos - Center;
+    
+    if (!Stroke.BrushRotation.IsNearlyZero())
+    {
+        LocalPos = Stroke.BrushRotation.UnrotateVector(LocalPos);
+    }
+
+    // Check Height (Z)
+    float HalfHeight = Stroke.BrushLength * 0.5f;
+    float VerticalLimit = HalfHeight + Stroke.BrushRadius + Stroke.BrushFalloff + 2.0f; // +Safety
+    
+    if (FMath::Abs(LocalPos.Z) > VerticalLimit) return false;
+
+    // Check Width (XY)
+    float HorizontalLimit = Stroke.BrushRadius + Stroke.BrushFalloff + 2.0f;
+    float HorizontalDistSq = LocalPos.X * LocalPos.X + LocalPos.Y * LocalPos.Y;
+    
+    if (HorizontalDistSq > HorizontalLimit * HorizontalLimit) return false;
+
+    return true;
 }

@@ -1,14 +1,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
 // Error in MarchingCubes.cpp
-#include "UDynamicMesh.h" // Not found
+#include "DiggerDebug.h"
+#include "SparseVoxelGrid.h"
 #include "MarchingCubes.generated.h"
 
 class ADiggerManager;
 class UVoxelChunk;
-class USparseVoxelGrid;
 
 //Mesh Ready Delegate
 DECLARE_DELEGATE(FOnMeshReady);
@@ -23,12 +22,76 @@ public:
 	// Constructors
 	UMarchingCubes();
 	UMarchingCubes(const FObjectInitializer& ObjectInitializer, const UVoxelChunk* VoxelChunk);
-	void ClearSectionAndRebuild(int32 SectionIndex, FIntVector ChunkCoord);
+	UFUNCTION()
 	void Initialize(ADiggerManager* InDiggerManager);
+	void GenerateMesh(const UVoxelChunk* ChunkPtr);
 
 	// Generate the mesh based on the voxel grid
-	void GenerateMesh(const UVoxelChunk* ChunkPtr);
-	void GenerateMeshSyncronous(const UVoxelChunk* VoxelChunk);
+public:
+	// --- MAIN API ---
+    
+	// The Router: Decides between Sync/Async and Algorithms
+	// This signature matches what VoxelChunk expects!
+	UFUNCTION()
+	void GenerateMesh(UVoxelChunk* Chunk);
+
+	// Explicit Sync call (for ForceUpdate)
+	UFUNCTION()
+	void GenerateMeshSyncronous(UVoxelChunk* Chunk);
+
+	// --- LOW LEVEL API ---
+
+	// Keep this for backward compatibility if other classes call it, 
+	// but internally it just calls the function above.
+	UFUNCTION()
+	void GenerateMeshFromGridSyncronous(
+		USparseVoxelGrid* InVoxelGrid,
+		const FVector& Origin,
+		float VoxelSize,
+		TArray<FVector>& OutVertices,
+		TArray<int32>& OutTriangles,
+		TArray<FVector>& OutNormals
+	);
+	
+
+	// --- WORKER API ---
+
+	// 1. Pointer Version (Called by DiggerManager/Sync)
+	void GenerateMeshFromGrid(
+		USparseVoxelGrid* InVoxelGrid,
+		const FVector& Origin,
+		float VoxelSize,
+		const TArray<float>& HeightValues,
+		TArray<FVector>& OutVertices,
+		TArray<int32>& OutTriangles,
+		TArray<FVector>& OutNormals
+	);
+
+	// 2. Map Snapshot Version (Called by Async Task) <--- MISSING
+	void GenerateMeshFromGrid(
+		const TMap<FIntVector, FVoxelData>& VoxelData,
+		const FVector& Origin,
+		float VoxelSize,
+		const TArray<float>& HeightValues,
+		TArray<FVector>& OutVertices,
+		TArray<int32>& OutTriangles,
+		TArray<FVector>& OutNormals
+	);
+
+private:
+	// 3. The Actual Logic (Worker)
+	void GenerateMesh_MarchingCubes(
+		const TMap<FIntVector, FVoxelData>& VoxelData,
+		const FVector& Origin,
+		float VoxelSize,
+		const TArray<float>& HeightValues,
+		TArray<FVector>& OutVertices,
+		TArray<int32>& OutTriangles,
+		TArray<FVector>& OutNormals
+	);
+	
+
+public:
 
 	// class UMarchingCubes:
 	float SurfaceInset = 0.25f; // in *voxels*; small negative offset below surface
@@ -74,28 +137,10 @@ public:
 	void ClearHeightCache();
 	bool IsHeightCacheValid(const FVector& ChunkOrigin, float VoxelSize) const;
 
-	bool IsDebugging() {return bIsDebugging;}
-
-	
-	
-	void GenerateMeshFromGrid(
-		USparseVoxelGrid* VoxelGrid,
-		const FVector& Origin,
-		float VoxelSize,
-		TArray<FVector>& OutVertices,
-		TArray<int32>& OutTriangles,
-		TArray<FVector>& OutNormals
-		// Add TArray<FVector2D>& OutUVs, TArray<FColor>& OutColors, TArray<FProcMeshTangent>& OutTangents if needed
-	);
-
-	void GenerateMeshFromGridSyncronous(
-	USparseVoxelGrid* InVoxelGrid,
-	const FVector& Origin,
-	float VoxelSize,
-	TArray<FVector>& OutVertices,
-	TArray<int32>& OutTriangles,
-	TArray<FVector>& OutNormals
-	);
+	bool IsDebugging() const
+	{
+		return DiggerDebug::Mesh();
+	}
 	
 	
 	void PopulateHeightValues(
@@ -147,20 +192,6 @@ public:
 		const FVector& Origin,
 		int32 IslandId
 	);
-
-
-	
-
-	void AddSkirtMesh(
-	const TArray<int32>& RimVertexIndices,
-	TArray<FVector>& Vertices,
-	TArray<int32>& Triangles,
-	TArray<FVector>& Normals) const;
-
-	void FindRimVertices(
-	const TArray<FVector>& Vertices,
-	const TArray<int32>& Triangles,
-	TArray<int32>& OutRimVertexIndices);
 	
 	static FVector InterpolateVertex(const FVector& P1, const FVector& P2, float SDF1, float SDF2);
 
@@ -183,9 +214,10 @@ public:
 	FOnMeshReady OnMeshReady;
 	FCriticalSection OutVerticesMutex;
 
-	//	void GenerateMeshForIsland(USparseVoxelGrid* IslandGrid, TArray<FVector>& Vertices, TArray<int32>& Triangles, TArray<FVector>& Normals, TArray<FVector2D>& UVs, TArray<FColor>& Colors, TArray<FProcMeshTangent>& Tangents);
-
 private:
+	// Helper to grab heights safely on Game Thread
+	TArray<float> CaptureHeightMap(const FVector& Origin, float VoxelSize, int32 GridResolution);
+	
 	// Helper functions for mesh generation
 	//FVector InterpolateVertex(float Value1, FVector V1, float Value2, FVector V2);
 	int32 GetVertexIndex(const FVector& Vertex, TMap<FVector, int32>& VertexMap, TArray<FVector>& Vertices);

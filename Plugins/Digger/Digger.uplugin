@@ -23,7 +23,7 @@
 		{
 			"Name": "DiggerEditor",
 			"Type": "Editor",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "PostEngineInit"
 		}
 	]
 }

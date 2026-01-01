@@ -1,9 +1,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "FBrushStroke.h"
 #include "VoxelBrushTypes.h" // Include the shared header
 #include "UObject/NoExportTypes.h"
 #include "VoxelBrushShape.generated.h"
+
 
 class ADiggerManager;
 class UVoxelChunk;
@@ -17,6 +19,8 @@ class DIGGER_API UVoxelBrushShape : public UObject
 public:
 	UVoxelBrushShape();
 	bool EnsureDiggerManager();
+
+	void SetupSweptStroke(FBrushStroke& OutStroke, FVector Start, FVector End, float Radius);
 
 	// Initialize the brush
 	void InitializeBrush(EVoxelBrushType InBrushType, float InSize, FVector InLocation, ADiggerManager* DiggerManagerRef);
@@ -78,6 +82,14 @@ public:
 	{
 		this->BrushLocation = NewBrushLocation;
 	}
+
+	// ADD THIS: Store the active light type here
+	UPROPERTY(EditAnywhere, Category = "Brush")
+	ELightBrushType LightType = ELightBrushType::Point;
+
+	// ADD THIS: Setter for the UI/Toolkit to call
+	UFUNCTION(BlueprintCallable, Category = "Brush")
+	void SetLightType(ELightBrushType NewType) { LightType = NewType; }
 	
 
 	UFUNCTION(BlueprintCallable, Category = "Brush")

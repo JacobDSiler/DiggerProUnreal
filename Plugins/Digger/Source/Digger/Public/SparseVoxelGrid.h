@@ -12,6 +12,7 @@
 // Forward declarations
 class ADiggerManager;
 class UVoxelChunk;
+class UMarchingCubes;
 class UWorld;
 struct FIslandData; // Defined elsewhere (e.g., DiggerManager.h) — do NOT redefine here.
 
@@ -48,6 +49,13 @@ public:
 
 	/** Ensure DiggerManager pointer is valid. */
 	bool EnsureDiggerManager();
+
+	// Clear all voxel data in the grid.
+	void Clear()
+	{
+		FScopeLock Lock(&VoxelDataMutex);
+		VoxelData.Empty();
+	}
 
 	/** Safe world getter (works in editor/PIE). */
 	UWorld* GetSafeWorld() const;
