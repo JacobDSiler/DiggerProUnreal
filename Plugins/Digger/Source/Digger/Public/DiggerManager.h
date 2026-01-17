@@ -8,27 +8,27 @@
 #include <queue>
 
 // 3. Engine Runtime Framework
-#include "GameFramework/Actor.h"
-#include "Engine/StaticMeshActor.h"
-#include "Engine/StaticMesh.h"
 #include "ProceduralMeshComponent.h"
 #include "StaticMeshAttributes.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshActor.h"
+#include "GameFramework/Actor.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "UObject/Package.h"
 
 // 4. Digger Runtime Internal
-#include "VoxelBrushShape.h"
-#include "VoxelBrushTypes.h"
 #include "FBrushStroke.h"
-#include "HoleShapeLibrary.h"
 #include "FCustomSDFBrush.h"
+#include "HoleShapeLibrary.h"
 #include "MarchingCubes.h"
 #include "SparseVoxelGrid.h"
+#include "VoxelBrushShape.h"
+#include "VoxelBrushTypes.h"
 #include "VoxelConversion.h"
-#include "Voxel/VoxelEvents.h"
 #include "Materials/DiggerMaterialTypes.h"
+#include "Voxel/VoxelEvents.h"
 
 //4.5 Digger Height Cache
 #include "DiggerLandscapeCache.h"
@@ -37,10 +37,10 @@
 // CRITICAL: These must be wrapped. If you use types from these files 
 // in your class variables/functions, those variables must ALSO be wrapped in #if WITH_EDITOR
 #if WITH_EDITOR
-    #include "IMeshMergeUtilities.h"
     #include "AssetToolsModule.h"
-    #include "IAssetTools.h"
-    #include "AssetRegistry/AssetRegistryModule.h"
+#include "IAssetTools.h"
+#include "IMeshMergeUtilities.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #endif
 
 // 6. The Generated Header MUST be the very last include
@@ -256,6 +256,9 @@ public:
     {
         return HeightCacheSystem;
     }
+
+    ALandscapeProxy* GetLandscapeProxyAt(const FVector& WorldPos) const;
+
     
     UFUNCTION(BlueprintCallable, Category="Digger|Materials")
     void ApplyMaterialProfileToComponent(UDiggerMaterialProfile* Profile, UPrimitiveComponent* TargetComponent, int32 ElementIndex);
@@ -300,7 +303,8 @@ public:
     // The simplified API
     UFUNCTION(BlueprintCallable, Category = "Landscape Tools")
     float GetLandscapeHeightAt(const FVector& Location);
-    
+    TOptional<float> GetLandscapeHeightAt_Internal(const FVector& WorldPos) const;
+
     // Generic dig function for Vehicles, AI, or Custom Tools
     UFUNCTION(BlueprintCallable, Category = "Digger Tool")
     bool PerformDig(FVector StartLocation, FVector Direction, float TraceRange, float Radius, float Falloff, EVoxelBrushType Shape, bool bIsDigging);
@@ -375,6 +379,8 @@ public:
         }
 
     void ApplyPendingBrushSamples();
+    TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos);
+    TOptional<float> SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos, bool bForcePrecise);
     UFUNCTION(BlueprintCallable)
     void CreateHoleAt(FVector WorldPosition, FRotator Rotation, FVector Scale, TSubclassOf<AActor> HoleBPClass);
 

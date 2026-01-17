@@ -74,38 +74,70 @@ UWorld* UDiggerLandscapeCache::GetSafeWorld() const
 }
 
 // --- HELPER: Exact logic from Backup ---
-float UDiggerLandscapeCache::SampleLandscapeHeight(ALandscapeProxy* Proxy, const FVector& WorldPos)
+TOptional<float> UDiggerLandscapeCache::SampleLandscapeHeightPrecise(const FVector& WorldPos)
 {
-    if (!Proxy) return INVALID_LANDSCAPE_HEIGHT;
+    // Cache key (XY only)
+    const FIntPoint Key(
+        FMath::FloorToInt(WorldPos.X),
+        FMath::FloorToInt(WorldPos.Y)
+    );
 
-    // Transform to Local Space for the API
-    FVector LocalPos = Proxy->GetTransform().InverseTransformPosition(WorldPos);
-    
-    // 1. Try Simple (Physics)
-    TOptional<float> H = Proxy->GetHeightAtLocation(LocalPos, EHeightfieldSource::Simple);
-    
-    // 2. Try Complex (Mesh)
-    if (!H.IsSet()) 
+    // Check cache
+    if (float* Cached = HeightCache.Find(Key))
     {
-        H = Proxy->GetHeightAtLocation(LocalPos, EHeightfieldSource::Complex);
+        return *Cached;
     }
 
-    // 3. Try Editor (Data)
-#if WITH_EDITOR
-    if (!H.IsSet() && GIsEditor)
+    // Get landscape proxy
+    ALandscapeProxy* Landscape = GetLandscapeProxyAt(WorldPos);
+    if (!Landscape)
     {
-         H = Proxy->GetHeightAtLocation(LocalPos, EHeightfieldSource::Editor);
-    }
-#endif
-
-    if (H.IsSet())
-    {
-        // Convert Local Z to World Z
-        return (H.GetValue() * Proxy->GetActorScale3D().Z) + Proxy->GetActorLocation().Z;
+        if (DiggerDebug::Landscape())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("SampleLandscapeHeightPrecise: No landscape at %s"), *WorldPos.ToString());
+        }
+        return TOptional<float>();
     }
 
-    return INVALID_LANDSCAPE_HEIGHT;
+    // Direct precise sampling
+    TOptional<float> Sampled = Landscape->GetHeightAtLocation(WorldPos);
+
+    if (Sampled.IsSet())
+    {
+        HeightCache.Add(Key, Sampled.GetValue());
+
+        if (DiggerDebug::Landscape())
+        {
+            UE_LOG(LogTemp, Log, TEXT("Precise height at %s = %.2f"), *WorldPos.ToString(), Sampled.GetValue());
+        }
+
+        return Sampled;
+    }
+
+    if (DiggerDebug::Landscape())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("SampleLandscapeHeightPrecise: Failed at %s"), *WorldPos.ToString());
+    }
+
+    return TOptional<float>();
 }
+
+TOptional<float> UDiggerLandscapeCache::SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos)
+{
+    return SampleLandscapeHeightPrecise(WorldPos);
+}
+
+TOptional<float> UDiggerLandscapeCache::SampleLandscapeHeight(ALandscapeProxy* Landscape, const FVector& WorldPos, bool bForcePrecise)
+{
+    return SampleLandscapeHeightPrecise(WorldPos);
+}
+
+float UDiggerLandscapeCache::GetLandscapeHeightAt(const FVector& WorldPos)
+{
+    TOptional<float> H = SampleLandscapeHeightPrecise(WorldPos);
+    return H.IsSet() ? H.GetValue() : INVALID_LANDSCAPE_HEIGHT;
+}
+
 
 float UDiggerLandscapeCache::GetHeight(const FVector& Location)
 {
@@ -143,7 +175,8 @@ float UDiggerLandscapeCache::GetHeight(const FVector& Location)
     // 4. GAME THREAD RECOVERY
     // Instead of forcing a full build immediately (which might miss this specific point due to grid alignment),
     // we just Sample the point directly. This is 100% accurate.
-    float DirectHeight = SampleLandscapeHeight(Proxy, Location);
+    TOptional<float> Direct = SampleLandscapeHeightPrecise(Location);
+    float DirectHeight = Direct.IsSet() ? Direct.GetValue() : INVALID_LANDSCAPE_HEIGHT;
     
     if (DirectHeight > (INVALID_LANDSCAPE_HEIGHT + 1.0f))
     {
@@ -213,6 +246,12 @@ float UDiggerLandscapeCache::GetDistanceFromLandscape(const FVector& Location)
     return Location.Z - TerrainZ;
 }
 
+ALandscapeProxy* UDiggerLandscapeCache::GetLandscapeProxyAt(const FVector& WorldPos) const
+{
+    return FindProxy(WorldPos);
+}
+
+
 
 void UDiggerLandscapeCache::BuildCacheForProxy(ALandscapeProxy* Proxy)
 {
@@ -235,11 +274,10 @@ void UDiggerLandscapeCache::BuildCacheForProxy(ALandscapeProxy* Proxy)
         for (float Y = Bounds.Min.Y; Y <= Bounds.Max.Y; Y += GridSize)
         {
             FVector WorldPos(X, Y, 0);
-            float H = SampleLandscapeHeight(Proxy, WorldPos);
-            
-            if (H > (INVALID_LANDSCAPE_HEIGHT + 1.0f))
+            TOptional<float> HOpt = SampleLandscapeHeightPrecise(WorldPos);
+            if (HOpt.IsSet())
             {
-                NewMap->Add(WorldToGrid(WorldPos), H);
+                NewMap->Add(WorldToGrid(WorldPos), HOpt.GetValue());
             }
         }
     }
@@ -256,6 +294,24 @@ void UDiggerLandscapeCache::BuildCacheForProxy(ALandscapeProxy* Proxy)
         UE_LOG(LogTemp, Log, TEXT("Cache Built for %s. Entries: %d"), *Proxy->GetName(), NewMap->Num());
     }
 }
+
+void UDiggerLandscapeCache::DebugSample(const FVector& WorldPos)
+{
+    TOptional<float> H = SampleLandscapeHeightPrecise(WorldPos);
+
+    if (!H.IsSet())
+    {
+        DrawDebugSphere(WorldContext, WorldPos, 20.f, 12, FColor::Red, false, 5.f);
+        UE_LOG(LogTemp, Error, TEXT("DebugSample FAILED at %s"), *WorldPos.ToString());
+        return;
+    }
+
+    FVector Hit(WorldPos.X, WorldPos.Y, H.GetValue());
+    DrawDebugSphere(WorldContext, Hit, 20.f, 12, FColor::Green, false, 5.f);
+
+    UE_LOG(LogTemp, Warning, TEXT("DebugSample Height=%.2f at %s"), H.GetValue(), *Hit.ToString());
+}
+
 
 
 void UDiggerLandscapeCache::TickProcessQueue(float TimeLimit)

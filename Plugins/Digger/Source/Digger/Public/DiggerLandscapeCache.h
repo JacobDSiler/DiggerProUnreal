@@ -41,6 +41,12 @@ public:
 	// Returns 0.0 if no landscape found.
 	UFUNCTION(BlueprintCallable, Category = "Digger Queries")
 	float GetDistanceFromLandscape(const FVector& Location);
+
+	UFUNCTION(BlueprintCallable, Category = "Digger Queries")
+	ALandscapeProxy* GetLandscapeProxyAt(const FVector& WorldPos) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Digger Debug")
+	void DebugSample(const FVector& WorldPos);
 	
 private:
 	UPROPERTY()
@@ -50,8 +56,10 @@ private:
 	// Map: LandscapeProxy -> (Map: GridCoordinate -> HeightZ)
 	// We use a raw map here because this object owns the data.
 	typedef TMap<FIntPoint, float> FHeightMap;
+	// Precise height cache (XY → Z)
+	TMap<FIntPoint, float> HeightCache;
 	TMap<ALandscapeProxy*, TSharedPtr<FHeightMap>> Cache;
-
+	
 	// Which proxies have we finished scanning?
 	UPROPERTY()
 	TSet<ALandscapeProxy*> ProcessedProxies;
@@ -67,11 +75,19 @@ private:
 
 	// Thread Safety
 	FRWLock Lock;
-
+public:
 	// --- HELPERS ---
 	void BuildCacheForProxy(ALandscapeProxy* Proxy);
 	FIntPoint WorldToGrid(const FVector& Pos) const;
 	ALandscapeProxy* FindProxy(const FVector& Pos) const;
 	UWorld* GetSafeWorld() const;
-	float SampleLandscapeHeight(ALandscapeProxy* Proxy, const FVector& WorldPos);
+public:
+
+	TOptional<float> SampleLandscapeHeight(ALandscapeProxy*, const FVector&);
+	TOptional<float> SampleLandscapeHeight(ALandscapeProxy*, const FVector&, bool bForcePrecise);
+	float GetLandscapeHeightAt(const FVector&);
+
+	// Worker/Helper that actually gets this done.
+	TOptional<float> SampleLandscapeHeightPrecise(const FVector& WorldPos);
+
 };

@@ -148,6 +148,22 @@ void ADiggerManager::ApplyMaterialProfile(UDiggerMaterialProfile* Profile)
     ApplyMaterialProfileToComponent(Profile, TargetRenderComponent.Get(), MaterialElementIndex);
 }
 
+ALandscapeProxy* ADiggerManager::GetLandscapeProxyAt(const FVector& WorldPos) const
+{
+    if (!HeightCacheSystem)
+    {
+        if (DiggerDebug::Landscape())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("GetLandscapeProxyAt: HeightCacheSystem is null"));
+        }
+        return nullptr;
+    }
+
+    // Use the cache's proxy lookup
+    return HeightCacheSystem->FindProxy(WorldPos);
+}
+
+
 void ADiggerManager::ApplyMaterialProfileToComponent(UDiggerMaterialProfile* Profile, UPrimitiveComponent* TargetComponent, int32 ElementIndex)
 {
     if (!Profile || !TargetComponent)
@@ -1515,14 +1531,17 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
         return;
     }
 
+    // If Brush and Verbose Debug Flags are both on, give the full brush details.
+    if (DiggerDebug::Brush() && DiggerDebug::Verbose())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: === BRUSH STROKE DEBUG ==="));
+        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Position: %s"), *BrushStroke.BrushPosition.ToString());
+        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Radius: %f"), BrushStroke.BrushRadius);
+        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Falloff: %f"), BrushStroke.BrushFalloff);
+        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Strength: %f"), BrushStroke.BrushStrength);
+        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: bDig: %s"), BrushStroke.bDig ? TEXT("true") : TEXT("false"));
+    }
 
-    
-    /*UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: === BRUSH STROKE DEBUG ==="));
-    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Position: %s"), *BrushStroke.BrushPosition.ToString());
-    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Radius: %f"), BrushStroke.BrushRadius);
-    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Falloff: %f"), BrushStroke.BrushFalloff);
-    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Strength: %f"), BrushStroke.BrushStrength);
-    UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: bDig: %s"), BrushStroke.bDig ? TEXT("true") : TEXT("false"));*/
     
     if (FVoxelConversion::LocalVoxelSize <= 0.0f)
     {
@@ -1567,7 +1586,7 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
                 if (DiggerDebug::Holes())
                 {
                     // Optional verbose log
-                    // UE_LOG(LogTemp, Warning, TEXT("Skipped Hole Spawn: Brush is above terrain."));
+                     UE_LOG(LogTemp, Warning, TEXT("Skipped Hole Spawn: Brush is above terrain."));
                 }
             }
         }
@@ -1918,6 +1937,59 @@ bool ADiggerManager::PerformPlayerDig()
     
     return true; // Tell BP we succeeded
 }
+
+//Wrapper that is of type float from the TOptional worker method.
+float ADiggerManager::GetLandscapeHeightAt(const FVector& Location)
+{
+    TOptional<float> HeightOpt = GetLandscapeHeightAt_Internal(Location);
+    return HeightOpt.IsSet() ? HeightOpt.GetValue() : UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT;
+}
+
+
+TOptional<float> ADiggerManager::GetLandscapeHeightAt_Internal(const FVector& WorldPos) const
+{
+    // TEMP: bypass cache to restore old behavior and verify
+    ALandscapeProxy* Landscape = GetLandscapeProxyAt(WorldPos);
+    if (!Landscape || !IsValid(Landscape))
+    {
+        if (DiggerDebug::Landscape())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("GetLandscapeHeightAt: No proxy at %s"), *WorldPos.ToString());
+        }
+        return TOptional<float>();
+    }
+
+    TOptional<float> Sampled = Landscape->GetHeightAtLocation(WorldPos);
+    if (!Sampled.IsSet() && DiggerDebug::Landscape())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("GetLandscapeHeightAt: Failed sampling at %s"), *WorldPos.ToString());
+    }
+    return Sampled;
+}
+
+
+/*TOptional<float> ADiggerManager::GetLandscapeHeightAt(const FVector& WorldPos) const
+{
+    if (!HeightCacheSystem)
+    {
+        return TOptional<float>();
+    }
+
+    // Route through precise sampler
+    return HeightCacheSystem->SampleLandscapeHeightPrecise(WorldPos);
+}*/
+
+TOptional<float> ADiggerManager::SampleLandscapeHeight(ALandscapeProxy* Proxy, const FVector& WorldPos, bool bForcePrecise)
+{
+    if (!HeightCacheSystem)
+    {
+        return TOptional<float>();
+    }
+
+    // Route everything through the precise sampler
+    return HeightCacheSystem->SampleLandscapeHeightPrecise(WorldPos);
+}
+
 
 bool ADiggerManager::PerformDig(FVector StartLocation, FVector Direction, float TraceRange, float Radius, float Falloff, EVoxelBrushType Shape, bool bIsDigging)
 {
@@ -3427,14 +3499,14 @@ void ADiggerManager::EnforceZeroLocation()
 }
 
 
-float ADiggerManager::GetLandscapeHeightAt(const FVector& Location)
-{
-    if (HeightCacheSystem)
-    {
-        return HeightCacheSystem->GetHeight(Location);
-    }
-    return Location.Z;
-}
+// float ADiggerManager::GetLandscapeHeightAt(const FVector& Location)
+// {
+//     if (HeightCacheSystem)
+//     {
+//         return HeightCacheSystem->GetHeight(Location);
+//     }
+//     return Location.Z;
+// }
 
 
 FVector ADiggerManager::GetLandscapeNormalAt(const FVector& WorldPosition)
@@ -4625,8 +4697,6 @@ void ADiggerManager::ApplyPendingBrushSamples()
     PendingStroke.Reset();
     bHasLastSample = false;
 }
-
-
 
 
 void ADiggerManager::CreateHoleAt(FVector WorldPosition, FRotator Rotation, FVector Scale, TSubclassOf<AActor> HoleBPClass)

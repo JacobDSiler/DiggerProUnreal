@@ -31,7 +31,7 @@ bool FDiggerFeatureFlags::bEnableBrush_Custom      = false;
 bool FDiggerFeatureFlags::bEnableBrush_Smooth      = false;
 bool FDiggerFeatureFlags::bEnableBrush_Noise       = false;
 bool FDiggerFeatureFlags::bEnableBrush_Light       = true;
-bool FDiggerFeatureFlags::bEnableBrush_Debug       = false;
+bool FDiggerFeatureFlags::bEnableBrush_Debug       = true;
 bool FDiggerFeatureFlags::bEnableGenerationSection = false;
 
 void FDiggerFeatureFlags::LoadFlagsFromPluginConfig()

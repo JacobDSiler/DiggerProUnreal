@@ -7,72 +7,25 @@
 #include "UDynamicMesh.h"
 #include "Async/Async.h"
 
-
+// Constants for transition (Adjust these to match your header/preferences)
+static const float TRANSITION_HEIGHT = 100.0f; 
+static const float TRANSITION_SHARPNESS = 2.0f;
+static const float LANDSCAPE_BLEND_WEIGHT = 0.85f;
 
 FIntVector UMarchingCubes::GetCornerOffset(int32 Index)
 {
 	static const FIntVector Offsets[8] = {
-		FIntVector(0, 0, 0),
-		FIntVector(1, 0, 0),
-		FIntVector(1, 1, 0),
-		FIntVector(0, 1, 0),
-		FIntVector(0, 0, 1),
-		FIntVector(1, 0, 1),
-		FIntVector(1, 1, 1),
-		FIntVector(0, 1, 1)
+		FIntVector(0, 0, 0), FIntVector(1, 0, 0), FIntVector(1, 1, 0), FIntVector(0, 1, 0),
+		FIntVector(0, 0, 1), FIntVector(1, 0, 1), FIntVector(1, 1, 1), FIntVector(0, 1, 1)
 	};
 	return Offsets[Index];
 }
 
-const FVector CornerPositions[8] = {
-	FVector(0.0f, 0.0f, 0.0f), // Vertex 0: (0, 0, 0)
-	FVector(1.0f, 0.0f, 0.0f), // Vertex 1: (1, 0, 0)
-	FVector(1.0f, 1.0f, 0.0f), // Vertex 2: (1, 1, 0)
-	FVector(0.0f, 1.0f, 0.0f), // Vertex 3: (0, 1, 0)
-	FVector(0.0f, 0.0f, 1.0f), // Vertex 4: (0, 0, 1)
-	FVector(1.0f, 0.0f, 1.0f), // Vertex 5: (1, 0, 1)
-	FVector(1.0f, 1.0f, 1.0f), // Vertex 6: (1, 1, 1)
-	FVector(0.0f, 1.0f, 1.0f)  // Vertex 7: (0, 1, 1)
-};
-
-
-
 const int EdgeConnection[12][2] = {
-	{0, 1}, // Edge 0
-	{1, 2}, // Edge 1
-	{2, 3}, // Edge 2
-	{3, 0}, // Edge 3
-	{4, 5}, // Edge 4
-	{5, 6}, // Edge 5
-	{6, 7}, // Edge 6
-	{7, 4}, // Edge 7
-	{0, 4}, // Edge 8
-	{1, 5}, // Edge 9
-	{2, 6}, // Edge 10
-	{3, 7}  // Edge 11
+	{0, 1}, {1, 2}, {2, 3}, {3, 0},
+	{4, 5}, {5, 6}, {6, 7}, {7, 4},
+	{0, 4}, {1, 5}, {2, 6}, {3, 7}
 };
-
-
-const float EdgeDirection[12][3] = {
-	{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}};
-
-const int CubeEdgeFlags[256] = {
-	0x000, 0x109, 0x203, 0x30a, 0x406, 0x50f, 0x605, 0x70c, 0x80c, 0x905, 0xa0f, 0xb06, 0xc0a, 0xd03, 0xe09, 0xf00,
-	0x190, 0x099, 0x393, 0x29a, 0x596, 0x49f, 0x795, 0x69c, 0x99c, 0x895, 0xb9f, 0xa96, 0xd9a, 0xc93, 0xf99, 0xe90,
-	0x230, 0x339, 0x033, 0x13a, 0x636, 0x73f, 0x435, 0x53c, 0xa3c, 0xb35, 0x83f, 0x936, 0xe3a, 0xf33, 0xc39, 0xd30,
-	0x3a0, 0x2a9, 0x1a3, 0x0aa, 0x7a6, 0x6af, 0x5a5, 0x4ac, 0xbac, 0xaa5, 0x9af, 0x8a6, 0xfaa, 0xea3, 0xda9, 0xca0,
-	0x460, 0x569, 0x663, 0x76a, 0x066, 0x16f, 0x265, 0x36c, 0xc6c, 0xd65, 0xe6f, 0xf66, 0x86a, 0x963, 0xa69, 0xb60,
-	0x5f0, 0x4f9, 0x7f3, 0x6fa, 0x1f6, 0x0ff, 0x3f5, 0x2fc, 0xdfc, 0xcf5, 0xfff, 0xef6, 0x9fa, 0x8f3, 0xbf9, 0xaf0,
-	0x650, 0x759, 0x453, 0x55a, 0x256, 0x35f, 0x055, 0x15c, 0xe5c, 0xf55, 0xc5f, 0xd56, 0xa5a, 0xb53, 0x859, 0x950,
-	0x7c0, 0x6c9, 0x5c3, 0x4ca, 0x3c6, 0x2cf, 0x1c5, 0x0cc, 0xfcc, 0xec5, 0xdcf, 0xcc6, 0xbca, 0xac3, 0x9c9, 0x8c0,
-	0x8c0, 0x9c9, 0xac3, 0xbca, 0xcc6, 0xdcf, 0xec5, 0xfcc, 0x0cc, 0x1c5, 0x2cf, 0x3c6, 0x4ca, 0x5c3, 0x6c9, 0x7c0,
-	0x950, 0x859, 0xb53, 0xa5a, 0xd56, 0xc5f, 0xf55, 0xe5c, 0x15c, 0x055, 0x35f, 0x256, 0x55a, 0x453, 0x759, 0x650,
-	0xaf0, 0xbf9, 0x8f3, 0x9fa, 0xef6, 0xfff, 0xcf5, 0xdfc, 0x2fc, 0x3f5, 0x0ff, 0x1f6, 0x6fa, 0x7f3, 0x4f9, 0x5f0,
-	0xb60, 0xa69, 0x963, 0x86a, 0xf66, 0xe6f, 0xd65, 0xc6c, 0x36c, 0x265, 0x16f, 0x066, 0x76a, 0x663, 0x569, 0x460,
-	0xca0, 0xda9, 0xea3, 0xfaa, 0x8a6, 0x9af, 0xaa5, 0xbac, 0x4ac, 0x5a5, 0x6af, 0x7a6, 0x0aa, 0x1a3, 0x2a9, 0x3a0,
-	0xd30, 0xc39, 0xf33, 0xe3a, 0x936, 0x83f, 0xb35, 0xa3c, 0x53c, 0x435, 0x73f, 0x636, 0x13a, 0x033, 0x339, 0x230,
-	0xe90, 0xf99, 0xc93, 0xd9a, 0xa96, 0xb9f, 0x895, 0x99c, 0x69c, 0x795, 0x49f, 0x596, 0x29a, 0x393, 0x099, 0x190,
-	0xf00, 0xe09, 0xd03, 0xc0a, 0xb06, 0xa0f, 0x905, 0x80c, 0x70c, 0x605, 0x50f, 0x406, 0x30a, 0x203, 0x109, 0x000};
 
 const int TriangleConnectionTable[256][16] = {
 	{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
@@ -332,43 +285,35 @@ const int TriangleConnectionTable[256][16] = {
 	{0, 3, 8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
 	{-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}};
 
-// Default constructor
 UMarchingCubes::UMarchingCubes()
 	: MyVoxelChunk(nullptr),
-	DiggerManager(nullptr)
-{
-		bHeightCacheInitialized = false;
-		CachedVoxelSize = 0.0f;
-		CachedChunkSize = 0;
-		CachedChunkOrigin = FVector::ZeroVector;
-		// ... your existing constructor code
-}
-
-// Constructor with FObjectInitializer and UVoxelChunk
-UMarchingCubes::UMarchingCubes(const FObjectInitializer& ObjectInitializer, const UVoxelChunk* VoxelChunk)
-	: UObject(ObjectInitializer), MyVoxelChunk(VoxelChunk), DiggerManager(nullptr), VoxelGrid(nullptr)
+	  DiggerManager(nullptr),
+	  VoxelGrid(nullptr)
 {
 	bHeightCacheInitialized = false;
 	CachedVoxelSize = 0.0f;
 	CachedChunkSize = 0;
 	CachedChunkOrigin = FVector::ZeroVector;
-	// ... your existing constructor code
 }
 
-
+UMarchingCubes::UMarchingCubes(const FObjectInitializer& ObjectInitializer, const UVoxelChunk* VoxelChunk)
+	: UObject(ObjectInitializer), MyVoxelChunk(VoxelChunk), DiggerManager(nullptr), VoxelGrid(nullptr)
+{
+    bHeightCacheInitialized = false;
+    CachedVoxelSize = 0.0f;
+    CachedChunkSize = 0;
+    CachedChunkOrigin = FVector::ZeroVector;
+}
 
 void UMarchingCubes::Initialize(ADiggerManager* InDiggerManager)
 {
 	DiggerManager = InDiggerManager;
 }
 
-
-
 float UMarchingCubes::GetSafeSDFValue(const FIntVector& Position) const {
 	if (!FVoxelConversion::IsValidVoxelIndex(Position)) { 
-		return 1.0f; // Default  outside bounds
+		return 1.0f; 
 	}
-    
 	const float SDFValue = VoxelGrid->GetVoxel(Position.X, Position.Y, Position.Z);
 	return SDFValue;
 }
@@ -378,14 +323,13 @@ void UMarchingCubes::ValidateAndResizeBuffers( FIntVector& Size, TArray<FVector>
 		Vertices.Empty();
 		Vertices.Reserve(Size.X * Size.Y * Size.Z * 12);
 	}
-    
 	if (!Triangles.IsValidIndex(0) || Triangles.Num() < Size.X * Size.Y * Size.Z * 15) {
 		Triangles.Empty();
 		Triangles.Reserve(Size.X * Size.Y * Size.Z * 15);
 	}
 }
 
-// Blends a vertex Z toward the landscape surface if within the transition band
+// Re-implementing ApplyLandscapeTransition inside the class for sync usage
 FVector UMarchingCubes::ApplyLandscapeTransition(const FVector& VertexWS) const
 {
     if (!DiggerManager) return VertexWS;
@@ -393,12 +337,10 @@ FVector UMarchingCubes::ApplyLandscapeTransition(const FVector& VertexWS) const
     float LandscapeZ = DiggerManager->GetLandscapeHeightAt(VertexWS);
     float DistanceToSurface = FMath::Abs(VertexWS.Z - LandscapeZ);
 
-    if (DistanceToSurface < TransitionHeight)
+    if (DistanceToSurface < TRANSITION_HEIGHT)
     {
-        // Alpha: 0 at surface, 1 at bottom of transition band
-        float Alpha = DistanceToSurface / TransitionHeight;
-        // Sharpen/soften the blend with a power curve
-        float BlendAlpha = FMath::Pow(Alpha, TransitionSharpness);
+        float Alpha = DistanceToSurface / TRANSITION_HEIGHT;
+        float BlendAlpha = FMath::Pow(Alpha, TRANSITION_SHARPNESS);
         float NewZ = FMath::Lerp(LandscapeZ, VertexWS.Z, BlendAlpha);
         FVector Result = VertexWS;
         Result.Z = NewZ;
@@ -406,9 +348,6 @@ FVector UMarchingCubes::ApplyLandscapeTransition(const FVector& VertexWS) const
     }
     return VertexWS;
 }
-
-
-
 
 // -------------------------------------------------------------------------
 // WRAPPERS (Interface)
@@ -464,7 +403,6 @@ void UMarchingCubes::GenerateMesh(UVoxelChunk* Chunk)
     });
 }
 
-
 void UMarchingCubes::GenerateMeshSyncronous(UVoxelChunk* Chunk)
 {
     if (!Chunk || !Chunk->GetSparseVoxelGrid()) return;
@@ -518,10 +456,9 @@ void UMarchingCubes::GenerateMeshForIsland(USparseVoxelGrid* IslandGrid, const F
 }
 
 // -------------------------------------------------------------------------
-// ROUTER
+// ROUTERS
 // -------------------------------------------------------------------------
 
-// Router 1: Takes Pointer -> Extracts Map -> Calls Worker
 void UMarchingCubes::GenerateMeshFromGrid(
 	USparseVoxelGrid* InVoxelGrid,
 	const FVector& Origin,
@@ -532,8 +469,6 @@ void UMarchingCubes::GenerateMeshFromGrid(
 	TArray<FVector>& OutNormals)
 {
 	if (!InVoxelGrid) return;
-
-	// Forward to the worker using the internal Map
 	GenerateMesh_MarchingCubes(
 		InVoxelGrid->VoxelData, 
 		Origin, VoxelSize, HeightMap, 
@@ -541,7 +476,6 @@ void UMarchingCubes::GenerateMeshFromGrid(
 	);
 }
 
-// Router 2: Takes Map -> Calls Worker
 void UMarchingCubes::GenerateMeshFromGrid(
 	const TMap<FIntVector, FVoxelData>& VoxelData, 
 	const FVector& Origin, 
@@ -551,7 +485,6 @@ void UMarchingCubes::GenerateMeshFromGrid(
 	TArray<int32>& OutTriangles, 
 	TArray<FVector>& OutNormals)
 {
-	// Forward to the worker
 	GenerateMesh_MarchingCubes(
 		VoxelData, 
 		Origin, VoxelSize, HeightMap, 
@@ -559,7 +492,6 @@ void UMarchingCubes::GenerateMeshFromGrid(
 	);
 }
 
-// RESTORED: Compatibility wrapper for raw grid access (Fixes Linker Error)
 void UMarchingCubes::GenerateMeshFromGridSyncronous(
 	USparseVoxelGrid* InVoxelGrid,
 	const FVector& Origin,
@@ -570,13 +502,9 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
 {
 	if (!InVoxelGrid) return;
 
-	// 1. Determine Grid Resolution
 	int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
-
-	// 2. Capture Heights (We are on Game Thread if calling Sync)
 	TArray<float> LocalHeights = CaptureHeightMap(Origin, VoxelSize, N);
 
-	// 3. Forward to the Main Router
 	GenerateMeshFromGrid(
 		InVoxelGrid, 
 		Origin, 
@@ -589,7 +517,7 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
 }
 
 // -------------------------------------------------------------------------
-// THE WORKER (Heavy Logic)
+// THE WORKER (Refactored to match Old Logic)
 // -------------------------------------------------------------------------
 
 void UMarchingCubes::GenerateMesh_MarchingCubes(
@@ -603,41 +531,71 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
 )
 {
     int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
-    
-    // Safety Checks
     int32 HeightMapWidth = N + 1;
-    if (HeightValues.Num() != HeightMapWidth * HeightMapWidth)
-    {
-        UE_LOG(LogTemp, Error, TEXT("MC Crash: HeightMap Mismatch! Got %d, Expected %d"), 
-               HeightValues.Num(), HeightMapWidth*HeightMapWidth);
-        return;
-    }
 
-    if (IsDebugging())
+    // Helper: Bilinear interpolation from the captured height map
+    auto GetHeightBilinear = [&](const FVector& Pos) -> float 
     {
-        UE_LOG(LogTemp, Warning, TEXT("MC Start: OriginZ=%.2f"), Origin.Z);
-    }
+        FVector Local = Pos - Origin;
+        float GX = Local.X / VoxelSize;
+        float GY = Local.Y / VoxelSize;
+        
+        int32 X0 = FMath::Clamp(FMath::FloorToInt(GX), 0, HeightMapWidth - 2);
+        int32 Y0 = FMath::Clamp(FMath::FloorToInt(GY), 0, HeightMapWidth - 2);
+        int32 X1 = X0 + 1;
+        int32 Y1 = Y0 + 1;
+
+        float FracX = GX - X0;
+        float FracY = GY - Y0;
+
+        float H00 = HeightValues[Y0 * HeightMapWidth + X0];
+        float H10 = HeightValues[Y0 * HeightMapWidth + X1];
+        float H01 = HeightValues[Y1 * HeightMapWidth + X0];
+        float H11 = HeightValues[Y1 * HeightMapWidth + X1];
+
+        // If any sample is invalid, return invalid
+        if (H00 <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.f)) return H00;
+
+        float H0 = FMath::Lerp(H00, H10, FracX);
+        float H1 = FMath::Lerp(H01, H11, FracX);
+        return FMath::Lerp(H0, H1, FracY);
+    };
+
+    // Helper: Transition Logic (Thread-Safe version)
+    auto ApplyWorkerTransition = [&](const FVector& V, float H) -> FVector
+    {
+        if (H <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.f)) return V;
+        
+        float Dist = FMath::Abs(V.Z - H);
+        if (Dist < TRANSITION_HEIGHT)
+        {
+            float Alpha = Dist / TRANSITION_HEIGHT;
+            float Blend = FMath::Pow(Alpha, TRANSITION_SHARPNESS);
+            float NewZ = FMath::Lerp(H, V.Z, Blend);
+            return FVector(V.X, V.Y, NewZ);
+        }
+        return V;
+    };
 
     FVector TotalOffset = FVector(FVoxelConversion::LocalVoxelSize * 0.25F - FVoxelConversion::ChunkWorldSize * 0.5f);
     TMap<FVector, int32> VertexCache;
+    
+    // Store landscape normal for snapped vertices to blend later
+    TMap<int32, FVector> SnappedVertexNormals;
 
     // --- VOXEL LOOP ---
     for (int32 x = 0; x < N; ++x)
     {
         for (int32 y = 0; y < N; ++y)
         {
-            // Column Height
             float TerrainHeight = HeightValues[y * HeightMapWidth + x];
 
             for (int32 z = 0; z < N; ++z)
             {
-                // --- OPTIMIZATION ---
-                bool bHeightValid = (TerrainHeight > (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f));
-                
-                if (bHeightValid)
+                // Optimization: Skip if high above terrain and no explicit data
+                if (TerrainHeight > (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f))
                 {
                     FVector CellPos = Origin + FVector(x, y, z) * VoxelSize;
-                    // If far above terrain, check if we can skip
                     if (CellPos.Z > (TerrainHeight + VoxelSize * 2.0f))
                     {
                         bool bHasExplicit = false;
@@ -650,7 +608,6 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
                     }
                 }
 
-                // --- CORNERS ---
                 FVector CornerWSPositions[8];
                 float CornerSDFValues[8];
                 bool bAllSolid = true;
@@ -661,30 +618,63 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
                     FIntVector LocalCoord = FIntVector(x, y, z) + GetCornerOffset(i);
                     CornerWSPositions[i] = Origin + FVector(LocalCoord) * VoxelSize;
 
-                    // A. Explicit
                     if (const FVoxelData* Data = VoxelData.Find(LocalCoord))
                     {
                         CornerSDFValues[i] = Data->SDFValue;
                     }
-                    // B. Implicit
-                    else 
+                    else
                     {
-                        int32 hX = FMath::Clamp(LocalCoord.X, 0, HeightMapWidth - 1);
-                        int32 hY = FMath::Clamp(LocalCoord.Y, 0, HeightMapWidth - 1);
-                        
-                        float CornerH = HeightValues[hY * HeightMapWidth + hX];
+                        // Implicit logic
+                        float CornerH = HeightValues[FMath::Clamp(LocalCoord.Y, 0, HeightMapWidth-1) * HeightMapWidth + FMath::Clamp(LocalCoord.X, 0, HeightMapWidth-1)];
 
-                        // Sentinel Check
                         if (CornerH <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f))
                         {
-                        	CornerSDFValues[i] = 1.0f; // Default Air
-                        } else {
-                        	// If Voxel is BELOW terrain -> Solid (-1)
-                        	if (CornerWSPositions[i].Z < (CornerH - 0.1f)) {
-                        		CornerSDFValues[i] = -1.0f; 
-                        	} else {
-                        		CornerSDFValues[i] = 1.0f;
-                        	}
+                            CornerSDFValues[i] = 1.0f; // Air if no landscape
+                        }
+                        else
+                        {
+                            float VerticalDelta = CornerWSPositions[i].Z - CornerH;
+                            float BaseSDF = FMath::Clamp(VerticalDelta / (VoxelSize * 2.0f), -1.0f, 1.0f);
+                            float FinalSDF = BaseSDF;
+
+                            // Cavity Logic
+                            if (BaseSDF < 0.0f)
+                            {
+                                bool bFoundAir = false;
+                                float MinAirDist = FLT_MAX;
+                                const float MaxInfluence = 2.0f * VoxelSize;
+
+                                for (int32 dx = -2; dx <= 2; ++dx)
+                                for (int32 dy = -2; dy <= 2; ++dy)
+                                for (int32 dz = -2; dz <= 2; ++dz)
+                                {
+                                    if (dx==0 && dy==0 && dz==0) continue;
+                                    FIntVector NC = LocalCoord + FIntVector(dx, dy, dz);
+                                    const FVoxelData* ND = VoxelData.Find(NC);
+                                    
+                                    // Only blend if neighbor is explicitly AIR (SDF > 0)
+                                    // AND neighbor is physically below terrain (a hole)
+                                    if (ND && ND->SDFValue > 0.0f) 
+                                    {
+                                        FVector NPos = Origin + FVector(NC) * VoxelSize;
+                                        float NH = HeightValues[FMath::Clamp(NC.Y, 0, HeightMapWidth-1) * HeightMapWidth + FMath::Clamp(NC.X, 0, HeightMapWidth-1)];
+                                        
+                                        if (NH > (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f) && NPos.Z < NH)
+                                        {
+                                            float Dist = FVector(dx, dy, dz).Size() * VoxelSize;
+                                            if (Dist < MinAirDist) { MinAirDist = Dist; bFoundAir = true; }
+                                        }
+                                    }
+                                }
+
+                                if (bFoundAir && MinAirDist < MaxInfluence)
+                                {
+                                    float t = MinAirDist / MaxInfluence;
+                                    float AirSDF = FMath::Lerp(-1.0f, 0.0f, 1.0f - t);
+                                    FinalSDF = FMath::Max(BaseSDF, AirSDF);
+                                }
+                            }
+                            CornerSDFValues[i] = FinalSDF;
                         }
                     }
 
@@ -694,34 +684,64 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
 
                 if (bAllSolid || bAllAir) continue;
 
-                // --- TRIANGULATION ---
                 int32 CubeIndex = CalculateMarchingCubesIndex(TArray<float>(CornerSDFValues, 8));
                 if (CubeIndex == 0 || CubeIndex == 255) continue;
 
                 for (int32 i = 0; TriangleConnectionTable[CubeIndex][i] != -1; i += 3) 
                 {
-                    FVector Verts[3];
+                    FVector TriVerts[3];
                     for (int32 j = 0; j < 3; ++j) 
                     {
                         int32 EdgeIdx = TriangleConnectionTable[CubeIndex][i + j];
-                        Verts[j] = InterpolateVertex(
-                            CornerWSPositions[EdgeConnection[EdgeIdx][0]],
-                            CornerWSPositions[EdgeConnection[EdgeIdx][1]],
-                            CornerSDFValues[EdgeConnection[EdgeIdx][0]],
-                            CornerSDFValues[EdgeConnection[EdgeIdx][1]]
-                        );
-                    }
+                        FVector P1 = CornerWSPositions[EdgeConnection[EdgeIdx][0]];
+                        FVector P2 = CornerWSPositions[EdgeConnection[EdgeIdx][1]];
+                        float S1 = CornerSDFValues[EdgeConnection[EdgeIdx][0]];
+                        float S2 = CornerSDFValues[EdgeConnection[EdgeIdx][1]];
 
-                    for (int32 j = 0; j < 3; ++j) 
-                    {
-                        FVector FinalV = Verts[j] + TotalOffset;
-                        int32* CacheIdx = VertexCache.Find(FinalV);
+                        FVector Interp = InterpolateVertex(P1, P2, S1, S2);
+                        
+                        // --- SNAP & TRANSITION LOGIC ---
+                        float H = GetHeightBilinear(Interp);
+                        bool bSnapped = false;
+                        FVector SnappedNormal = FVector::ZeroVector;
+
+                        if (H > (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f))
+                        {
+                            // 1. Snap Z if very close to surface (underground)
+                            float Depth = H - Interp.Z;
+                            if (Depth > 0.001f && Depth < VoxelSize)
+                            {
+                                Interp.Z = H;
+                                bSnapped = true;
+
+                                // Calculate landscape normal via finite difference on the grid
+                                float HL = GetHeightBilinear(Interp - FVector(VoxelSize,0,0));
+                                float HR = GetHeightBilinear(Interp + FVector(VoxelSize,0,0));
+                                float HD = GetHeightBilinear(Interp - FVector(0,VoxelSize,0));
+                                float HU = GetHeightBilinear(Interp + FVector(0,VoxelSize,0));
+                                float dX = (HR - HL) / (2.0f * VoxelSize);
+                                float dY = (HU - HD) / (2.0f * VoxelSize);
+                                
+                                // Store negated normal (as we invert mesh normals later)
+                                SnappedNormal = -FVector(-dX, -dY, 1.0f).GetSafeNormal();
+                            }
+
+                            // 2. Apply Transition Blend
+                            Interp = ApplyWorkerTransition(Interp, H);
+                        }
+                        
+                        TriVerts[j] = Interp + TotalOffset;
+
+                        // Cache & Add
+                        int32* CacheIdx = VertexCache.Find(TriVerts[j]);
                         if (CacheIdx) {
                             OutTriangles.Add(*CacheIdx);
+                            if (bSnapped) SnappedVertexNormals.Add(*CacheIdx, SnappedNormal);
                         } else {
-                            int32 NewIdx = OutVertices.Add(FinalV);
-                            VertexCache.Add(FinalV, NewIdx);
+                            int32 NewIdx = OutVertices.Add(TriVerts[j]);
+                            VertexCache.Add(TriVerts[j], NewIdx);
                             OutTriangles.Add(NewIdx);
+                            if (bSnapped) SnappedVertexNormals.Add(NewIdx, SnappedNormal);
                         }
                     }
                 }
@@ -744,9 +764,16 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
         OutNormals[OutTriangles[i+2]] += FaceNormal;
     }
 
-    for (FVector& NVal : OutNormals) {
+    for (int32 i = 0; i < OutNormals.Num(); ++i) {
+        FVector& NVal = OutNormals[i];
         NVal.Normalize();
-        NVal = -NVal; // Flip
+        NVal = -NVal; // Flip to face correct direction
+
+        // Blend with landscape normal if applicable
+        if (FVector* LandNormal = SnappedVertexNormals.Find(i))
+        {
+            NVal = FMath::Lerp(NVal, *LandNormal, LANDSCAPE_BLEND_WEIGHT).GetSafeNormal();
+        }
     }
 }
 
@@ -769,7 +796,6 @@ void UMarchingCubes::InitializeHeightCache(const FVector& ChunkOrigin, float Vox
 	int32 Padding = 3;
 	int32 TotalSize = N + (Padding * 2);
     
-	// FIXED: Use the same coordinate system as your mesh generation
 	FVector ChunkMin = ChunkOrigin - FVector(N * VoxelSize * 0.5f);
 	FVector SampleStart = ChunkMin - FVector(Padding * VoxelSize);
 
@@ -783,18 +809,12 @@ void UMarchingCubes::InitializeHeightCache(const FVector& ChunkOrigin, float Vox
 		for (int32 y = 0; y < TotalSize; ++y)
 		{
 			FVector SamplePos = SampleStart + FVector(x * VoxelSize, y * VoxelSize, 0);
-            
-			// Use the unified API. 
-			// It handles finding the proxy and checking the cache automatically.
 			float Height = DiggerManager->GetLandscapeHeightAt(SamplePos);
-            
-			// Store using grid coordinates as key
 			FIntVector GridKey(x, y, 0);
 			HeightCache.Add(GridKey, Height);
 		}
 	}
     
-	// Store cache parameters
 	CachedChunkOrigin = ChunkOrigin;
 	CachedVoxelSize = VoxelSize;
 	CachedChunkSize = N;
@@ -813,19 +833,13 @@ float UMarchingCubes::GetCachedHeight(const FVector& WorldPosition) const
 		return 0.0f;
 	}
     
-	// Convert world position to grid coordinates - FIXED ALIGNMENT
-	// Use the same coordinate system as the original mesh generation
 	FVector RelativePos = WorldPosition - CachedChunkOrigin;
-    
-	// Convert to grid space (matching your original VoxelSize scaling)
 	float GridX = RelativePos.X / CachedVoxelSize;
 	float GridY = RelativePos.Y / CachedVoxelSize;
     
-	// Add the chunk center offset to match your original coordinate system
 	GridX += (CachedChunkSize * 0.5f);
 	GridY += (CachedChunkSize * 0.5f);
     
-	// Bilinear interpolation for smooth height values
 	int32 X0 = FMath::FloorToInt(GridX);
 	int32 Y0 = FMath::FloorToInt(GridY);
 	int32 X1 = X0 + 1;
@@ -834,13 +848,11 @@ float UMarchingCubes::GetCachedHeight(const FVector& WorldPosition) const
 	float FracX = GridX - X0;
 	float FracY = GridY - Y0;
     
-	// Get the four corner heights with fallback to 0 if not found
 	float H00 = HeightCache.FindRef(FIntVector(X0, Y0, 0));
 	float H10 = HeightCache.FindRef(FIntVector(X1, Y0, 0));
 	float H01 = HeightCache.FindRef(FIntVector(X0, Y1, 0));
 	float H11 = HeightCache.FindRef(FIntVector(X1, Y1, 0));
     
-	// Bilinear interpolation
 	float H0 = FMath::Lerp(H00, H10, FracX);
 	float H1 = FMath::Lerp(H01, H11, FracX);
 	float FinalHeight = FMath::Lerp(H0, H1, FracY);
@@ -864,21 +876,14 @@ bool UMarchingCubes::IsHeightCacheValid(const FVector& ChunkOrigin, float VoxelS
            FMath::IsNearlyEqual(CachedVoxelSize, VoxelSize, 0.001f);
 }
 
-
-
 void UMarchingCubes::ClearSectionAndRebuildMesh(int32 SectionIndex, FIntVector ChunkCoord)
 {
 	if (!DiggerManager) return;
 
-	// 🔄 Clear mesh section from DiggerManager if it exists
 	if (DiggerManager->ProceduralMesh->GetNumSections() > SectionIndex) {
 		DiggerManager->ProceduralMesh->ClearMeshSection(SectionIndex);
 	}
-
-	// 🎲 Rebuild new mesh for chunk
-	// ---
 }
-
 
 void UMarchingCubes::CreateIslandProceduralMesh(
 	const TArray<FVector>& Vertices,
@@ -894,7 +899,6 @@ void UMarchingCubes::CreateIslandProceduralMesh(
 		return;
 	}
 
-	// Create a new ProceduralMeshComponent dynamically
 	FString MeshName = FString::Printf(TEXT("IslandMesh_%d"), IslandId);
 	UProceduralMeshComponent* IslandMesh = NewObject<UProceduralMeshComponent>(DiggerManager, *MeshName);
 	if (!IslandMesh) {
@@ -911,17 +915,14 @@ void UMarchingCubes::CreateIslandProceduralMesh(
 	TArray<FColor> VertexColors;
 	TArray<FProcMeshTangent> Tangents;
 
-	// Fill UVs etc. as needed (can be blank for now)
 	IslandMesh->CreateMeshSection(0, Vertices, Triangles, Normals, UVs, VertexColors, Tangents, true);
 
-	// Set collision
 	IslandMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	IslandMesh->SetCollisionObjectType(ECC_WorldDynamic);
 	IslandMesh->SetCollisionResponseToAllChannels(ECR_Block);
 	IslandMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
 	IslandMesh->bUseComplexAsSimpleCollision = true;
 
-	// Optional: Set material
 	if (DiggerManager->GetTerrainMaterial()) {
 		IslandMesh->SetMaterial(0, DiggerManager->GetTerrainMaterial());
 	}
@@ -929,30 +930,22 @@ void UMarchingCubes::CreateIslandProceduralMesh(
 	if (DiggerDebug::Islands())
 	UE_LOG(LogTemp, Log, TEXT("Island mesh %d created at origin %s with %d vertices."), IslandId, *Origin.ToString(), Vertices.Num());
 
-	// Optional: Add to an array for future management
 	DiggerManager->IslandMeshes.Add(IslandMesh);
 }
 
-
-
-
-
 void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutOutVertices, const TArray<int32>& OutTriangles, const TArray<FVector>& Normals) const {
-    // Validate pointers
     if (!DiggerManager || !DiggerManager->ProceduralMesh) {
     	if (DiggerDebug::Manager() || DiggerDebug::Mesh())
         UE_LOG(LogTemp, Error, TEXT("DiggerManager or ProceduralMesh is null in ReconstructMeshSection"));
         return;
     }
 
-    // Validate SectionIndex
     if (SectionIndex < 0) {
     	if (DiggerDebug::Manager() || DiggerDebug::Mesh())
         UE_LOG(LogTemp, Error, TEXT("Invalid SectionIndex in ReconstructMeshSection: %d"), SectionIndex);
         return;
     }
 
-    // Validate Mesh Data
     if (OutOutVertices.Num() == 0 || OutTriangles.Num() == 0 || Normals.Num() == 0) {
     	if (DiggerDebug::Manager() || DiggerDebug::Mesh())
         UE_LOG(LogTemp, Error, TEXT("Empty mesh data in ReconstructMeshSection"));
@@ -963,15 +956,13 @@ void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVe
     TArray<FColor> VertexColors;
     TArray<FProcMeshTangent> Tangents;
 
-    // Clear the mesh section if it exists
     if (DiggerManager->ProceduralMesh->GetNumSections() > SectionIndex) {
         DiggerManager->ProceduralMesh->ClearMeshSection(SectionIndex);
     }
-	if (bIsDebugging)
+	if (IsDebugging())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Creating Mesh Section %d"), SectionIndex);
 	}
-    // Create a new mesh section
     DiggerManager->ProceduralMesh->CreateMeshSection(
         SectionIndex,
         OutOutVertices,
@@ -980,7 +971,7 @@ void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVe
         UVs,
         VertexColors,
         Tangents,
-        true  // Enable collision
+        true 
     );
 
 	UProceduralMeshComponent* Mesh = DiggerManager->ProceduralMesh;
@@ -990,52 +981,39 @@ void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVe
 	Mesh->SetCollisionResponseToAllChannels(ECR_Block);
 	Mesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
 	Mesh->bUseComplexAsSimpleCollision = true;
-	//Mesh->RecreatePhysicsState();
 
-
-    // Ensure the material is set once
 	DiggerManager->ProceduralMesh->SetMaterial(SectionIndex, DiggerManager->GetTerrainMaterial());
 
-	// Send the OnMeshReady Callback
 	if (OnMeshReady.IsBound())
 	{
 		OnMeshReady.Execute();
 	}
 }
 
-
-
-
-
-// Interpolates a vertex position on the edge between two points based on their SDF values
-
 // Modify InterpolateVertex to work directly in world space
 FVector UMarchingCubes::InterpolateVertex(const FVector& P1, const FVector& P2, float SDF1, float SDF2)
 {
 	if (FMath::Abs(SDF1 - SDF2) < KINDA_SMALL_NUMBER)
 	{
-		return (P1 + P2) * 0.5f; // Direct world space interpolation
+		return (P1 + P2) * 0.5f; 
 	}
 
 	float T = SDF1 / (SDF1 - SDF2);
-	return FMath::Lerp(P1, P2, T); // Direct world space interpolation
+	return FMath::Lerp(P1, P2, T); 
 }
 
-
-// NEW CORRECT CODE
 TArray<float> UMarchingCubes::CaptureHeightMap(const FVector& Origin, float VoxelSize, int32 GridResolution)
 {
-	// We need N+1 points to cover the edges of the chunk for interpolation
 	int32 SampleSize = GridResolution + 1; 
     
 	TArray<float> Heights;
-	Heights.SetNumUninitialized(SampleSize * SampleSize); // 129*129 = 16641 (CORRECT)
+	Heights.SetNumUninitialized(SampleSize * SampleSize);
 
 	if (DiggerManager)
 	{
-		for (int32 x = 0; x < SampleSize; ++x) 
+		for (int32 y = 0; y < SampleSize; ++y) 
 		{
-			for (int32 y = 0; y < SampleSize; ++y) 
+			for (int32 x = 0; x < SampleSize; ++x) 
 			{
 				FVector ColumnPos = Origin + FVector(x * VoxelSize, y * VoxelSize, 0);
 				Heights[y * SampleSize + x] = DiggerManager->GetLandscapeHeightAt(ColumnPos);
@@ -1050,17 +1028,13 @@ TArray<float> UMarchingCubes::CaptureHeightMap(const FVector& Origin, float Voxe
 	return Heights;
 }
 
-
-// Gets the vertex index, ensuring unique OutVertices are not added multiple times
 int32 UMarchingCubes::GetVertexIndex(const FVector& Vertex, TMap<FVector, int32>& VertexMap, TArray<FVector>& OutOutVertices)
 {
-    // Check if the vertex has already been added
     if (int32* Index = VertexMap.Find(Vertex))
     {
-        return *Index; // Return existing index
+        return *Index; 
     }
 
-    // Otherwise, add it to the array and map
     int32 NewIndex = OutOutVertices.Add(Vertex);
     VertexMap.Add(Vertex, NewIndex);
     return NewIndex;
@@ -1069,11 +1043,11 @@ int32 UMarchingCubes::GetVertexIndex(const FVector& Vertex, TMap<FVector, int32>
 int32 UMarchingCubes::CalculateMarchingCubesIndex(const TArray<float>& CornerSDFValues)
 {
 	int32 CubeIndex = 0;
-	for (int32 i = 0; i < 8; i++) // There are 8 corners in a voxel cube
+	for (int32 i = 0; i < 8; i++) 
 	{
-		if (CornerSDFValues[i] < 0.0f) // If the corner is inside the surface
+		if (CornerSDFValues[i] < 0.0f) 
 		{
-			CubeIndex |= (1 << i); // Set the bit corresponding to the corner
+			CubeIndex |= (1 << i); 
 		}
 	}
 	return CubeIndex;

@@ -9,20 +9,29 @@
 #include "HoleBPHelpers.h"
 #include "MarchingCubes.h"
 #include "SparseVoxelGrid.h"
-#include "Digger/Public/Voxel/VoxelBrushHelpers.h" // or wherever you put SetDigShellVoxels
 #include "VoxelBrushTypes.h"
 #include "VoxelConversion.h"
 #include "VoxelLogManager.h"
 #include "Async/Async.h"
 #include "Async/ParallelFor.h"
+#include "Digger/Public/Voxel/VoxelBrushHelpers.h" // or wherever you put SetDigShellVoxels
 #include "Digger/Utilities/FastDebugRenderer.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDeviceNull.h"
 #include "Serialization/BufferArchive.h"
 
-
 struct FSpawnedHoleData;
+
+// Near the top of VoxelChunk.cpp, before ApplyBrushStroke
+
+struct FVoxelStrokeInfo
+{
+	FIntVector Coords;
+	FVector WorldPos;
+	float TerrainHeight;
+};
+
 
 UVoxelChunk::UVoxelChunk()
 	: ChunkCoordinates(FIntVector::ZeroValue), 
@@ -1079,6 +1088,7 @@ void UVoxelChunk::MulticastApplyBrushStroke_Implementation(const FBrushStroke& S
 }
 
 
+
 void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 {
     // 1. Validation
@@ -1088,11 +1098,12 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     FThreadSafeCounter VoxelsDugCounter;
     FThreadSafeCounter VoxelsAddedCounter;
 
-    // 2. Setup Bounds
+    // 2. Setup Bounds (Using your CONFIRMED WORKING coordinate math)
     const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
     const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
     const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
     const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
+    const float HalfVoxelSize = CachedVoxelSize * 0.5f;
 
     FVector BrushBounds = CalculateBrushBounds(Stroke);
     const float VoxelSpaceBoundsX = BrushBounds.X / CachedVoxelSize;
@@ -1118,8 +1129,6 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     const int32 SizeY = MaxY - MinY + 1;
     const int32 SizeZ = MaxZ - MinZ + 1;
 
-	const float HalfVoxelSize = CachedVoxelSize * 0.5f; // We need this to use that variable <-<-<-<-|
-
     if (SizeX <= 0 || SizeY <= 0 || SizeZ <= 0) return;
 
     // Containers
@@ -1132,7 +1141,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     float OuterRadius = Stroke.BrushRadius + Stroke.BrushFalloff;
     float OuterRadiusSq = OuterRadius * OuterRadius;
 
-    // 3. Pre-Filter Loop (Game Thread)
+    // 3. Pre-Filter Loop
     for (int32 X = MinX; X <= MaxX; ++X)
     {
         for (int32 Y = MinY; Y <= MaxY; ++Y)
@@ -1143,7 +1152,6 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
                 0
             );
             
-            // LAZY LOAD: This now calls the robust DiggerLandscapeCache
             float ColumnHeight = DiggerManager->GetLandscapeHeightAt(ColumnPos);
 
             for (int32 Z = MinZ; Z <= MaxZ; ++Z)
@@ -1168,35 +1176,20 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
         const FVoxelInfo& Info = ValidVoxels[VoxelIndex];
         const float TerrainHeight = Info.TerrainHeight;
         
-        bool bDataValid = (TerrainHeight > (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f));
-        bool bIsBelowTerrain = false;
-
-        // Logic: Trust the cache. 
-        if (bDataValid)
-        {
-            // If the voxel center is below the terrain, we are underground.
-            bIsBelowTerrain = (Info.WorldPos.Z < TerrainHeight);
-        }
-        else
-        {
-            // Fallback: If cache completely failed (unlikely now), assume underground
-            // to ensure tunnels work.
-            bIsBelowTerrain = true;
-        }
-
+        // Calculate SDF using the specific brush shape logic
         const float SDF = BrushShape->CalculateSDF(Info.WorldPos, Stroke, TerrainHeight);
 
         if (Stroke.bDig)
         {
-            if (SDF > 0.1f)
+            if (SDF > 0.0f) // Air
             {
                 // Write Explicit Air
                 bool bSet = SparseVoxelGrid->SetVoxel(Info.Coords.X, Info.Coords.Y, Info.Coords.Z, SDF, true);
                 if(bSet) VoxelsDugCounter.Increment();
 
-                // Only shell if Valid & Below.
-                // This prevents "Air" strokes in the sky from generating floating walls.
-                if (bIsBelowTerrain)
+                // Logic check: Is it below terrain?
+                bool bValidHeight = (TerrainHeight > (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f));
+                if (bValidHeight && Info.WorldPos.Z < TerrainHeight)
                 {
                     FScopeLock Lock(&BrushStrokeMutex);
                     AirVoxelsBelowTerrain.Add(Info.Coords);
@@ -1205,16 +1198,15 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
         }
         else
         {
-            if (SDF < -0.1f)
+            if (SDF < 0.0f) // Solid
             {
-                // Write Explicit Solid
                 bool bSet = SparseVoxelGrid->SetVoxel(Info.Coords.X, Info.Coords.Y, Info.Coords.Z, SDF, false);
                 if(bSet) VoxelsAddedCounter.Increment();
             }
         }
     });
 
-    // 5. Shell Generation
+    // 5. Shell Generation (RESTORED OLD LOGIC)
     if (!AirVoxelsBelowTerrain.IsEmpty())
     {
         CreateSolidShellAroundAirVoxels(AirVoxelsBelowTerrain, Stroke.bHiddenSeam);
@@ -1227,7 +1219,6 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     if (Dug > 0 || Added > 0)
     {
         MarkDirty(); 
-        
         if (DiggerManager)
         {
              FVoxelModificationReport Report;
@@ -1243,175 +1234,171 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 }
 
 
+// --- RESTORED ROBUST SHELL GENERATION ---
+
 void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels, bool bHiddenSeam)
 {
     if (AirVoxels.IsEmpty()) return;
 
-    // Constants
-    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
-    const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
-    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
-    const float HalfChunkSize = (VoxelsPerChunk * CachedVoxelSize) * 0.5f;
-    const float HalfVoxelSize = CachedVoxelSize * 0.5f;
+    if (DiggerDebug::Seams())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Shell: Processing %d air voxels (Seam: %s)"), 
+            AirVoxels.Num(), bHiddenSeam ? TEXT("Hidden") : TEXT("Natural"));
+    }
 
-    // Use Sets
-    TSet<FIntVector> AirVoxelSet(AirVoxels);
+    // Setup coordinates exactly like ApplyBrushStroke to ensure alignment matches
+    const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
+    const float LocalVoxelSize = FVoxelConversion::LocalVoxelSize;
+    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const float HalfChunkSize = (VoxelsPerChunk * LocalVoxelSize) * 0.5f;
+    const float HalfVoxelSize = LocalVoxelSize * 0.5f;
+
+    // 1. Identify Boundary Candidates
     TSet<FIntVector> BoundaryPositions;
-    
-    // 6-Neighbor
-    const FIntVector FaceOffsets[] = {
+    TSet<FIntVector> AirSet(AirVoxels);
+
+    const FIntVector Offsets[] = {
         FIntVector(1,0,0), FIntVector(-1,0,0),
         FIntVector(0,1,0), FIntVector(0,-1,0),
         FIntVector(0,0,1), FIntVector(0,0,-1)
     };
 
-    // Identify Candidates
-    for (const FIntVector& AirVoxel : AirVoxels)
+    for (const FIntVector& Air : AirVoxels)
     {
-        for (const FIntVector& Offset : FaceOffsets)
+        for (const FIntVector& Off : Offsets)
         {
-            const FIntVector Candidate = AirVoxel + Offset;
-            if (AirVoxelSet.Contains(Candidate)) continue; 
-            
+            FIntVector Candidate = Air + Off;
+
+            // Skip if it is also air in this specific stroke set
+            if (AirSet.Contains(Candidate)) continue;
+
+            // Skip if it is already existing air in the grid
             if (SparseVoxelGrid->VoxelData.Contains(Candidate))
             {
-                if (SparseVoxelGrid->VoxelData[Candidate].SDFValue > 0.0f) continue; 
-                if (SparseVoxelGrid->VoxelData[Candidate].SDFValue <= FVoxelConversion::SDF_SOLID) continue;
+                if (SparseVoxelGrid->VoxelData[Candidate].SDFValue > 0.0f) continue;
             }
+
             BoundaryPositions.Add(Candidate);
         }
     }
 
-    // Rim Helper (Slope Aware)
-    auto GetRimThickness = [&, CachedVoxelSize](const FVector& WorldPos) -> float
+    // 2. Helper: Calculate Rim Thickness (Slope aware)
+    // This helper logic comes from your past working code
+    auto GetRimThickness = [&](const FVector& Pos, float TerrainH) -> float
     {
-        float CenterH = DiggerManager->GetLandscapeHeightAt(WorldPos);
-        if (CenterH <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f)) return 2.0f;
-
-        const TArray<FVector> SampleOffsets = {
-            FVector(CachedVoxelSize, 0, 0), FVector(0, CachedVoxelSize, 0),
-            FVector(-CachedVoxelSize, 0, 0), FVector(0, -CachedVoxelSize, 0)
-        };
-
         float MaxSlope = 0.0f;
-        for (const FVector& Offset : SampleOffsets)
-        {
-            float NeighborH = DiggerManager->GetLandscapeHeightAt(WorldPos + Offset);
-            if (NeighborH > (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f))
-            {
-                const float HeightDiff = FMath::Abs(CenterH - NeighborH);
-                const float Slope = HeightDiff / CachedVoxelSize;
-                MaxSlope = FMath::Max(MaxSlope, Slope);
-            }
-        }
+        
+        // Sample 4 neighbors to check slope steepness
+        float H_Right = DiggerManager->GetLandscapeHeightAt(Pos + FVector(LocalVoxelSize, 0, 0));
+        float H_Left  = DiggerManager->GetLandscapeHeightAt(Pos + FVector(-LocalVoxelSize, 0, 0));
+        float H_Fwd   = DiggerManager->GetLandscapeHeightAt(Pos + FVector(0, LocalVoxelSize, 0));
+        float H_Back  = DiggerManager->GetLandscapeHeightAt(Pos + FVector(0, -LocalVoxelSize, 0));
 
-        if (MaxSlope > 0.1f) return FMath::Clamp(MaxSlope * 4.0f + 2.0f, 3.0f, 12.0f);
-        return 2.0f;
+        MaxSlope = FMath::Max(MaxSlope, FMath::Abs(TerrainH - H_Right));
+        MaxSlope = FMath::Max(MaxSlope, FMath::Abs(TerrainH - H_Left));
+        MaxSlope = FMath::Max(MaxSlope, FMath::Abs(TerrainH - H_Fwd));
+        MaxSlope = FMath::Max(MaxSlope, FMath::Abs(TerrainH - H_Back));
+
+        float SlopeRatio = MaxSlope / LocalVoxelSize;
+
+        // If steep, we need a taller rim to catch the landscape mesh intersection
+        if (SlopeRatio > 0.1f)
+        {
+            return FMath::Clamp(SlopeRatio * 4.0f + 1.0f, 1.0f, 5.0f); 
+        }
+        return 1.0f; 
     };
 
-    int32 CreatedVoxels = 0;
+    // 3. Process Candidates
+    int32 CreatedCount = 0;
 
     for (const FIntVector& Pos : BoundaryPositions)
     {
-        if (Pos.X < -1 || Pos.X > VoxelsPerChunk ||
-            Pos.Y < -1 || Pos.Y > VoxelsPerChunk ||
-            Pos.Z < -1 || Pos.Z > VoxelsPerChunk) continue;
-
-        const FVector WorldPos = ChunkOrigin + FVector(
-            (Pos.X * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
-            (Pos.Y * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize,
-            (Pos.Z * CachedVoxelSize) - HalfChunkSize + HalfVoxelSize
+        // Calculate World Position (using your working offset logic)
+        FVector WorldPos = ChunkOrigin + FVector(
+            (Pos.X * LocalVoxelSize) - HalfChunkSize + HalfVoxelSize,
+            (Pos.Y * LocalVoxelSize) - HalfChunkSize + HalfVoxelSize,
+            (Pos.Z * LocalVoxelSize) - HalfChunkSize + HalfVoxelSize
         );
 
         float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
+        if (TerrainHeight <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f)) continue;
 
-        // Fallback: If cache miss, assume underground (FORCE WALLS)
-        if (TerrainHeight <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f))
-        {
-            TerrainHeight = WorldPos.Z + 10000.0f;
-        }
-
-        const float VoxelCenterZ = WorldPos.Z;
-        const float VoxelBottomZ = VoxelCenterZ - HalfVoxelSize;
-        const float VoxelTopZ    = VoxelCenterZ + HalfVoxelSize;
-        
-        const float TerrainToVoxelBottom = VoxelBottomZ - TerrainHeight;
-        const float TerrainToVoxelCenter = VoxelCenterZ - TerrainHeight;
+        float VoxelBottomZ = WorldPos.Z - HalfVoxelSize;
+        float VoxelCenterZ = WorldPos.Z;
 
         bool bShouldCreate = false;
 
-        // LAYER 1: BASE SOLID
-        if (bHiddenSeam) {
-            if (TerrainToVoxelBottom <= -CachedVoxelSize) bShouldCreate = true;
-        } else {
-            if (TerrainToVoxelBottom <= HalfVoxelSize) bShouldCreate = true;
-        }
-
-        // LAYER 2: RIM LOGIC
-        if (!bHiddenSeam && !bShouldCreate)
+        if (bHiddenSeam)
         {
-            float Thickness = GetRimThickness(WorldPos);
-            
-            if (TerrainToVoxelCenter <= (Thickness * CachedVoxelSize) && 
-                TerrainToVoxelBottom <= (CachedVoxelSize * 1.5f))
+            // Hidden Seam: We need the wall to stop JUST below the terrain surface
+            // so the landscape mesh covers the top seam.
+            // If the voxel bottom is lower than terrain by a full voxel, it's definitely a wall.
+            if (VoxelBottomZ < (TerrainHeight - LocalVoxelSize))
             {
-                // Connectivity Check
-                int32 SolidNeighbors = 0;
-                int32 TerrainNeighbors = 0;
-
-                for (const auto& Off : FaceOffsets)
-                {
-                    FIntVector N = Pos + Off;
-                    if (SparseVoxelGrid->VoxelData.Contains(N) && SparseVoxelGrid->VoxelData[N].SDFValue <= 0.0f) SolidNeighbors++;
-                    else if (BoundaryPositions.Contains(N)) SolidNeighbors++;
-
-                    FVector NPos = WorldPos + FVector(0,0, Off.Z * CachedVoxelSize);
-                    float NH = DiggerManager->GetLandscapeHeightAt(NPos);
-                    if (NH <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f)) NH = NPos.Z + 10000.0f;
-
-                    if ((NPos.Z - HalfVoxelSize) < NH) TerrainNeighbors++;
-                }
-
-                bool bStrong = false;
-                if (TerrainNeighbors >= 2) bStrong = true;
-                else if (TerrainNeighbors >= 1 && SolidNeighbors >= 3) bStrong = true;
-                else if (SolidNeighbors >= 4) bStrong = true;
-
-                // Vertical Support
-                bool bSupported = false;
-                FIntVector Down = Pos + FIntVector(0,0,-1);
+                bShouldCreate = true;
+            }
+        }
+        else // Natural Seam
+        {
+            // Base Rule: If voxel bottom is below terrain, it is a wall candidate
+            if (VoxelBottomZ < TerrainHeight)
+            {
+                bShouldCreate = true;
+            }
+            
+            // Rim Rule: Check if we need to extend upwards for a "Lip"
+            if (!bShouldCreate)
+            {
+                float RimThickness = GetRimThickness(WorldPos, TerrainHeight);
                 
-                if (SparseVoxelGrid->VoxelData.Contains(Down) && SparseVoxelGrid->VoxelData[Down].SDFValue <= 0.0f) bSupported = true;
-                else if (BoundaryPositions.Contains(Down)) bSupported = true;
-                else
+                // If we are within the slope-adjusted rim zone
+                if (WorldPos.Z < (TerrainHeight + (RimThickness * LocalVoxelSize)))
                 {
-                    float DownH = DiggerManager->GetLandscapeHeightAt(WorldPos - FVector(0,0,CachedVoxelSize));
-                    if (DownH <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f)) DownH = WorldPos.Z + 10000.0f;
-                    if ((WorldPos.Z - CachedVoxelSize - HalfVoxelSize) <= DownH) bSupported = true;
-                }
+                    // Connectivity Check: Ensure we aren't creating floating dust
+                    int32 SupportCount = 0;
+                    for (const FIntVector& Off : Offsets)
+                    {
+                        FIntVector Neighbor = Pos + Off;
+                        if (BoundaryPositions.Contains(Neighbor) || 
+                            (SparseVoxelGrid->VoxelData.Contains(Neighbor) && SparseVoxelGrid->VoxelData[Neighbor].SDFValue <= 0.0f))
+                        {
+                            SupportCount++;
+                        }
+                    }
 
-                if (bStrong && bSupported) bShouldCreate = true;
+                    if (SupportCount >= 2) 
+                    {
+                        bShouldCreate = true;
+                    }
+                }
             }
         }
 
-        // LAYER 3: PREVENT SKY PILES
-        // This stops the volcano effect if the cache is working
-        if (VoxelBottomZ > (TerrainHeight + CachedVoxelSize))
-        {
-            bShouldCreate = false;
-        }
-
+        // 4. Create Voxel
         if (bShouldCreate)
         {
-            if (SparseVoxelGrid->SetVoxel(Pos, FVoxelConversion::SDF_SOLID, false))
+            // Allow writing into the boundary buffer (-1 and Max+1) for seamless chunks
+            bool bInBounds = (Pos.X >= -1 && Pos.X <= VoxelsPerChunk &&
+                              Pos.Y >= -1 && Pos.Y <= VoxelsPerChunk &&
+                              Pos.Z >= -1 && Pos.Z <= VoxelsPerChunk);
+            
+            if (bInBounds)
             {
-                CreatedVoxels++;
+                // Set as SOLID
+                if (SparseVoxelGrid->SetVoxel(Pos, FVoxelConversion::SDF_SOLID, false))
+                {
+                    CreatedCount++;
+                }
             }
         }
     }
+
+    if (DiggerDebug::Seams())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Shell: Created %d wall voxels."), CreatedCount);
+    }
 }
-
-
 
 
 void UVoxelChunk::BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction,

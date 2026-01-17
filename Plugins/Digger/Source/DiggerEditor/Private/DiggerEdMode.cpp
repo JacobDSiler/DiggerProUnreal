@@ -650,6 +650,7 @@ void FDiggerEdMode::Render(const FSceneView* View, FViewport* Viewport, FPrimiti
     }
 }
 
+// 2. Update HandleClick to handle the Debug Brush when Painting Mode is OFF (Single Click)
 bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click)
 {
     DeselectAllSceneActors();
@@ -661,20 +662,30 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
 
     if (ADiggerManager* Digger = FindDiggerManager())
     {
-        // Use the new helper
         bool bRightClick = (Click.GetKey() == EKeys::RightMouseButton);
+        
+        // This pulls the Enum from the Toolkit UI (Radio Button)
         UpdateBrushSettingsFromUI(Hit, bRightClick);
 
-        // Initialize Tracker (Just in case they drag after a single click without Paint Mode)
+        // --- DEBUG TOOL LOGIC START ---
+        if (BrushCache.BrushType == EVoxelBrushType::Debug)
+        {
+            Digger->DebugBrushPlacement(HitLocation);
+            return true;
+        }
+        // --- DEBUG TOOL LOGIC END ---
+
         LastStrokeHitLocation = HitLocation;
 
-        // Apply
+        // Apply normal brush
         ApplyBrushWithSettings(Digger, HitLocation, Hit, BrushCache);
 
         return true;
     }
     return false;
 }
+
+
 
 bool FDiggerEdMode::InputDelta(FEditorViewportClient* InViewportClient, FViewport* InViewport, FVector& InDrag, FRotator& InRot, FVector& InScale)
 {
@@ -986,23 +997,20 @@ bool FDiggerEdMode::InputKey(FEditorViewportClient* ViewportClient, FViewport* V
 {
     const bool bShift = Viewport->KeyState(EKeys::LeftShift) || Viewport->KeyState(EKeys::RightShift);
 
-    // While holding Shift for adjustments, do not start/continue brush strokes
     if (bShift && Key.IsMouseButton())
     {
-        return true; // consume mouse buttons so no stroke begins
+        return true; 
     }
     
-    // Handle mouse enter to automatically focus viewport for our custom input
+    // Auto-focus logic...
     if (Key == EKeys::MouseX || Key == EKeys::MouseY)
     {
         if (ViewportClient && ViewportClient->Viewport)
         {
             const bool bShiftDown = Viewport->KeyState(EKeys::LeftShift) || Viewport->KeyState(EKeys::RightShift);
-            
-            // If shift is held and mouse moves over viewport, prepare for input capture
             if (bShiftDown && Event == IE_Axis)
             {
-                ViewportClient->Viewport->CaptureMouse(false); // Don't fully capture yet
+                ViewportClient->Viewport->CaptureMouse(false); 
                 ViewportClient->Viewport->SetUserFocus(true);
             }
         }
@@ -1019,35 +1027,37 @@ bool FDiggerEdMode::InputKey(FEditorViewportClient* ViewportClient, FViewport* V
     {
         if (Event == IE_Pressed)
         {
-            // --- THE FIX STARTS HERE ---
-            
-            // 1. Get the hit result NOW so we can setup the brush
             FVector HitLocation;
             FHitResult Hit;
+            // Note: Use a larger trace if necessary, or your existing helper
             GetMouseWorldHit(ViewportClient, HitLocation, Hit); 
-            // Note: Even if this fails (sky hit), we still want to init settings, 
-            // but we might default the normal to UpVector.
 
-            // 2. Update Cache BEFORE painting
             bool bRightClick = (Key == EKeys::RightMouseButton);
             UpdateBrushSettingsFromUI(Hit, bRightClick);
 
-            // 3. Initialize Location Tracker
+            // --- RESTORED DEBUG LOGIC START ---
+            // If the brush type is Custom, we treat it as the "Debug Probe"
+            if (BrushCache.BrushType == EVoxelBrushType::Custom)
+            {
+                if (ADiggerManager* Digger = FindDiggerManager())
+                {
+                    Digger->DebugBrushPlacement(HitLocation);
+                }
+                return true; // Consume input, do NOT start painting
+            }
+            // --- RESTORED DEBUG LOGIC END ---
+
             LastStrokeHitLocation = HitLocation;
             LastPaintLocation = FVector2D(Viewport->GetMouseX(), Viewport->GetMouseY());
 
-            // 4. Set State
             bMouseButtonDown = true;
             bIsPainting = true;
             ContinuousSettings.bIsValid = true;
             ContinuousSettings.bRightClick = bRightClick;
             
-            // 5. Apply Initial Stamp
             ApplyContinuousBrush(ViewportClient);
             
-            // --- THE FIX ENDS HERE ---
-
-            return true; // Consume input (HandleClick will NOT fire)
+            return true; 
         }
         else if (Event == IE_Released)
         {
@@ -1059,11 +1069,10 @@ bool FDiggerEdMode::InputKey(FEditorViewportClient* ViewportClient, FViewport* V
         }
     }
 
-    StrokeSpacing = BrushCache.Radius * 0.5f;  // half the brush radius is a good starting point
+    StrokeSpacing = BrushCache.Radius * 0.5f;
     
     return FEdMode::InputKey(ViewportClient, Viewport, Key, Event);
 }
-
 
 
 bool FDiggerEdMode::ShouldApplyContinuously() const
