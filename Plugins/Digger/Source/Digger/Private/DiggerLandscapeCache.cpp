@@ -29,30 +29,90 @@ FIntPoint UDiggerLandscapeCache::WorldToGrid(const FVector& Pos) const
 
 ALandscapeProxy* UDiggerLandscapeCache::FindProxy(const FVector& Pos) const
 {
-    if (!WorldContext) return nullptr;
+    // CAST AWAY CONST: Update internal caches inside getter for performance/self-healing.
+    UDiggerLandscapeCache* MutableThis = const_cast<UDiggerLandscapeCache*>(this);
 
-    // 1. OPTIMIZATION: Check Last Accessed
-    if (LastAccessedProxy && IsValid(LastAccessedProxy))
+    // 1. SELF-HEAL: If WorldContext is missing or stale, get it now.
+    if (!MutableThis->WorldContext)
     {
-        FBox Bounds = LastAccessedProxy->GetComponentsBoundingBox();
-        // Expand bounds slightly to handle seams
-        if (Bounds.ExpandBy(100.0f).IsInsideXY(Pos))
+        MutableThis->WorldContext = MutableThis->GetSafeWorld();
+    }
+
+    // If we still can't find a world, we can't find actors.
+    if (!MutableThis->WorldContext) return nullptr;
+
+    // 2. FAST PATH: Check Last Accessed (O(1))
+    // This handles 99% of cases where the brush is moving along the same landscape.
+    ALandscapeProxy* HotProxy = MutableThis->LastAccessedProxy;
+    if (HotProxy && IsValid(HotProxy))
+    {
+        // Expand bounds slightly (e.g., 100 units) to handle seams cleanly
+        if (HotProxy->GetComponentsBoundingBox().ExpandBy(100.0f).IsInsideXY(Pos))
         {
-            return LastAccessedProxy;
+            return HotProxy;
         }
     }
 
-    // 2. ITERATE (Math-based, robust)
-    for (TActorIterator<ALandscapeProxy> It(WorldContext); It; ++It)
+    // 3. MEDIUM PATH: Check Registered Cache Keys (O(N_Landscapes))
+    // This stops the lag! If we found a landscape once, it is in our map.
+    // We check this list before iterating the entire world again.
     {
-        ALandscapeProxy* Proxy = *It;
-        if (!Proxy) continue;
-
-        FBox Bounds = Proxy->GetComponentsBoundingBox();
-        if (Bounds.IsInsideXY(Pos))
+        FReadScopeLock ReadLock(MutableThis->Lock); 
+        for (const auto& Pair : MutableThis->Cache)
         {
-            return Proxy;
+            ALandscapeProxy* P = Pair.Key;
+            if (P && IsValid(P))
+            {
+                if (P->GetComponentsBoundingBox().IsInsideXY(Pos))
+                {
+                    MutableThis->LastAccessedProxy = P;
+                    return P;
+                }
+            }
         }
+    }
+
+    // 4. SLOW PATH: World Iterator (O(N_Actors))
+    // We only run this if the landscape is NEW and not yet in our cache.
+    // CRITICAL: This is unsafe on background threads.
+    if (IsInGameThread())
+    {
+        // Use WriteLock because we might add to the cache map
+        FWriteScopeLock WriteLock(MutableThis->Lock);
+        
+        bool bFoundAny = false;
+        ALandscapeProxy* Result = nullptr;
+
+        for (TActorIterator<ALandscapeProxy> It(MutableThis->WorldContext); It; ++It)
+        {
+            ALandscapeProxy* Proxy = *It;
+            if (!Proxy || !IsValid(Proxy)) continue;
+
+            // VITAL FIX: Register in cache immediately!
+            // Even if we don't have height data yet (nullptr value), adding the Key
+            // ensures Step 3 will find it next time, preventing this slow loop.
+            if (!MutableThis->Cache.Contains(Proxy))
+            {
+                MutableThis->Cache.Add(Proxy, nullptr); 
+                
+                // Debug log to confirm we aren't re-scanning constantly
+                if (DiggerDebug::Landscape())
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("[DiggerCache] Discovered & Cached Proxy: %s"), *Proxy->GetName());
+                }
+            }
+
+            // Check if this is the one we need
+            if (Proxy->GetComponentsBoundingBox().IsInsideXY(Pos))
+            {
+                MutableThis->LastAccessedProxy = Proxy;
+                Result = Proxy;
+            }
+            bFoundAny = true;
+        }
+
+        // If we found the proxy during the scan, return it.
+        if (Result) return Result;
     }
 
     return nullptr;

@@ -33,8 +33,12 @@ struct FDiggerFeatureFlags
 	static bool bEnableBrushShapes;
 	static bool bEnableCustomBrushes;
 	static bool bEnableEnvironment;
-	static bool bEnableIslands;
+	static bool bEnableNavigation;
+    static bool bEnableWorklight;
 	static bool bEnableAdditionalTools;
+    static bool bEnableIslands;
+    static bool bEnableMaterialManager;
+	static bool bEnableCaveImporter;
 	static bool bEnableDMM;
 	static bool bEnableExportData;
 	static bool bEnableBuild;
@@ -45,6 +49,7 @@ struct FDiggerFeatureFlags
 	static bool bEnableBrush_Cube;
 	static bool bEnableBrush_Cylinder;
 	static bool bEnableBrush_Capsule;
+	static bool bEnableSplineBrush;
 	static bool bEnableBrush_Cone;
 	static bool bEnableBrush_Torus;
 	static bool bEnableBrush_Pyramid;

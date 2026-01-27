@@ -196,7 +196,7 @@ private:
 private:
     int16 TerrainGridSize; // Default size of 1 meter
     int8 Subdivisions;
-    int16 VoxelSize;
+    float VoxelSize;
     int16 SectionIndex;
 
 private:

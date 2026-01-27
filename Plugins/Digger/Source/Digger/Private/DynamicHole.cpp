@@ -59,8 +59,15 @@ void ADynamicHole::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Set the mesh when the hole is spawned
-	UpdateHoleMesh();
+	// --- FIX: DO NOT SET MESH ON START ---
+	// Previously: UpdateHoleMesh();
+    
+	// Instead, ensure we start invisible. 
+	// The VoxelChunk will call UpdateHoleMesh() when the terrain geometry is actually ready.
+	if (HoleMeshComponent)
+	{
+		HoleMeshComponent->SetStaticMesh(nullptr);
+	}
 }
 
 // ADynamicHole.cpp
