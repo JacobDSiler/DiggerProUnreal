@@ -3589,33 +3589,32 @@ void ADiggerManager::EnsureDefaultHoleBP()
 
 void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 {
-    // --- 1. CRITICAL VALIDATION ---
+    // ---------------------------------------------------------
+    // 1. VALIDATION
+    // ---------------------------------------------------------
     if (!HoleBP)
     {
         EnsureDefaultHoleBP();
         if (!HoleBP)
         {
-            UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: HoleBP is NULL! Check GDefaultHoleBPPath."));
+            UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: HoleBP is NULL!"));
             return;
         }
     }
 
     if (!ActiveBrush)
     {
-        // Try to recover ActiveBrush (Runtime or Editor)
 #if WITH_EDITOR
-        // In Editor, we assume the tool manages this, but we can't spawn if missing.
         UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: ActiveBrush is NULL in Editor!"));
         return;
 #else
-        // Runtime Auto-Create
-        if (GetWorld())
+        ActiveBrush = NewObject<UVoxelBrushShape>(this);
+        if (ActiveBrush)
         {
-            ActiveBrush = NewObject<UVoxelBrushShape>(this, UVoxelBrushShape::StaticClass());
             ActiveBrush->InitializeBrush(Stroke.BrushType, Stroke.BrushRadius, Stroke.BrushPosition, this);
             InitializeBrushShapes();
         }
-        if (!ActiveBrush)
+        else
         {
             UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: Failed to create ActiveBrush at Runtime!"));
             return;
@@ -3623,128 +3622,146 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 #endif
     }
 
-    // --- 2. LOCATION & ROTATION STRATEGY ---
+    // ---------------------------------------------------------
+    // 2. INITIALIZATION
+    // ---------------------------------------------------------
     FVector SpawnLocation = Stroke.BrushPosition;
     FRotator SpawnRotation = Stroke.BrushRotation;
-    bool bHitLandscape = false;
+    bool bFoundLandscape = false;
 
-    // STRATEGY A: Use Camera Hit (The "Old Reliable" way)
-    // This works perfectly for the player/editor mouse.
-    FHitResult HitResult;
-    if (ActiveBrush->GetCameraHitLocation(HitResult))
+    const float TerrainZ = GetLandscapeHeightAt(SpawnLocation);
+    const bool bValidTerrainZ = TerrainZ > UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT;
+
+    // ---------------------------------------------------------
+    // 3. STRATEGY A: CAMERA HIT
+    // ---------------------------------------------------------
+    FHitResult Hit;
+    if (ActiveBrush->GetCameraHitLocation(Hit))
     {
-        AActor* HitActor = HitResult.GetActor();
-        
-        // Strict check: Must hit Landscape to spawn a hole cap
-        // (Uses your existing IsLandscape helper)
-        if (HitActor && ActiveBrush->IsLandscape(HitActor))
+        AActor* HitActor = Hit.GetActor();
+        if (ActiveBrush->IsLandscape(HitActor))
         {
-            SpawnLocation = HitResult.Location;
-            
-            // Align to normal
-            FVector SafeNormal = HitResult.ImpactNormal.GetSafeNormal();
-            if (!SafeNormal.IsNearlyZero() && FMath::Abs(FVector::DotProduct(SafeNormal, FVector::UpVector)) > 0.1f)
-            {
-                SpawnRotation = FRotationMatrix::MakeFromZ(SafeNormal).Rotator();
-            }
-            else
-            {
-                SpawnRotation = FRotator::ZeroRotator; // Fallback to Up
-            }
-            
-            bHitLandscape = true;
+            SpawnLocation = Hit.Location;
+
+            const FVector N = Hit.ImpactNormal.GetSafeNormal();
+            SpawnRotation = N.IsNearlyZero()
+                ? FRotator::ZeroRotator
+                : FRotationMatrix::MakeFromZ(N).Rotator();
+
+            bFoundLandscape = true;
+        }
+        else if (bValidTerrainZ && FMath::Abs(Hit.Location.Z - TerrainZ) <= Stroke.BrushRadius * 0.6f)
+        {
+            // Hit something else, but we're near terrain — allow it
+            SpawnLocation.Z = TerrainZ;
+            SpawnRotation = FRotator::ZeroRotator;
+            bFoundLandscape = true;
         }
         else
         {
-            // We hit something that wasn't landscape (e.g. a building).
-            // We should NOT spawn a hole cap on a building.
-            UE_LOG(LogTemp, Warning, TEXT("HandleHoleSpawn: Camera hit %s, which is not Landscape. Skipping."), 
+            UE_LOG(LogTemp, Warning, TEXT("HandleHoleSpawn: Camera hit %s, not landscape. Skipping."),
                 HitActor ? *HitActor->GetName() : TEXT("None"));
             return;
         }
     }
-    
-    // STRATEGY B: Fallback Trace (For AI / Vehicles / No Camera)
-    // Only run this if Strategy A didn't fire or wasn't used.
-    if (!bHitLandscape)
+
+    // ---------------------------------------------------------
+    // 4. STRATEGY B: FALLBACK TRACE
+    // ---------------------------------------------------------
+    if (!bFoundLandscape)
     {
-        FVector TraceStart = SpawnLocation + FVector(0, 0, Stroke.BrushRadius * 2.0f);
-        FVector TraceEnd   = SpawnLocation - FVector(0, 0, Stroke.BrushRadius * 2.0f);
+        const float TraceDist = Stroke.BrushRadius * 2.f;
+        const FVector Start = SpawnLocation + FVector(0, 0, TraceDist);
+        const FVector End   = SpawnLocation - FVector(0, 0, TraceDist);
+
         FCollisionQueryParams Params(SCENE_QUERY_STAT(HoleFallback), false, this);
-        
         TArray<FHitResult> Hits;
-        if (GetWorld()->LineTraceMultiByChannel(Hits, TraceStart, TraceEnd, ECC_Visibility, Params))
+
+        if (GetWorld()->LineTraceMultiByChannel(Hits, Start, End, ECC_Visibility, Params))
         {
-            for (const FHitResult& CheckHit : Hits)
+            for (const FHitResult& H : Hits)
             {
-                if (CheckHit.GetActor() && CheckHit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
+                if (H.GetActor() && H.GetActor()->IsA(ALandscapeProxy::StaticClass()))
                 {
-                    SpawnLocation = CheckHit.Location;
-                    if (!CheckHit.ImpactNormal.IsNearlyZero())
-                    {
-                        SpawnRotation = FRotationMatrix::MakeFromZ(CheckHit.ImpactNormal).Rotator();
-                    }
-                    bHitLandscape = true;
+                    SpawnLocation = H.Location;
+
+                    const FVector N = H.ImpactNormal.GetSafeNormal();
+                    SpawnRotation = N.IsNearlyZero()
+                        ? FRotator::ZeroRotator
+                        : FRotationMatrix::MakeFromZ(N).Rotator();
+
+                    bFoundLandscape = true;
                     break;
                 }
             }
         }
     }
 
-    // --- 3. SUBTERRANEAN CHECK ---
-    // If we didn't hit the landscape with either method, we are likely deep underground or in the sky.
-    // We check the Height Cache to be sure.
-    float TerrainHeight = GetLandscapeHeightAt(SpawnLocation);
-    
-    // Tolerance: Radius * 0.6 (Matches your old reliable code)
-    if (TerrainHeight > (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f))
+    // ---------------------------------------------------------
+    // 5. STRATEGY C: PROXIMITY CHECK
+    // ---------------------------------------------------------
+    if (!bFoundLandscape && bValidTerrainZ)
     {
-        if (SpawnLocation.Z < (TerrainHeight - (Stroke.BrushRadius * 0.6f)))
+        const float BrushZ = SpawnLocation.Z;
+        const float MaxDistance = Stroke.BrushRadius * 0.6f;
+
+        if (FMath::Abs(BrushZ - TerrainZ) <= MaxDistance)
         {
-            UE_LOG(LogTemp, Warning, TEXT("HandleHoleSpawn: Too deep underground. BrushZ=%.2f, TerrainZ=%.2f. Skipping."), 
-                SpawnLocation.Z, TerrainHeight);
-            return;
+            SpawnLocation.Z = TerrainZ;
+            SpawnRotation = FRotator::ZeroRotator;
+            bFoundLandscape = true;
         }
     }
 
-    // --- 4. SCALE CALCULATION ---
-    // Matches your old code (Radius / 47.0f) exactly for consistency.
-    // If you want to use the new "100.0f" logic later, change 47.0f to 100.0f.
-    const float ScaleDivisor = 47.0f; // Old Magic Number
-    FVector SpawnScale = FVector(Stroke.BrushRadius / ScaleDivisor);
-
-    // --- 5. EXECUTION ---
-    UVoxelChunk* TargetChunk = GetOrCreateChunkAtWorld(SpawnLocation);
-    
-    if (TargetChunk)
+    // ---------------------------------------------------------
+    // 6. FINAL VALIDATION
+    // ---------------------------------------------------------
+    if (!bFoundLandscape)
     {
-        // Shape Setup
-        FHoleShape FinalShape = Stroke.HoleShape;
-        
-        // Ensure type correctness based on Brush
-        switch (Stroke.BrushType)
-        {
-            case EVoxelBrushType::Cube: FinalShape.ShapeType = EHoleShapeType::Cube; break;
-            case EVoxelBrushType::Sphere: FinalShape.ShapeType = EHoleShapeType::Sphere; break;
-            default: FinalShape.ShapeType = EHoleShapeType::Sphere; break;
-        }
-
-        // Data Package
-        FSpawnedHoleData HoleData(SpawnLocation, SpawnRotation, SpawnScale, FinalShape);
-
-        // ACTION: Spawn
-        // Note: We do NOT call SaveHoleData here manually anymore, because SaveChunkData handles it.
-        // We only call SpawnHoleFromData.
-        TargetChunk->SpawnHoleFromData(HoleData);
-
-        UE_LOG(LogTemp, Log, TEXT("HandleHoleSpawn: SUCCESS. Spawned at %s (Chunk %s)"), 
-            *SpawnLocation.ToString(), *TargetChunk->GetChunkCoordinates().ToString());
+        UE_LOG(LogTemp, Warning, TEXT("HandleHoleSpawn: No landscape found near brush."));
+        return;
     }
-    else
+
+    // ---------------------------------------------------------
+    // 7. SCALE
+    // ---------------------------------------------------------
+    const float ScaleDivisor = 47.f;
+    const FVector SpawnScale(Stroke.BrushRadius / ScaleDivisor);
+
+    // ---------------------------------------------------------
+    // 8. CHUNK RESOLUTION
+    // ---------------------------------------------------------
+    UVoxelChunk* Chunk = GetOrCreateChunkAtWorld(SpawnLocation);
+    if (!Chunk)
     {
-        UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: FAILED. No chunk found at %s"), *SpawnLocation.ToString());
+        // Retry with slight offset
+        const FVector OffsetLoc = SpawnLocation + FVector(5.f, 5.f, 0.f);
+        Chunk = GetOrCreateChunkAtWorld(OffsetLoc);
     }
+
+    if (!Chunk)
+    {
+        UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: No chunk found near %s"), *SpawnLocation.ToString());
+        return;
+    }
+
+    // ---------------------------------------------------------
+    // 9. SPAWN
+    // ---------------------------------------------------------
+    FHoleShape FinalShape = Stroke.HoleShape;
+    FinalShape.ShapeType =
+        (Stroke.BrushType == EVoxelBrushType::Cube) ? EHoleShapeType::Cube : EHoleShapeType::Sphere;
+
+    FSpawnedHoleData Data(SpawnLocation, SpawnRotation, SpawnScale, FinalShape);
+    Chunk->SpawnHoleFromData(Data);
+
+    UE_LOG(LogTemp, Log, TEXT("HandleHoleSpawn: Spawned at %s (Chunk %s)"),
+        *SpawnLocation.ToString(), *Chunk->GetChunkCoordinates().ToString());
+
+    // Optional debug
+    // DrawDebugSphere(GetWorld(), SpawnLocation, Stroke.BrushRadius, 16, FColor::Green, false, 5.f);
 }
+
 
 
 

@@ -7,6 +7,7 @@
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
+class UStaticMesh;
 
 UENUM()
 enum class EBrushPreviewShape : uint8
@@ -22,7 +23,7 @@ enum class EBrushPreviewShape : uint8
 };
 
 UCLASS(NotBlueprintable, NotPlaceable, Transient)
-class DIGGEREDITOR_API ABrushPreviewActor : public AActor   // 👈 if in DiggerEditor module
+class DIGGEREDITOR_API ABrushPreviewActor : public AActor
 {
 	GENERATED_BODY()
 
@@ -38,25 +39,18 @@ public:
 	void Initialize(UStaticMesh* ShapeMesh, UMaterialInterface* BaseMat);
 
 	void UpdatePreview(const FVector& CenterWS,
-	                   const FVector& RadiusXYZ,
-	                   float Falloff,
-	                   bool bAddMode,
-	                   float CellSize,
-	                   EBrushPreviewShape Shape,
-	                   const FQuat& RotationWS);
+					   const FVector& RadiusXYZ,
+					   float Falloff,
+					   bool bAddMode,
+					   float CellSize,
+					   EBrushPreviewShape Shape,
+					   const FQuat& RotationWS);
 
 	void SetVisible(bool bVisible);
 
 private:
 	float MeshUnitRadius = 50.f;
 	EBrushPreviewShape CurrentShape = EBrushPreviewShape::Sphere;
-
-	// Cached engine meshes (lazy-loaded)
-	UStaticMesh* MeshSphere  = nullptr;
-	UStaticMesh* MeshCube    = nullptr;
-	UStaticMesh* MeshCapsule = nullptr;
-	UStaticMesh* MeshCylinder= nullptr;
-	UStaticMesh* MeshCone    = nullptr;
 
 	void EnsureMeshesLoaded();
 	void SetShape(EBrushPreviewShape NewShape);

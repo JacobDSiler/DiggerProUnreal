@@ -39,6 +39,7 @@ public class DiggerEditor : ModuleRules
 			"EditorSubsystem",
 			"InteractiveToolsFramework",
 			"EditorInteractiveToolsFramework",
+			"DeveloperSettings",
 
 			// Slate UI
 			"Slate",

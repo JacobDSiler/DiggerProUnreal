@@ -20,6 +20,7 @@
 #include "Materials/MaterialInterface.h"
 #include "Toolkits/ToolkitManager.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "DiggerEditorSettings.h"
 
 #define LOCTEXT_NAMESPACE "DiggerEditorMode"
 
@@ -105,23 +106,21 @@ static UObject* CreateTransientHoleShapeLibrary()
 #endif
 }
 
+
 static void EnsureDiggerPrereqs()
 {
 #if WITH_EDITOR
     if (!GEditor) return;
     
-    // 1. Get the Correct World (Handle PIE vs Editor)
     UWorld* World = GEditor->GetEditorWorldContext().World();
     if (!World) return;
 
-    // 2. Find or Spawn Manager
     ADiggerManager* Mgr = FindExistingManager(World);
     if (!Mgr)
     {
         FActorSpawnParameters S;
         S.Name = FName(TEXT("DiggerManager"));
         S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-        // Make sure it's transient so it doesn't get saved into the map permanently if you don't want it to
         S.ObjectFlags = RF_Transactional; 
         
         Mgr = World->SpawnActor<ADiggerManager>(ADiggerManager::StaticClass(), FTransform::Identity, S);
@@ -129,37 +128,29 @@ static void EnsureDiggerPrereqs()
 
     if (Mgr)
     {
-        // 3. Check if Library is missing
         if (!IsValid(Mgr->HoleShapeLibrary))
         {
-            // USE THE CORRECT PATH FROM YOUR LOGS
-            const TCHAR* LibPath = TEXT("/Digger/Digger/BluePrints/HoleShapeLibrary.HoleShapeLibrary");
-            
-            UHoleShapeLibrary* LoadedLib = Cast<UHoleShapeLibrary>(StaticLoadObject(UHoleShapeLibrary::StaticClass(), nullptr, LibPath));
+            // --- NEW: Use Settings instead of hardcoded string ---
+            const UDiggerEditorSettings* Settings = UDiggerEditorSettings::Get();
+            UHoleShapeLibrary* LoadedLib = nullptr;
+
+            if (Settings && !Settings->DefaultHoleLibrary.IsNull())
+            {
+                LoadedLib = Settings->DefaultHoleLibrary.LoadSynchronous();
+                UE_LOG(LogTemp, Log, TEXT("DiggerPrereqs: Loaded HoleShapeLibrary from Project Settings."));
+            }
 
             if (LoadedLib)
             {
-                // ASSIGN IT! This was missing in your previous code.
                 Mgr->HoleShapeLibrary = LoadedLib;
-                UE_LOG(LogTemp, Log, TEXT("DiggerPrereqs: Successfully assigned existing HoleShapeLibrary."));
             }
             else
             {
                 // Fallback: Create a Transient one
-                // CRITICAL: Pass 'Mgr' as the Outer (1st arg). 
-                // If you pass GetTransientPackage(), the GC might eat it because the Manager doesn't "own" it.
                 Mgr->HoleShapeLibrary = NewObject<UHoleShapeLibrary>(Mgr, UHoleShapeLibrary::StaticClass());
-                
-                // If you have a function to seed it, call it now
-                // SeedHoleShapesFromFolder(Mgr->HoleShapeLibrary); 
-                
-                UE_LOG(LogTemp, Warning, TEXT("DiggerPrereqs: Could not load Library at %s. Created a new transient one."), LibPath);
+                UE_LOG(LogTemp, Warning, TEXT("DiggerPrereqs: Could not load Default Library. Created a new transient one. Check Project Settings -> Digger."));
             }
 
-            // 4. Update the Manager
-            // Only call this if you are sure it doesn't crash on nulls
-            // Mgr->EnsureHoleShapeLibrary(); 
-            
             Mgr->Modify();
         }
     }
@@ -370,8 +361,7 @@ void FDiggerEdMode::UpdateBrushSettingsFromUI(const FHitResult& TraceHit, bool b
 
 void FDiggerEdMode::EnsurePreviewExists()
 {
-    if (Preview.IsValid())
-        return;
+    if (Preview.IsValid()) return;
 
     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
     if (!World) return;
@@ -379,14 +369,32 @@ void FDiggerEdMode::EnsurePreviewExists()
     ABrushPreviewActor* Actor = World->SpawnActor<ABrushPreviewActor>();
     if (!Actor) return;
 
-    // Use engine built-in sphere for quick testing (no custom material yet)
-    UStaticMesh* UnitSphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-    UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Digger/Digger/DiggerEditor/M_DiggerBrushPreview.M_DiggerBrushPreview")); // your path
-    Actor->Initialize(UnitSphere, BaseMat);
+    // Pass nullptr so it grabs defaults from UDiggerEditorSettings
+    Actor->Initialize(nullptr, nullptr); 
     Actor->SetVisible(true);
 
     Preview = Actor;
 }
+
+// void FDiggerEdMode::EnsurePreviewExists()
+// {
+//     if (Preview.IsValid())
+//         return;
+//
+//     UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+//     if (!World) return;
+//
+//     ABrushPreviewActor* Actor = World->SpawnActor<ABrushPreviewActor>();
+//     if (!Actor) return;
+//
+//     // Use engine built-in sphere for quick testing (no custom material yet)
+//     UStaticMesh* UnitSphere = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+//     UMaterialInterface* BaseMat = LoadObject<UMaterialInterface>(nullptr, TEXT("/Digger/Digger/DiggerEditor/M_DiggerBrushPreview.M_DiggerBrushPreview")); // your path
+//     Actor->Initialize(UnitSphere, BaseMat);
+//     Actor->SetVisible(true);
+//
+//     Preview = Actor;
+// }
 
 
 void FDiggerEdMode::DestroyPreview()

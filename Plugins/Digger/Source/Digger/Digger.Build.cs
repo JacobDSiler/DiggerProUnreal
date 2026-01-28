@@ -24,6 +24,7 @@ public class Digger : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
+			"DeveloperSettings",
 			"InputCore",
 			"ProceduralMeshComponent",
 			"RenderCore",

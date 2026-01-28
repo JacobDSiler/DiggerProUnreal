@@ -1,12 +1,17 @@
-// ABrushPreviewActor.cpp
+// BrushPreviewActor.cpp
+
 #include "BrushPreviewActor.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "DiggerEditorSettings.h"
 
-// Cached custom meshes used for preview shapes not provided by Engine basics
-static UStaticMesh* MeshRoundBox  = nullptr;
-static UStaticMesh* MeshEllipsoid = nullptr;
-static UStaticMesh* MeshTorus     = nullptr;
+// Static cache to avoid reloading every time
+static UStaticMesh* CachedMeshSphere   = nullptr;
+static UStaticMesh* CachedMeshCube     = nullptr;
+static UStaticMesh* CachedMeshCapsule  = nullptr;
+static UStaticMesh* CachedMeshCylinder = nullptr;
+static UStaticMesh* CachedMeshCone     = nullptr;
+static UStaticMesh* CachedMeshTorus    = nullptr;
 
 ABrushPreviewActor::ABrushPreviewActor()
 {
@@ -22,7 +27,7 @@ ABrushPreviewActor::ABrushPreviewActor()
     PreviewMesh->SetReceivesDecals(false);
     PreviewMesh->SetMobility(EComponentMobility::Movable);
 
-    // Show in editor
+    // Show in editor only
     SetActorHiddenInGame(true);          // hidden in PIE
     PreviewMesh->SetHiddenInGame(true);  // hidden in PIE
     PreviewMesh->SetVisibility(true, true); // visible in editor viewport
@@ -33,19 +38,30 @@ void ABrushPreviewActor::SetVisible(bool bVisible)
     // Visibility in the editor viewport:
     PreviewMesh->SetVisibility(bVisible, true);
 
-    // Keep it hidden in PIE / game so it never leaks into runtime
+    // Always hidden in PIE / game
     SetActorHiddenInGame(true);
     PreviewMesh->SetHiddenInGame(true);
 }
 
-
 void ABrushPreviewActor::Initialize(UStaticMesh* ShapeMesh, UMaterialInterface* BaseMat)
 {
-    // Preload all meshes up front so switching shapes later is seamless.
+    // Preload meshes so shape switching is seamless
     EnsureMeshesLoaded();
 
+    // If no material explicitly provided, use settings
+    if (!BaseMat)
+    {
+        const UDiggerEditorSettings* Settings = UDiggerEditorSettings::Get();
+        if (Settings && !Settings->BrushPreviewMaterial.IsNull())
+        {
+            BaseMat = Settings->BrushPreviewMaterial.LoadSynchronous();
+        }
+    }
+
     if (ShapeMesh)
+    {
         PreviewMesh->SetStaticMesh(ShapeMesh);
+    }
 
     if (BaseMat)
     {
@@ -54,8 +70,10 @@ void ABrushPreviewActor::Initialize(UStaticMesh* ShapeMesh, UMaterialInterface* 
     }
 }
 
-
-static inline float Snap(float V, float Cell){ return Cell > 0 ? FMath::GridSnap(V, Cell) : V; }
+static inline float SnapFloat(float V, float Cell)
+{
+    return Cell > 0.f ? FMath::GridSnap(V, Cell) : V;
+}
 
 void ABrushPreviewActor::UpdatePreview(
     const FVector& CenterWS,
@@ -67,8 +85,13 @@ void ABrushPreviewActor::UpdatePreview(
     const FQuat& RotationWS)
 {
     const float Cell = FMath::Max(1.f, CellSize);
-    auto Snap = [Cell](float v){ return FMath::GridSnap(v, Cell); };
-    const FVector Snapped(Snap(CenterWS.X), Snap(CenterWS.Y), Snap(CenterWS.Z));
+    auto Snap = [Cell](float v) { return FMath::GridSnap(v, Cell); };
+
+    const FVector Snapped(
+        Snap(CenterWS.X),
+        Snap(CenterWS.Y),
+        Snap(CenterWS.Z));
+
     SetActorLocation(Snapped);
     SetActorRotation(RotationWS);
 
@@ -77,13 +100,15 @@ void ABrushPreviewActor::UpdatePreview(
 
     // Scale by desired world radii vs mesh’s native radius
     const FVector SafeR(
-        FMath::Max(0.5f*Cell, RadiusXYZ.X),
-        FMath::Max(0.5f*Cell, RadiusXYZ.Y),
-        FMath::Max(0.5f*Cell, RadiusXYZ.Z)
-    );
-    const FVector Scale(SafeR.X / MeshUnitRadius,
-                        SafeR.Y / MeshUnitRadius,
-                        SafeR.Z / MeshUnitRadius);
+        FMath::Max(0.5f * Cell, RadiusXYZ.X),
+        FMath::Max(0.5f * Cell, RadiusXYZ.Y),
+        FMath::Max(0.5f * Cell, RadiusXYZ.Z));
+
+    const FVector Scale(
+        SafeR.X / MeshUnitRadius,
+        SafeR.Y / MeshUnitRadius,
+        SafeR.Z / MeshUnitRadius);
+
     PreviewMesh->SetWorldScale3D(Scale);
 
     if (MID)
@@ -91,56 +116,75 @@ void ABrushPreviewActor::UpdatePreview(
         MID->SetScalarParameterValue(TEXT("Falloff"), FMath::Clamp(Falloff, 0.f, 1.f));
         MID->SetScalarParameterValue(TEXT("CellSize"), Cell);
         MID->SetScalarParameterValue(TEXT("IsAdd"), bAddMode ? 1.f : 0.f);
-        MID->SetScalarParameterValue(TEXT("ShapeType"), (float)Shape);
-        MID->SetVectorParameterValue(TEXT("InvScale"),
-            FLinearColor(Scale.X>0?1.f/Scale.X:0.f, Scale.Y>0?1.f/Scale.Y:0.f, Scale.Z>0?1.f/Scale.Z:0.f, 0.f));
+        MID->SetScalarParameterValue(TEXT("ShapeType"), static_cast<float>(Shape));
+        MID->SetVectorParameterValue(
+            TEXT("InvScale"),
+            FLinearColor(
+                Scale.X > 0.f ? 1.f / Scale.X : 0.f,
+                Scale.Y > 0.f ? 1.f / Scale.Y : 0.f,
+                Scale.Z > 0.f ? 1.f / Scale.Z : 0.f,
+                0.f));
     }
 }
 
 void ABrushPreviewActor::EnsureMeshesLoaded()
 {
-    auto Load = [](UStaticMesh*& Out, const TCHAR* Path)
+    // Only load once
+    if (CachedMeshSphere)
     {
-        if (!Out) Out = LoadObject<UStaticMesh>(nullptr, Path);
-    };
-    Load(MeshSphere,   TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Sphere.DH_Sphere"));
-    Load(MeshCube,     TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Cube.DH_Cube"));
-    Load(MeshCapsule,  TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Capsule.DH_Capsule"));
-    Load(MeshCylinder, TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Cylinder.DH_Cylinder"));
-    Load(MeshCone,     TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Cone.DH_Cone"));
-    Load(MeshRoundBox,  TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Cube.DH_Cube"));
-    Load(MeshEllipsoid, TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Sphere.DH_Sphere"));
-    Load(MeshTorus,     TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Torus.DH_Torus"));
+        return;
+    }
+
+    const UDiggerEditorSettings* Settings = UDiggerEditorSettings::Get();
+    if (!Settings)
+    {
+        return;
+    }
+
+    // Editor-only, one-time synchronous loads are fine here
+    CachedMeshSphere   = Settings->SphereBrushMesh.LoadSynchronous();
+    CachedMeshCube     = Settings->CubeBrushMesh.LoadSynchronous();
+    CachedMeshCapsule  = Settings->CapsuleBrushMesh.LoadSynchronous();
+    CachedMeshCylinder = Settings->CylinderBrushMesh.LoadSynchronous();
+    CachedMeshCone     = Settings->ConeBrushMesh.LoadSynchronous();
+    CachedMeshTorus    = Settings->TorusBrushMesh.LoadSynchronous();
 }
 
 void ABrushPreviewActor::SetShape(EBrushPreviewShape NewShape)
 {
-    if (CurrentShape == NewShape) return;
+    // If already set and mesh is valid, no need to change
+    if (CurrentShape == NewShape && PreviewMesh->GetStaticMesh() != nullptr)
+    {
+        return;
+    }
+
     EnsureMeshesLoaded();
 
-    UStaticMesh* NewMesh = MeshSphere; // default
+    UStaticMesh* NewMesh = CachedMeshSphere; // default fallback
+
     switch (NewShape)
     {
-    case EBrushPreviewShape::Sphere:     NewMesh = MeshSphere;     break;
-    case EBrushPreviewShape::Box:        NewMesh = MeshCube;       break;
-    case EBrushPreviewShape::Capsule:    NewMesh = MeshCapsule;    break;
-    case EBrushPreviewShape::Cylinder:   NewMesh = MeshCylinder;   break;
-    case EBrushPreviewShape::Cone:       NewMesh = MeshCone;       break;
-    case EBrushPreviewShape::RoundBox:   NewMesh = MeshRoundBox;  break;
-    case EBrushPreviewShape::Ellipsoid:  NewMesh = MeshEllipsoid; break; // will non-uniform scale
-    case EBrushPreviewShape::Torus:      NewMesh = MeshTorus;     break;
+    case EBrushPreviewShape::Sphere:     NewMesh = CachedMeshSphere;   break;
+    case EBrushPreviewShape::Box:        NewMesh = CachedMeshCube;     break;
+    case EBrushPreviewShape::Capsule:    NewMesh = CachedMeshCapsule;  break;
+    case EBrushPreviewShape::Cylinder:   NewMesh = CachedMeshCylinder; break;
+    case EBrushPreviewShape::Cone:       NewMesh = CachedMeshCone;     break;
+    case EBrushPreviewShape::RoundBox:   NewMesh = CachedMeshCube;     break;   // round box uses cube mesh + scale
+    case EBrushPreviewShape::Ellipsoid:  NewMesh = CachedMeshSphere;   break;   // ellipsoid uses sphere mesh + non-uniform scale
+    case EBrushPreviewShape::Torus:      NewMesh = CachedMeshTorus;    break;
+    default:                             NewMesh = CachedMeshSphere;   break;
     }
 
     if (NewMesh)
     {
         PreviewMesh->SetStaticMesh(NewMesh);
+
         if (MID)
         {
-            // Ensure our preview material stays applied when swapping meshes.
+            // Keep preview material applied when swapping meshes
             PreviewMesh->SetMaterial(0, MID);
         }
 
-        // Update cached unit radius from the new mesh
         const FBoxSphereBounds B = NewMesh->GetBounds();
         MeshUnitRadius = FMath::Max(1.f, B.SphereRadius);
     }
