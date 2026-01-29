@@ -3,71 +3,96 @@ using UnrealBuildTool;
 
 public class DiggerEditor : ModuleRules
 {
-	public DiggerEditor(ReadOnlyTargetRules Target) : base(Target)
-	{
-		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+    public DiggerEditor(ReadOnlyTargetRules Target) : base(Target)
+    {
+        PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PublicIncludePaths.AddRange(new string[]
-		{
-			Path.Combine(ModuleDirectory, "Public")
-		});
+        // Public includes (exposed headers)
+        PublicIncludePaths.AddRange(new[]
+        {
+            Path.Combine(ModuleDirectory, "Public/Core"),
+            Path.Combine(ModuleDirectory, "Public/UI"),
+            Path.Combine(ModuleDirectory, "Public/Tools"),
+            Path.Combine(ModuleDirectory, "Public/Assets"),
+            Path.Combine(ModuleDirectory, "Public/Settings"),
+        });
 
-		PrivateIncludePaths.AddRange(new string[]
-		{
-			Path.Combine(ModuleDirectory, "Private")
-		});
+        // Private includes (internal implementation)
+        PrivateIncludePaths.AddRange(new[]
+        {
+            Path.Combine(ModuleDirectory, "Private/Core"),
+            Path.Combine(ModuleDirectory, "Private/UI"),
+            Path.Combine(ModuleDirectory, "Private/Tools"),
+            Path.Combine(ModuleDirectory, "Private/Assets"),
+            Path.Combine(ModuleDirectory, "Private/Settings"),
+        });
 
-		// Link to runtime module for access to core Digger classes
-		PrivateDependencyModuleNames.Add("Digger");
+        // Link to runtime module
+        PrivateDependencyModuleNames.Add("Digger");
 
-		PrivateDependencyModuleNames.AddRange(new string[]
-		{
-			// Core engine
-			"Core",
-			"CoreUObject",
-			"Engine",
-			"InputCore",
-			"RenderCore",
-			"RHI",
+        // Core engine dependencies
+        PrivateDependencyModuleNames.AddRange(new[]
+        {
+            "Core",
+            "CoreUObject",
+            "Engine",
+            "InputCore",
+            "RenderCore",
+            "RHI",
+        });
 
-			// Editor framework
-			"UnrealEd",
-			"LevelEditor",
-			"EditorFramework",
-			"EditorStyle",
-			"EditorWidgets",
-			"EditorSubsystem",
-			"InteractiveToolsFramework",
-			"EditorInteractiveToolsFramework",
-			"DeveloperSettings",
+        // Editor framework
+        PrivateDependencyModuleNames.AddRange(new[]
+        {
+            "UnrealEd",
+            "LevelEditor",
+            "EditorFramework",
+            "EditorStyle",
+            "EditorWidgets",
+            "EditorSubsystem",
+            "InteractiveToolsFramework",
+            "EditorInteractiveToolsFramework",
+            "DeveloperSettings",
+        });
 
-			// Slate UI
-			"Slate",
-			"SlateCore",
-			"ToolMenus",
-			"ToolWidgets",
-			"AppFramework",
+        // Slate UI
+        PrivateDependencyModuleNames.AddRange(new[]
+        {
+            "Slate",
+            "SlateCore",
+            "ToolMenus",
+            "ToolWidgets",
+            "AppFramework",
+        });
 
-			// Asset & Content management
-			"AssetRegistry",
-			"AssetTools",
-			"ContentBrowser",
-			"ContentBrowserData",
-			"PropertyEditor",
-			"Projects",
-			"DesktopPlatform",
+        // Asset and content management
+        PrivateDependencyModuleNames.AddRange(new[]
+        {
+            "AssetRegistry",
+            "AssetTools",
+            "ContentBrowser",
+            "ContentBrowserData",
+            "PropertyEditor",
+            "Projects",
+            "DesktopPlatform",
+        });
 
-			// Mesh / Geometry
-			"ProceduralMeshComponent",
-			"MeshDescription",
-			"StaticMeshDescription",
-			"GeometryCore",
+        // Mesh and geometry
+        PrivateDependencyModuleNames.AddRange(new[]
+        {
+            "ProceduralMeshComponent",
+            "MeshDescription",
+            "StaticMeshDescription",
+            "GeometryCore",
+        });
 
-			// Networking (Editor-only: DiggerConnect)
-			"SocketIOClient",
-			"HTTP",
-			"WebSockets",
-			"ApplicationCore",
-		});
-	}
+        // Networking (editor-only tools like DiggerConnect)
+        PrivateDependencyModuleNames.AddRange(new[]
+        {
+            "SocketIOClient",
+            "HTTP",
+            "WebSockets",
+            "ApplicationCore",
+        });
+    }
 }
