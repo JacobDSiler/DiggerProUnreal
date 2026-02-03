@@ -107,3 +107,24 @@ bool UPyramidBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStr
     const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
     return DistanceSq <= RadiusSq;
 }
+
+void UPyramidBrushShape::GetPreviewData(
+    FVector& OutCenter,
+    FVector& OutExtents,
+    FQuat& OutRotation,
+    float& OutFalloff,
+    EVoxelBrushType& OutBrushType,
+    const FBrushStroke& Stroke
+) const
+{
+    OutCenter = Stroke.BrushPosition + Stroke.BrushOffset;
+
+    float HalfHeight = Stroke.BrushLength * 0.5f;
+    float BaseSize = Stroke.BrushRadius;
+
+    OutExtents = FVector(BaseSize, BaseSize, HalfHeight);
+
+    OutRotation = Stroke.BrushRotation.Quaternion();
+    OutFalloff = Stroke.BrushFalloff;
+    OutBrushType = EVoxelBrushType::Pyramid;
+}

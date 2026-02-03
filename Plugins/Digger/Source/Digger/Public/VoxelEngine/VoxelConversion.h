@@ -3,6 +3,7 @@
 
 #include "CoreMinimal.h"
 #include "DiggerDebug.h"
+#include "DiggerManager.h"
 
 
 /**
@@ -46,6 +47,32 @@ struct FVoxelConversion
     /** Thickness of the shell around dug holes in voxels */
     static constexpr int DUG_HOLE_SHELL_VOXEL_THICKNESS = 3;
     static float ChunkWorldSize;
+
+    /// Terrain Height Getter
+    static float GetTerrainHeight(const FVector& WorldPos);
+
+    /// Refresh the cached digger manager
+    static void RefreshDiggerManager(UWorld* World);
+
+private:
+    static TWeakObjectPtr<ADiggerManager> CachedManager;
+
+public:
+    /// Gets a safe world context anywhere.
+    static UWorld* FVoxelConversion::GetAnyWorld()
+    {
+        // Try GEngine first
+        if (GEngine)
+        {
+            // PIE or Editor: use the first world
+            if (GEngine->GetWorldContexts().Num() > 0)
+            {
+                return GEngine->GetWorldContexts()[0].World();
+            }
+        }
+        return nullptr;
+    }
+
 
     /**
      * Converts chunk coordinates to the world position of the chunk's center.
@@ -391,4 +418,5 @@ static FIntVector ChunkAndLocalToGlobalVoxel_MinCornerAligned(const FIntVector& 
         UE_LOG(LogTemp, Display, TEXT("[InitFromConfig] ChunkSize: %d, Subdivisions: %d, TerrainGridSize: %f, LocalVoxelSize: %f, Origin: %s"),
             ChunkSize, Subdivisions, TerrainGridSize, LocalVoxelSize, *Origin.ToString());
     }
+    
 };

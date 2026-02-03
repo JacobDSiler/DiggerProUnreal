@@ -75,3 +75,24 @@ bool UTorusBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStrok
     return Super::IsWithinBounds(WorldPos, Stroke);
 }
 
+void UTorusBrushShape::GetPreviewData(
+    FVector& OutCenter,
+    FVector& OutExtents,
+    FQuat& OutRotation,
+    float& OutFalloff,
+    EVoxelBrushType& OutBrushType,
+    const FBrushStroke& Stroke
+) const
+{
+    OutCenter = Stroke.BrushPosition + Stroke.BrushOffset;
+
+    float MajorRadius = Stroke.BrushRadius;
+    float MinorRadius = Stroke.TorusInnerRadius;
+
+    // Extents: major radius in XY, minor radius in Z
+    OutExtents = FVector(MajorRadius + MinorRadius, MajorRadius + MinorRadius, MinorRadius);
+
+    OutRotation = Stroke.BrushRotation.Quaternion();
+    OutFalloff = Stroke.BrushFalloff;
+    OutBrushType = EVoxelBrushType::Torus;
+}

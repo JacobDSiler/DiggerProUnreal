@@ -103,3 +103,22 @@ bool UIcosphereBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushS
     const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
     return DistanceSq <= RadiusSq;
 }
+
+void UIcosphereBrushShape::GetPreviewData(
+    FVector& OutCenter,
+    FVector& OutExtents,
+    FQuat& OutRotation,
+    float& OutFalloff,
+    EVoxelBrushType& OutBrushType,
+    const FBrushStroke& Stroke
+) const
+{
+    OutCenter = Stroke.BrushPosition + Stroke.BrushOffset;
+
+    // Icosphere is just a sphere for preview
+    OutExtents = FVector(Stroke.BrushRadius);
+
+    OutRotation = Stroke.BrushRotation.Quaternion();
+    OutFalloff = Stroke.BrushFalloff;
+    OutBrushType = EVoxelBrushType::Icosphere;
+}

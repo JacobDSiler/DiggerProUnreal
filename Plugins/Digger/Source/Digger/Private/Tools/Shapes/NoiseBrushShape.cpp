@@ -4,47 +4,55 @@
 #include "VoxelConversion.h"
 #include "Math/UnrealMathUtility.h"
 
+FORCEINLINE uint32 HashUint(uint32 x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352d;
+    x ^= x >> 15;
+    x *= 0x846ca68b;
+    x ^= x >> 16;
+    return x;
+}
+
+FORCEINLINE float DeterministicNoise3D(const FIntVector& P)
+{
+    uint32 h = HashUint(HashUint(HashUint(P.X) ^ P.Y) ^ P.Z);
+    return (float)(h & 0xFFFFFF) / (float)0xFFFFFF * 2.f - 1.f; // -1..1
+}
+
 float UNoiseBrushShape::CalculateSDF_Implementation(
-	const FVector& WorldPos,
-	const FBrushStroke& Stroke,
-	float TerrainHeight
+    const FVector& WorldPos,
+    const FBrushStroke& Stroke,
+    float TerrainHeight
 ) const
 {
-	const FVector LocalPos = WorldPos - Stroke.BrushPosition;
-	const float Distance = LocalPos.Size();
-    
-	// Early exit if outside brush radius
-	if (Distance > Stroke.BrushRadius + Stroke.BrushFalloff)
-		return 0.0f;
-    
-	// Generate 3D noise
-	const float NoiseScale = 0.1f; // Adjust for noise frequency
-	const float NoiseX = WorldPos.X * NoiseScale;
-	const float NoiseY = WorldPos.Y * NoiseScale;
-	const float NoiseZ = WorldPos.Z * NoiseScale;
-    
-	// Simple 3D noise using sine waves (you could use Perlin noise here)
-	// Replace in UNoiseBrushShape::CalculateSDF_Implementation:
-	const float Noise = HashNoise3D(WorldPos * 0.1f);
-	const float NoiseValue = (Noise + 1.0f) * 0.5f; // Normalize to 0-1
-    
-	// Apply spherical falloff
-	const float SphereSDF = Distance - Stroke.BrushRadius;
-	float FalloffSDF = SphereSDF;
-    
-	if (SphereSDF > -Stroke.BrushFalloff && SphereSDF < Stroke.BrushFalloff)
-	{
-		const float FalloffFactor = 1.0f - FMath::Abs(SphereSDF) / Stroke.BrushFalloff;
-        
-		// Modulate the SDF with noise
-		const float NoiseModulation = (NoiseValue - 0.5f) * Stroke.BrushRadius * 0.3f; // 30% of radius
-		FalloffSDF = SphereSDF + NoiseModulation;
-        
-		FalloffSDF *= FalloffFactor;
-	}
-    
-	return Stroke.bDig ? FalloffSDF * Stroke.BrushStrength : -FalloffSDF * Stroke.BrushStrength;
+    const FVector LocalPos = WorldPos - Stroke.BrushPosition;
+    const float Distance = LocalPos.Size();
+
+    if (Distance > Stroke.BrushRadius + Stroke.BrushFalloff)
+        return 0.f;
+
+    float t = FMath::Clamp(Distance / Stroke.BrushRadius, 0.f, 1.f);
+    float Falloff = 1.f - (t * t * (3.f - 2.f * t));
+
+    const float NoiseFreq = 0.02f;
+
+    FIntVector Cell(
+        FMath::FloorToInt(WorldPos.X * NoiseFreq),
+        FMath::FloorToInt(WorldPos.Y * NoiseFreq),
+        FMath::FloorToInt(WorldPos.Z * NoiseFreq)
+    );
+
+    float Noise = DeterministicNoise3D(Cell); // -1..1
+
+    float Displacement = Noise * Stroke.BrushStrength * Stroke.BrushRadius * 0.25f;
+
+    if (Stroke.bDig)
+        Displacement = -Displacement;
+
+    return Displacement * Falloff;
 }
+
 
 bool UNoiseBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const
 {
@@ -55,3 +63,21 @@ bool UNoiseBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStrok
 	return DistanceSq <= RadiusSq;
 }
 
+void UNoiseBrushShape::GetPreviewData(
+    FVector& OutCenter,
+    FVector& OutExtents,
+    FQuat& OutRotation,
+    float& OutFalloff,
+    EVoxelBrushType& OutBrushType,
+    const FBrushStroke& Stroke
+) const
+{
+    OutCenter = Stroke.BrushPosition + Stroke.BrushOffset;
+
+    // Noise brush is spherical for preview
+    OutExtents = FVector(Stroke.BrushRadius);
+
+    OutRotation = Stroke.BrushRotation.Quaternion();
+    OutFalloff = Stroke.BrushFalloff;
+    OutBrushType = EVoxelBrushType::Noise;
+}

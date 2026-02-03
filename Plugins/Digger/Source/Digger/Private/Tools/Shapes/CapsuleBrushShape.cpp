@@ -127,3 +127,51 @@ bool UCapsuleBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStr
 
     return true;
 }
+
+
+bool UCapsuleBrushShape::IsWithinInterior(const FVector& WorldPos, const FBrushStroke& Stroke) const
+{
+    FVector Center = Stroke.BrushPosition + Stroke.BrushOffset;
+    FVector LocalPos = WorldPos - Center;
+
+    if (!Stroke.BrushRotation.IsNearlyZero())
+    {
+        LocalPos = Stroke.BrushRotation.UnrotateVector(LocalPos);
+    }
+
+    // Tighter height check
+    float HalfHeight = Stroke.BrushLength * 0.5f;
+    float VerticalLimit = HalfHeight + Stroke.BrushRadius; // no falloff, no padding
+
+    if (FMath::Abs(LocalPos.Z) > VerticalLimit)
+        return false;
+
+    // Tighter width check
+    float HorizontalLimit = Stroke.BrushRadius; // no falloff, no padding
+    float HorizontalDistSq = LocalPos.X * LocalPos.X + LocalPos.Y * LocalPos.Y;
+
+    if (HorizontalDistSq > HorizontalLimit * HorizontalLimit)
+        return false;
+
+    return true;
+}
+
+void UCapsuleBrushShape::GetPreviewData(
+    FVector& OutCenter,
+    FVector& OutExtents,
+    FQuat& OutRotation,
+    float& OutFalloff,
+    EVoxelBrushType& OutBrushType,
+    const FBrushStroke& Stroke
+) const
+{
+    OutCenter = Stroke.BrushPosition + Stroke.BrushOffset;
+
+    // Capsule extents: radius in X/Y, half-height in Z
+    float HalfHeight = Stroke.BrushLength * 0.5f;
+    OutExtents = FVector(Stroke.BrushRadius, Stroke.BrushRadius, HalfHeight);
+
+    OutRotation = Stroke.BrushRotation.Quaternion();
+    OutFalloff = Stroke.BrushFalloff;
+    OutBrushType = EVoxelBrushType::Capsule;
+}

@@ -12,5 +12,9 @@ public class DiggerUnreal : ModuleRules
         // LINK YOUR PLUGIN HERE
         // This ensures the project forces the plugin to compile
         PublicDependencyModuleNames.AddRange(new string[] { "Digger" });
+        
+        PrivateDependencyModuleNames.AddRange(new[]
+        { "DiggerEditor" });
+
     }
 }

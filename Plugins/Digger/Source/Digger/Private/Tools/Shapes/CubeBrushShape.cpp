@@ -127,3 +127,50 @@ bool UCubeBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke
            FMath::Abs(LocalPos.Y) <= SearchExtents.Y &&
            FMath::Abs(LocalPos.Z) <= SearchExtents.Z;
 }
+
+bool UCubeBrushShape::IsWithinInterior(const FVector& WorldPos, const FBrushStroke& Stroke) const
+{
+    FVector Center = Stroke.BrushPosition + Stroke.BrushOffset;
+    FVector LocalPos = WorldPos - Center;
+
+    if (!Stroke.BrushRotation.IsNearlyZero())
+    {
+        LocalPos = Stroke.BrushRotation.UnrotateVector(LocalPos);
+    }
+
+    // True half-extents (no falloff, no padding)
+    FVector HalfExtents = Stroke.bUseAdvancedCubeBrush
+        ? FVector(Stroke.AdvancedCubeHalfExtentX,
+                  Stroke.AdvancedCubeHalfExtentY,
+                  Stroke.AdvancedCubeHalfExtentZ)
+        : FVector(Stroke.BrushRadius);
+
+    return FMath::Abs(LocalPos.X) <= HalfExtents.X &&
+           FMath::Abs(LocalPos.Y) <= HalfExtents.Y &&
+           FMath::Abs(LocalPos.Z) <= HalfExtents.Z;
+}
+
+
+void UCubeBrushShape::GetPreviewData(
+    FVector& OutCenter,
+    FVector& OutExtents,
+    FQuat& OutRotation,
+    float& OutFalloff,
+    EVoxelBrushType& OutBrushType,
+    const FBrushStroke& Stroke) const
+{
+    OutCenter = Stroke.BrushPosition + Stroke.BrushOffset;
+
+    OutExtents = Stroke.bUseAdvancedCubeBrush
+        ? FVector(Stroke.AdvancedCubeHalfExtentX,
+                  Stroke.AdvancedCubeHalfExtentY,
+                  Stroke.AdvancedCubeHalfExtentZ)
+        : FVector(Stroke.BrushRadius);
+
+    OutRotation = Stroke.BrushRotation.Quaternion();
+    OutFalloff  = Stroke.BrushFalloff;
+    OutBrushType = EVoxelBrushType::Cube;
+}
+
+
+

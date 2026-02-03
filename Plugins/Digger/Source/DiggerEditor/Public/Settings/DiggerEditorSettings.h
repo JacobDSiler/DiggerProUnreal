@@ -17,6 +17,22 @@ class UHoleShapeLibrary;
  * Location:
  *   Project Settings → Digger → Editor Preview Settings
  */
+
+
+// -------------------------------------------------------------------------
+// HUD SETTINGS
+// -------------------------------------------------------------------------
+
+UENUM(BlueprintType)
+enum class EBrushHUDPosition : uint8
+{
+    UpperLeft,
+    UpperRight,
+    LowerLeft,
+    LowerRight,
+    Custom
+};
+
 UCLASS(Config=Editor, DefaultConfig, meta=(DisplayName="Editor Preview Settings"))
 class DIGGEREDITOR_API UDiggerEditorSettings : public UDeveloperSettings
 {
@@ -24,7 +40,29 @@ class DIGGEREDITOR_API UDiggerEditorSettings : public UDeveloperSettings
 
 public:
     UDiggerEditorSettings();
+
+
+    // -------------------------------------------------------------------------
+    // HUD SETTINGS
+    // -------------------------------------------------------------------------
+
+    // HUD Messages Positioning
+
+    UPROPERTY(EditAnywhere, Config, Category="HUD")
+    EBrushHUDPosition BrushHUDPosition = EBrushHUDPosition::UpperLeft;
+
+    UPROPERTY(EditAnywhere, Config, Category="HUD", meta=(EditCondition="BrushHUDPosition == EBrushHUDPosition::Custom"))
+    FVector2D CustomHUDOffset = FVector2D(50.f, 50.f);
     
+    
+    // -------------------------------------------------------------------------
+    // BRUSH PREVIEW SETTINGS
+    // -------------------------------------------------------------------------
+
+    /** Multiplier applied to scroll-wheel impulses when adjusting brush settings. */
+    UPROPERTY(EditAnywhere, config, Category="Brush Controls", meta=(ClampMin="0.1", ClampMax="500.0"))
+    float ScrollSpeed = 50.0f;
+
 
     // -------------------------------------------------------------------------
     // BRUSH PREVIEW MESHES

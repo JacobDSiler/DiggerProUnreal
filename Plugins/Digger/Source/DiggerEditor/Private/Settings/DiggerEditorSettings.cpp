@@ -6,6 +6,10 @@ UDiggerEditorSettings::UDiggerEditorSettings()
 	CategoryName = TEXT("Digger");
 	SectionName = TEXT("Editor Preview Settings");
 
+	// Initialize Brush Preview Settings
+	ScrollSpeed = 150.0f; // matches your current ScrollImpulseScale
+
+
 	// Initialize with the paths you were previously hardcoding.
 	// This provides a fallback so existing setups don't break, 
 	// but the strings are now isolated to this one file.

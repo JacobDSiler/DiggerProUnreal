@@ -107,6 +107,17 @@ public:
 	// In UVoxelBrushShape.h
 	virtual bool IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const;
 
+	virtual bool IsWithinInterior(const FVector& WorldPos, const FBrushStroke& Stroke) const;
+	
+	virtual void GetPreviewData(
+		FVector& OutCenter,
+		FVector& OutExtents,
+		FQuat& OutRotation,
+		float& OutFalloff,
+		EVoxelBrushType& OutBrushType,   // or your own enum
+		const FBrushStroke& Stroke) const;
+
+
 protected:
 	//Brush Settings
 	// Size and location of the brush
@@ -122,7 +133,7 @@ protected:
 private:
 	//World
 	UPROPERTY()
-	UWorld* World;
+	mutable UWorld* World;
 public:
 	
 	// Public so you can toggle from blueprint or details panel
@@ -149,16 +160,17 @@ public:
 		bool bIgnoreHolesNow,
 		int32 Depth
 	) const;
+	
+	FHitResult SmartTrace(const FVector& Start, const FVector& End) const;
 
 	FHitResult RecursiveTraceThroughHoles_Internal(
 		FVector& Start,
 		const FVector& End,
 		TArray<AActor*>& IgnoredActors,
 		int32 Depth,
-		const FVector& OriginalDirection, bool bHoleContext, bool bStartedInsideHole
+		const FVector& OriginalDirection, bool bStartInHole
 	) const;
 	
-	FHitResult SmartTrace(const FVector& Start, const FVector& End);
 
 	bool IsHoleBPActor(const AActor* Actor) const;
 

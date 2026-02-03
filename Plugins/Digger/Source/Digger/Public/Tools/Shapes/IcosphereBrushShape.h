@@ -18,4 +18,14 @@ public:
 	float GetIcosphereDistortion(const FVector& NormalizedPos, int32 Subdivisions) const;
 
 	virtual bool IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const override;
+
+	// PURE DATA ONLY — NO EDITOR TYPES
+	virtual void GetPreviewData(
+		FVector& OutCenter,
+		FVector& OutExtents,
+		FQuat& OutRotation,
+		float& OutFalloff,
+		EVoxelBrushType& OutBrushType,   // or your own enum
+		const FBrushStroke& Stroke) const;
+
 };

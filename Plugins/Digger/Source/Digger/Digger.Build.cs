@@ -5,7 +5,7 @@ public class Digger : ModuleRules
 {
 	public Digger(ReadOnlyTargetRules Target) : base(Target)
 	{
-			//	bUseUnity = false; // <--- ADD THIS LINE TEMPORARILY bUseUnity = false is helpful during development, debugging, and plugin authoring.
+		//	bUseUnity = false; // <--- ADD THIS LINE TEMPORARILY bUseUnity = false is helpful during development, debugging, and plugin authoring.
 		
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
@@ -33,6 +33,7 @@ public class Digger : ModuleRules
 		{
 			Path.Combine(ModuleDirectory, "Private")
 		});
+
 
 		PublicDependencyModuleNames.AddRange(new[]
 		{

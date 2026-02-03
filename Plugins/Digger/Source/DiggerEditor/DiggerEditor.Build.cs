@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using UnrealBuildTool;
 
@@ -5,6 +6,8 @@ public class DiggerEditor : ModuleRules
 {
     public DiggerEditor(ReadOnlyTargetRules Target) : base(Target)
     {
+        PublicDependencyModuleNames.AddRange(new string[] { "Digger" });
+        PrivateDependencyModuleNames.AddRange(new string[] { "Digger" });
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
         // Public includes (exposed headers)
@@ -53,6 +56,7 @@ public class DiggerEditor : ModuleRules
             "InteractiveToolsFramework",
             "EditorInteractiveToolsFramework",
             "DeveloperSettings",
+            "Landscape", // <--- ADD THIS LINE HERE
         });
 
         // Slate UI

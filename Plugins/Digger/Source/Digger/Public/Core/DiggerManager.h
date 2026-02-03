@@ -59,6 +59,8 @@ class FDiggerEdModeToolkit;
 // Optional aggregate-for-brush event type
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnBrushFinished, const FVoxelModificationReport&);
 
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnModifierBlocked, bool bBlocked);
+
 
 // Helper struct for an island
 struct FIsland
@@ -220,6 +222,8 @@ class DIGGER_API ADiggerManager : public AActor
 
 public:
     ADiggerManager();
+    
+    FOnModifierBlocked OnModifierBlocked;
 
     // Single delegate to track voxels modification stats for ALL chunks
     FOnVoxelsModified OnVoxelsModified;
@@ -320,6 +324,9 @@ public:
     bool ValidateMasterMaterial(UMaterialInterface* Master, int32 MaxLayers, FText& OutReport) const;
     bool ValidateLayeredMaster(UMaterialInterface* Master, int32 ExpectedLayers, FText& OutReport) const;
 
+    UPROPERTY(Transient)
+    bool bIsEditorPainting = false;
+
     
     FCriticalSection UpdateChunksCriticalSection;
 
@@ -402,6 +409,9 @@ public:
     FORCEINLINE UHoleShapeLibrary* GetHoleShapeLibrary() const { return HoleShapeLibrary; }
     FORCEINLINE TSubclassOf<AActor> GetDynamicHoleClass() const { return DynamicHoleClass; }
 
+    // BrushRadius getter
+    float GetEditorBrushRadius() const { return EditorBrushRadius; }
+
 
 
 #if WITH_EDITOR
@@ -423,6 +433,10 @@ public:
         if (OnIslandDetected.IsBound())
         {
             OnIslandDetected.Broadcast(Island);
+// #if WITH_EDITOR
+//             UDiggerEditorEventHub::BroadcastIslandDetected(Island);
+// #endif
+
         }
     }
 #endif
@@ -593,6 +607,7 @@ protected:
 public:
     // Editor support
     virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+    virtual void PostRegisterAllComponents() override;
     virtual void OnConstruction(const FTransform& Transform) override;
     void InitHoleShapeLibrary();
     virtual void PostEditMove(bool bFinished) override;

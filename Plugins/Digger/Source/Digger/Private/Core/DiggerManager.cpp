@@ -1608,6 +1608,8 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
         return;
     }
 
+    //Modify();
+
     // If Brush and Verbose Debug Flags are both on, give the full brush details.
     if (DiggerDebug::Brush() && DiggerDebug::Verbose())
     {
@@ -3554,16 +3556,6 @@ void ADiggerManager::EnforceZeroLocation()
 }
 
 
-// float ADiggerManager::GetLandscapeHeightAt(const FVector& Location)
-// {
-//     if (HeightCacheSystem)
-//     {
-//         return HeightCacheSystem->GetHeight(Location);
-//     }
-//     return Location.Z;
-// }
-
-
 FVector ADiggerManager::GetLandscapeNormalAt(const FVector& WorldPosition)
 {
     // Get all landscape actors in the level
@@ -3624,9 +3616,7 @@ UWorld* ADiggerManager::GetSafeWorld() const
 
 void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 {
-    // ---------------------------------------------------------
     // 1. VALIDATION
-    // ---------------------------------------------------------
     if (!DynamicHoleClass)
     {
         EnsureDefaultHoleBP();
@@ -3657,156 +3647,100 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 #endif
     }
 
-    // ---------------------------------------------------------
-    // 2. INITIALIZATION
-    // ---------------------------------------------------------
-    FVector SpawnLocation = Stroke.BrushPosition;
-    FRotator SpawnRotation = Stroke.BrushRotation;
+    if (!ActiveBrush)
+    {
+        UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: ActiveBrush is still NULL after initialization."));
+        return;
+    }
+
+    // 2. AUTHORITATIVE CENTER / ROTATION FROM STROKE (PREVIEW-DRIVEN)
+    FVector Center   = Stroke.BrushPosition;              // ✅ already WYSIWYG from preview
+    FVector Extents  = FVector(Stroke.BrushRadius);
+    FQuat   Rotation = Stroke.BrushRotation.Quaternion();
+    float   Falloff  = Stroke.BrushFalloff;
+    EVoxelBrushType BrushType = Stroke.BrushType;
+
+    // If you still need brush to refine extents/rotation, let it,
+    // but do NOT let it move Center away from the preview center.
+    ActiveBrush->GetPreviewData(
+        Center,
+        Extents,
+        Rotation,
+        Falloff,
+        BrushType,
+        Stroke);
+
+    // Use the (preview-aligned) center as spawn location
+    FVector  SpawnLocation = Center;
+    FRotator SpawnRotation = Rotation.Rotator();
+
+    // 3. VALIDATE THAT WE ARE NEAR LANDSCAPE
     bool bFoundLandscape = false;
+
+    FHitResult Hit;
+    if (ActiveBrush->GetCameraHitLocation(Hit))
+    {
+        if (ActiveBrush->IsLandscape(Hit.GetActor()))
+        {
+            bFoundLandscape = true;
+        }
+    }
 
     const float TerrainZ = GetLandscapeHeightAt(SpawnLocation);
     const bool bValidTerrainZ = TerrainZ > UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT;
 
-    // ---------------------------------------------------------
-    // 3. STRATEGY A: CAMERA HIT
-    // ---------------------------------------------------------
-    FHitResult Hit;
-    if (ActiveBrush->GetCameraHitLocation(Hit))
-    {
-        AActor* HitActor = Hit.GetActor();
-        if (ActiveBrush->IsLandscape(HitActor))
-        {
-            SpawnLocation = Hit.Location;
-
-            SpawnRotation = Stroke.BrushRotation;
-
-            bFoundLandscape = true;
-        }
-        else if (bValidTerrainZ && FMath::Abs(Hit.Location.Z - TerrainZ) <= Stroke.BrushRadius * 0.6f)
-        {
-            // Hit something else, but we're near terrain — allow it
-            SpawnLocation.Z = TerrainZ;
-            SpawnRotation = Stroke.BrushRotation;
-            bFoundLandscape = true;
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("HandleHoleSpawn: Camera hit %s, not landscape. Skipping."),
-                HitActor ? *HitActor->GetName() : TEXT("None"));
-            return;
-        }
-    }
-
-    // ---------------------------------------------------------
-    // 4. STRATEGY B: FALLBACK TRACE
-    // ---------------------------------------------------------
-    if (!bFoundLandscape)
-    {
-        const float TraceDist = Stroke.BrushRadius * 2.f;
-        const FVector Start = SpawnLocation + FVector(0, 0, TraceDist);
-        const FVector End   = SpawnLocation - FVector(0, 0, TraceDist);
-
-        FCollisionQueryParams Params(SCENE_QUERY_STAT(HoleFallback), false, this);
-        TArray<FHitResult> Hits;
-
-        if (GetWorld()->LineTraceMultiByChannel(Hits, Start, End, ECC_Visibility, Params))
-        {
-            for (const FHitResult& H : Hits)
-            {
-                if (H.GetActor() && H.GetActor()->IsA(ALandscapeProxy::StaticClass()))
-                {
-                    SpawnLocation = H.Location;
-
-                    SpawnRotation = Stroke.BrushRotation;
-
-                    bFoundLandscape = true;
-                    break;
-                }
-            }
-        }
-    }
-
-    // ---------------------------------------------------------
-    // 5. STRATEGY C: PROXIMITY CHECK
-    // ---------------------------------------------------------
     if (!bFoundLandscape && bValidTerrainZ)
     {
-        const float BrushZ = SpawnLocation.Z;
-        const float MaxDistance = Stroke.BrushRadius * 0.6f;
-
-        if (FMath::Abs(BrushZ - TerrainZ) <= MaxDistance)
+        const float MaxDistance = Stroke.BrushRadius * 0.75f;
+        if (FMath::Abs(SpawnLocation.Z - TerrainZ) <= MaxDistance)
         {
-            SpawnLocation.Z = TerrainZ;
-            SpawnRotation = Stroke.BrushRotation;
             bFoundLandscape = true;
         }
     }
 
-    // ---------------------------------------------------------
-    // 6. FINAL VALIDATION
-    // ---------------------------------------------------------
     if (!bFoundLandscape)
     {
-        UE_LOG(LogTemp, Warning, TEXT("HandleHoleSpawn: No landscape found near brush."));
+        UE_LOG(LogTemp, Warning,
+            TEXT("HandleHoleSpawn: No landscape detected near brush center. Skipping hole spawn."));
         return;
     }
 
-    // ---------------------------------------------------------
-    // 7. SCALE
-    // ---------------------------------------------------------
+    // 4. SCALE
     const float ScaleDivisor = UDiggerSettings::Get()->ScaleDivisor;
     const FVector SpawnScale(Stroke.BrushRadius / ScaleDivisor);
 
-    // ---------------------------------------------------------
-    // 8. CHUNK RESOLUTION
-    // ---------------------------------------------------------
+    // 5. CHUNK RESOLUTION
     UVoxelChunk* Chunk = GetOrCreateChunkAtWorld(SpawnLocation);
     if (!Chunk)
     {
-        // Retry with slight offset
         const FVector OffsetLoc = SpawnLocation + FVector(5.f, 5.f, 0.f);
         Chunk = GetOrCreateChunkAtWorld(OffsetLoc);
     }
 
     if (!Chunk)
     {
-        UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: No chunk found near %s"), *SpawnLocation.ToString());
+        UE_LOG(LogTemp, Error,
+            TEXT("HandleHoleSpawn: No chunk found near %s"),
+            *SpawnLocation.ToString());
         return;
     }
 
-    // ---------------------------------------------------------
-    // 9. SPAWN (Grid‑Snapped, Deferred Mesh Assignment)
-    // ---------------------------------------------------------
-
-    // Snap the spawn location to the voxel grid before anything else
-    SpawnLocation = Chunk->SnapToVoxelGrid(SpawnLocation);
-
-    // Prepare the hole shape, but DO NOT assign the mesh yet.
-    // The mesh will be applied later in UVoxelChunk::NotifyHolesMeshReady().
+    // 6. PREPARE HOLE SHAPE (NO GRID SNAP)
     FHoleShape FinalShape = Stroke.HoleShape;
     FinalShape.ShapeType =
-        (Stroke.BrushType == EVoxelBrushType::Cube)
+        (BrushType == EVoxelBrushType::Cube || BrushType == EVoxelBrushType::AdvancedCube)
             ? EHoleShapeType::Cube
             : EHoleShapeType::Sphere;
 
-    // Package the spawn data (transform + shape metadata)
+    // 7. SPAWN HOLE ACTOR (DEFERRED MESH)
     FSpawnedHoleData Data(SpawnLocation, SpawnRotation, SpawnScale, FinalShape);
 
-    // Spawn the hole actor WITHOUT setting its mesh.
-    // SpawnHoleFromData will now:
-    //   - Spawn the actor
-    //   - Store HoleShapeType
-    //   - Register it in PendingHoleActors
-    //   - NOT assign the mesh yet
     Chunk->SpawnHoleFromData(Data);
 
     UE_LOG(LogTemp, Log,
-        TEXT("HandleHoleSpawn: Spawned hole at %s (Chunk %s) [Deferred Mesh]"),
+        TEXT("HandleHoleSpawn: Spawned hole at %s (Chunk %s) [Brush-Centered, Preview-Consistent]"),
         *SpawnLocation.ToString(),
         *Chunk->GetChunkCoordinates().ToString());
-
-    // Optional debug
-    // DrawDebugSphere(GetWorld(), SpawnLocation, Stroke.BrushRadius, 16, FColor::Green, false, 5.f);
 }
 
 
@@ -4636,6 +4570,11 @@ void ADiggerManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
     EnforceZeroLocation();
 }
 
+void ADiggerManager::PostRegisterAllComponents()
+{
+    Super::PostRegisterAllComponents();
+    FVoxelConversion::RefreshDiggerManager(GetWorld());
+}
 
 void ADiggerManager::PostEditMove(bool bFinished)
 {

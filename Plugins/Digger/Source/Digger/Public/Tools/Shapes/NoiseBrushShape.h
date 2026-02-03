@@ -28,4 +28,14 @@ public:
 		int32 Hash = HashCombine(HashCombine(::GetTypeHash(N.X), ::GetTypeHash(N.Y)), ::GetTypeHash(N.Z));
 		return FMath::Frac(FMath::Sin(Hash * 12.9898f) * 43758.5453f) * 2.f - 1.f; // Output: [-1, 1]
 	}
+
+	// PURE DATA ONLY — NO EDITOR TYPES
+	virtual void GetPreviewData(
+		FVector& OutCenter,
+		FVector& OutExtents,
+		FQuat& OutRotation,
+		float& OutFalloff,
+		EVoxelBrushType& OutBrushType,   // or your own enum
+		const FBrushStroke& Stroke) const;
+
 };

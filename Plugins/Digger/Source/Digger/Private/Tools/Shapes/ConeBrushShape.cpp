@@ -83,3 +83,56 @@ bool UConeBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke
 
     return Distance <= Stroke.BrushFalloff;
 }
+
+bool UConeBrushShape::IsWithinInterior(const FVector& WorldPos, const FBrushStroke& Stroke) const
+{
+    FVector LocalPos = WorldPos - (Stroke.BrushPosition + Stroke.BrushOffset);
+    if (!Stroke.BrushRotation.IsNearlyZero())
+    {
+        LocalPos = Stroke.BrushRotation.UnrotateVector(LocalPos);
+    }
+
+    float Height = Stroke.BrushLength;
+    float AngleRad = FMath::DegreesToRadians(Stroke.BrushAngle);
+    float RadiusAtBase = Height * FMath::Tan(AngleRad);
+
+    FVector2D q(FVector2D(LocalPos.X, LocalPos.Y).Size(), LocalPos.Z);
+    float k = RadiusAtBase / Height;
+
+    float Distance;
+    if (q.Y < 0.0f || q.Y > Height)
+    {
+        float dx = q.X;
+        float dz = FMath::Min(FMath::Abs(q.Y), FMath::Abs(q.Y - Height));
+        Distance = FVector2D(dx, dz).Size();
+    }
+    else
+    {
+        Distance = q.X - k * q.Y;
+    }
+
+    return Distance <= 0.0f;
+}
+
+void UConeBrushShape::GetPreviewData(
+    FVector& OutCenter,
+    FVector& OutExtents,
+    FQuat& OutRotation,
+    float& OutFalloff,
+    EVoxelBrushType& OutBrushType,
+    const FBrushStroke& Stroke
+) const
+{
+    OutCenter = Stroke.BrushPosition + Stroke.BrushOffset;
+
+    float Height = Stroke.BrushLength;
+    float AngleRad = FMath::DegreesToRadians(Stroke.BrushAngle);
+    float RadiusAtBase = Height * FMath::Tan(AngleRad);
+
+    // Extents: base radius in X/Y, height in Z
+    OutExtents = FVector(RadiusAtBase, RadiusAtBase, Height);
+
+    OutRotation = Stroke.BrushRotation.Quaternion();
+    OutFalloff = Stroke.BrushFalloff;
+    OutBrushType = EVoxelBrushType::Cone;
+}

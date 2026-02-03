@@ -107,3 +107,40 @@ bool UCylinderBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushSt
     
     return RadialDistanceSq <= RadiusSq;
 }
+
+bool UCylinderBrushShape::IsWithinInterior(const FVector& WorldPos, const FBrushStroke& Stroke) const
+{
+    FVector LocalPos = WorldPos - (Stroke.BrushPosition + Stroke.BrushOffset);
+    if (!Stroke.BrushRotation.IsNearlyZero())
+    {
+        LocalPos = Stroke.BrushRotation.UnrotateVector(LocalPos);
+    }
+
+    const float Radius = Stroke.BrushRadius;
+    const float HalfHeight = Stroke.BrushLength * 0.5f;
+
+    if (FMath::Abs(LocalPos.Z) > HalfHeight)
+        return false;
+
+    const float RadialDistanceSq = LocalPos.X * LocalPos.X + LocalPos.Y * LocalPos.Y;
+    return RadialDistanceSq <= Radius * Radius;
+}
+
+void UCylinderBrushShape::GetPreviewData(
+    FVector& OutCenter,
+    FVector& OutExtents,
+    FQuat& OutRotation,
+    float& OutFalloff,
+    EVoxelBrushType& OutBrushType,
+    const FBrushStroke& Stroke
+) const
+{
+    OutCenter = Stroke.BrushPosition + Stroke.BrushOffset;
+
+    float HalfHeight = Stroke.BrushLength * 0.5f;
+    OutExtents = FVector(Stroke.BrushRadius, Stroke.BrushRadius, HalfHeight);
+
+    OutRotation = Stroke.BrushRotation.Quaternion();
+    OutFalloff = Stroke.BrushFalloff;
+    OutBrushType = EVoxelBrushType::Cylinder;
+}

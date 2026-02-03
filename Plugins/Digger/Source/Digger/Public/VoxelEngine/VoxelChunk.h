@@ -137,7 +137,10 @@ public:
     // Setters
     void SetMarchingCubesGenerator(UMarchingCubes* InMarchingCubesGenerator) { MarchingCubesGenerator = InMarchingCubesGenerator; }
     void BakeToStaticMesh(bool bEnableCollision, bool bEnableNanite, float DetailReduction, const FString& String);
-    
+    void DedupHoles();
+    void DeclutterHoles();
+    void MergeHoles();
+
     // Spawns actors based on stored HoleDataArray
     void RegenerateHolesFromData();
 

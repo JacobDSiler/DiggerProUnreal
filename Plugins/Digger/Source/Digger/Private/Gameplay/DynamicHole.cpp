@@ -63,11 +63,27 @@ FVector ADynamicHole::ActorToLocal(const FVector& WorldPos) const
 
 bool ADynamicHole::ContainsPoint(const FVector& WorldPos) const
 {
-	const FVector Local = ActorToLocal(WorldPos);
+	bool bResult;
+	if (BrushShapeInstance)
+	{
+		// Use the same stroke + shape logic that defines the actual hole volume
+		bResult = BrushShapeInstance->IsWithinInterior(WorldPos, CachedStroke);
+		if (DiggerDebug::Holes())
+		{
+		UE_LOG(LogTemp, Warning,
+			TEXT("ContainsPoint: Hole=%s, Point=%s, Result=%d"),
+			*GetName(), *WorldPos.ToString(), bResult ? 1 : 0);
+		}
+		
+		return bResult;
+	}
 
-	// Simple sphere for now: radius derived from scale
-	const float BaseRadius = 100.0f; // tune to match your hole mesh
+	// Fallback: old simple sphere, in case BrushShapeInstance is missing
+	const FVector Local = ActorToLocal(WorldPos);
+	const float BaseRadius = 100.0f;
 	const float Radius = BaseRadius * GetActorScale3D().GetMax();
+
+
 
 	return Local.SizeSquared() < FMath::Square(Radius);
 }

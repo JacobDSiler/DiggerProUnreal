@@ -64,3 +64,29 @@ bool USphereBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStro
 
     return DistanceSq <= TotalRadiusSq;
 }
+
+bool USphereBrushShape::IsWithinInterior(const FVector& WorldPos, const FBrushStroke& Stroke) const
+{
+    const FVector Center = Stroke.BrushPosition + Stroke.BrushOffset;
+    const float DistanceSq = (WorldPos - Center).SizeSquared();
+    const float RadiusSq = Stroke.BrushRadius * Stroke.BrushRadius;
+
+    return DistanceSq <= RadiusSq;
+}
+
+
+void USphereBrushShape::GetPreviewData(
+    FVector& OutCenter,
+    FVector& OutExtents,
+    FQuat& OutRotation,
+    float& OutFalloff,
+    EVoxelBrushType& OutBrushType,
+    const FBrushStroke& Stroke) const
+{
+    OutCenter   = Stroke.BrushPosition + Stroke.BrushOffset;
+    OutExtents  = FVector(Stroke.BrushRadius);
+    OutRotation = FQuat::Identity;
+    OutFalloff  = Stroke.BrushFalloff;
+    OutBrushType = EVoxelBrushType::Sphere;
+}
+
