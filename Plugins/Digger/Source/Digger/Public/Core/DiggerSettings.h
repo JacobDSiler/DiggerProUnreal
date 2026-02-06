@@ -49,6 +49,12 @@ public:
         meta=(ToolTip="Controls the final size of spawned hole actors.\nBrushRadius / ScaleDivisor = Actor Scale.\nLower values = larger holes. Higher values = smaller holes."))
     float ScaleDivisor = 47.0f;
 
+    // Meshing
+    UPROPERTY(EditAnywhere, Config, Category="Mesh Generation",
+    meta=(ClampMin="0.0001", ClampMax="5.0"))
+    float WeldVertexThreshold = 0.02f;
+
+
     // --- Resources ---
     UPROPERTY(EditAnywhere, Config, Category="Resources",
         meta=(AllowedClasses="/Script/Digger.HoleShapeLibrary",

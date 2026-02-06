@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "BrushPreviewLightComponent.h"
 #include "GameFramework/Actor.h"
 #include "BrushPreviewActor.generated.h"
 
@@ -35,6 +36,21 @@ public:
 
 	UPROPERTY(Transient)
 	UMaterialInstanceDynamic* MID = nullptr;
+
+	// Mode Indicator Members
+	UPROPERTY(EditAnywhere, Category="Digger Preview")
+	UTexture2D* SculptSprite;
+
+	UPROPERTY(EditAnywhere, Category="Digger Preview")
+	UTexture2D* RotateSprite;
+
+	UPROPERTY(EditAnywhere, Category="Digger Preview")
+	UTexture2D* OffsetSprite;
+
+	UPROPERTY(VisibleAnywhere, Category="Digger Preview")
+	UBillboardComponent* ModeIndicator;
+
+	
 
 	void Initialize(UStaticMesh* ShapeMesh, UMaterialInterface* BaseMat);
 

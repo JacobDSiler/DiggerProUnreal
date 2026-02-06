@@ -436,13 +436,14 @@ FHitResult UVoxelBrushShape::SmartTrace(const FVector& Start, const FVector& End
 {
     TArray<AActor*> IgnoredActors;
 
-    // Brush radius from manager
+    // Brush radius (used only for hole-spawn logic)
     float BrushRadius = 10.0f;
     if (DiggerManager)
     {
         BrushRadius = DiggerManager->EditorBrushRadius;
     }
 
+    // Check if camera starts inside a hole
     const bool bStartInHole =
         (DiggerManager && DiggerManager->IsInsideHole(Start));
 
@@ -456,6 +457,8 @@ FHitResult UVoxelBrushShape::SmartTrace(const FVector& Start, const FVector& End
     // ---------------------------------------------------------
     // 1. OPTIONAL: Spawn a hole at the first landscape hit
     // ---------------------------------------------------------
+    // This is the "Auto Hole Spawn" feature. It does NOT affect the
+    // actual trace result — it only triggers hole creation if needed.
     if (DiggerManager)
     {
         World = DiggerManager->GetWorld();
@@ -475,8 +478,8 @@ FHitResult UVoxelBrushShape::SmartTrace(const FVector& Start, const FVector& End
                 AActor* HitActor = LandscapeHit.GetActor();
                 if (HitActor && HitActor->IsA(ALandscapeProxy::StaticClass()))
                 {
+                    // Prepare stroke for hole spawn
                     FBrushStroke HoleStroke;
-
                     HoleStroke.BrushPosition = LandscapeHit.ImpactPoint;
                     HoleStroke.BrushOffset   = DiggerManager->EditorBrushOffset;
                     HoleStroke.BrushRadius   = BrushRadius;
@@ -493,13 +496,12 @@ FHitResult UVoxelBrushShape::SmartTrace(const FVector& Start, const FVector& End
                             *LandscapeHit.ImpactPoint.ToString());
                     }
 
-                    if (DiggerManager && DiggerManager->bIsEditorPainting && DiggerManager->EditorBrushDig)
+                    // Only spawn holes while painting AND in dig mode
+                    if (DiggerManager->bIsEditorPainting && DiggerManager->EditorBrushDig)
                     {
                         bool bAllowHoleSpawn = true;
 
-                        // ---------------------------------------------------------
-                        // Prevent hole spawning while modifier keys are held
-                        // ---------------------------------------------------------
+                        // Block hole spawning if modifiers are held
                         if (GEditor && GEditor->GetActiveViewport())
                         {
                             FViewport* VP = GEditor->GetActiveViewport();
@@ -515,12 +517,11 @@ FHitResult UVoxelBrushShape::SmartTrace(const FVector& Start, const FVector& End
                             const bool bShift =
                                 VP->KeyState(EKeys::LeftShift) ||
                                 VP->KeyState(EKeys::RightShift);
-                            
 
-                            // Optional: block hole spawn during ANY modifier
                             if (bAlt || bCtrl || bShift)
                             {
                                 DiggerManager->OnModifierBlocked.Broadcast(true);
+                                bAllowHoleSpawn = false;
                             }
                             else
                             {
@@ -533,15 +534,21 @@ FHitResult UVoxelBrushShape::SmartTrace(const FVector& Start, const FVector& End
                             DiggerManager->HandleHoleSpawn(HoleStroke);
                         }
                     }
-
                 }
             }
         }
     }
 
     // ---------------------------------------------------------
-    // 2. Hole‑aware recursive trace
+    // 2. Recursive Trace (The Source of Truth)
     // ---------------------------------------------------------
+    // This is the ONLY trace that determines where the brush actually is.
+    // It handles:
+    //   - entering holes
+    //   - exiting holes
+    //   - skipping landscape when inside a hole
+    //   - continuing past hole meshes
+    //   - multi-hop recursion through multiple hole layers
     FVector MutableStart = Start;
 
     FHitResult FinalHit = RecursiveTraceThroughHoles_Internal(
@@ -554,75 +561,24 @@ FHitResult UVoxelBrushShape::SmartTrace(const FVector& Start, const FVector& End
     );
 
     // ---------------------------------------------------------
-    // ⭐ 3. Terrain‑clamp fix
+    // ⭐ NO FALLBACKS
     // ---------------------------------------------------------
-    if (FinalHit.bBlockingHit && DiggerManager)
-    {
-        const bool bInsideHole = DiggerManager->IsInsideHole(FinalHit.Location);
+    // We previously had logic here that said:
+    //   "If Hit Z < 1.0f, clamp to landscape"
+    //
+    // That is REMOVED.
+    //
+    // If we hit deep underground, we hit deep underground.
+    // If we hit a hole mesh, we hit a hole mesh.
+    // If we are inside a hole, landscape hits are ignored.
+    //
+    // The recursive function already handles all of this correctly.
 
-        // If not in a hole and Z is suspiciously low → clamp
-        if (!bInsideHole && FinalHit.Location.Z < 1.0f)
-        {
-            FHitResult SurfaceHit;
-            if (World && World->LineTraceSingleByChannel(
-                    SurfaceHit,
-                    Start,
-                    End,
-                    ECC_Visibility))
-            {
-                if (SurfaceHit.bBlockingHit && SurfaceHit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
-                {
-                    if (DiggerDebug::SmartTrace())
-                    {
-                        UE_LOG(LogTemp, Error,
-                            TEXT("SmartTrace: Clamped fallback hit (%s) to landscape surface (%s)"),
-                            *FinalHit.Location.ToString(),
-                            *SurfaceHit.Location.ToString());
-                    }
-
-                    return SurfaceHit;
-                }
-            }
-        }
-
-        // ---------------------------------------------------------
-        // ⭐ 4. Hole‑aware correction:
-        // If the hit is landscape but the *true brush center* is inside a hole,
-        // SmartTrace must NOT return the landscape hit.
-        // ---------------------------------------------------------
-        if (!bInsideHole && FinalHit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
-        {
-            // Compute the true brush center (same as preview)
-            const FVector TrueCenter =
-                FinalHit.Location - FinalHit.ImpactNormal * BrushRadius;
-
-            if (DiggerManager->IsInsideHole(TrueCenter))
-            {
-                if (DiggerDebug::SmartTrace())
-                {
-                    UE_LOG(LogTemp, Warning,
-                        TEXT("SmartTrace: Landscape hit overridden because TrueCenter is inside a hole. TrueCenter=%s"),
-                        *TrueCenter.ToString());
-                }
-
-                // Force SmartTrace to continue past the landscape
-                FVector JumpStart = FinalHit.Location + (End - Start).GetSafeNormal() * 20.0f;
-
-                return RecursiveTraceThroughHoles_Internal(
-                    JumpStart,
-                    End,
-                    IgnoredActors,
-                    1,
-                    (End - Start).GetSafeNormal(),
-                    true /* now inside hole */
-                );
-            }
-        }
-    }
-
+    // ---------------------------------------------------------
+    // 3. Return the authoritative hit
+    // ---------------------------------------------------------
     return FinalHit;
 }
-
 
 
 

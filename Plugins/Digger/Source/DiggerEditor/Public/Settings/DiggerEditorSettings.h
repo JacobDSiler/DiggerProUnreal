@@ -9,15 +9,8 @@
 class UHoleShapeLibrary;
 
 /**
- * Editor‑only settings for the Digger plugin.
- *
- * These settings control how brush shapes and hole previews appear inside the
- * Unreal Editor viewport. They do NOT affect runtime hole spawning or gameplay.
- *
- * Location:
- *   Project Settings → Digger → Editor Preview Settings
+ * Editor-only settings for the Digger plugin.
  */
-
 
 // -------------------------------------------------------------------------
 // HUD SETTINGS
@@ -41,12 +34,40 @@ class DIGGEREDITOR_API UDiggerEditorSettings : public UDeveloperSettings
 public:
     UDiggerEditorSettings();
 
+    // -------------------------------------------------------------------------
+    // VISUAL FEEDBACK (Colors)
+    // -------------------------------------------------------------------------
+    
+    /** Color of the brush when in 'Add' / 'Fill' mode. */
+    UPROPERTY(EditAnywhere, Config, Category="Brush Visualization")
+    FLinearColor BrushColorAdd = FLinearColor(0.2f, 1.0f, 0.2f, 0.5f); // Green
+
+    /** Color of the brush when in 'Dig' / 'Remove' mode. */
+    UPROPERTY(EditAnywhere, Config, Category="Brush Visualization")
+    FLinearColor BrushColorDig = FLinearColor(1.0f, 0.1f, 0.1f, 0.5f); // Red
+
+    /** 
+     * If true, the brush light will change color to match the BrushColor (Add/Dig).
+     * If false, it uses the explicit BrushLightColor below.
+     */
+    UPROPERTY(EditAnywhere, Config, Category="Brush Light")
+    bool bMatchLightColorToBrush = true;
+
+    /** Explicit color for the light if not matching the brush state. */
+    UPROPERTY(EditAnywhere, Config, Category="Brush Light", meta=(EditCondition="!bMatchLightColorToBrush"))
+    FLinearColor BrushLightColor = FLinearColor::White;
+
+    /** Intensity of the light attached to the brush. Set to 0 to disable. */
+    UPROPERTY(EditAnywhere, Config, Category="Brush Light", meta=(ClampMin="0.0"))
+    float BrushLightIntensity = 1500.0f;
+
+    /** Radius of the brush light. */
+    UPROPERTY(EditAnywhere, Config, Category="Brush Light")
+    float BrushLightAttenuationRadius = 1000.0f;
 
     // -------------------------------------------------------------------------
     // HUD SETTINGS
     // -------------------------------------------------------------------------
-
-    // HUD Messages Positioning
 
     UPROPERTY(EditAnywhere, Config, Category="HUD")
     EBrushHUDPosition BrushHUDPosition = EBrushHUDPosition::UpperLeft;
@@ -54,98 +75,63 @@ public:
     UPROPERTY(EditAnywhere, Config, Category="HUD", meta=(EditCondition="BrushHUDPosition == EBrushHUDPosition::Custom"))
     FVector2D CustomHUDOffset = FVector2D(50.f, 50.f);
     
-    
     // -------------------------------------------------------------------------
     // BRUSH PREVIEW SETTINGS
     // -------------------------------------------------------------------------
 
-    /** Multiplier applied to scroll-wheel impulses when adjusting brush settings. */
     UPROPERTY(EditAnywhere, config, Category="Brush Controls", meta=(ClampMin="0.1", ClampMax="500.0"))
     float ScrollSpeed = 50.0f;
-
 
     // -------------------------------------------------------------------------
     // BRUSH PREVIEW MESHES
     // -------------------------------------------------------------------------
 
-    /**
-     * Mesh used to preview a spherical brush in the editor viewport.
-     * This is purely visual and does not affect runtime hole geometry.
-     */
-    UPROPERTY(EditAnywhere, Config, Category="Brush Preview",
-        meta=(AllowedClasses="/Script/Engine.StaticMesh",
-              ToolTip="Mesh used to preview a spherical brush in the editor viewport. Purely visual; does not affect runtime hole generation."))
+    UPROPERTY(EditAnywhere, Config, Category="Brush Preview", meta=(AllowedClasses="/Script/Engine.StaticMesh"))
     TSoftObjectPtr<UStaticMesh> SphereBrushMesh;
 
-    /**
-     * Mesh used to preview a cube brush in the editor viewport.
-     * Only affects editor visualization, not runtime digging behavior.
-     */
-    UPROPERTY(EditAnywhere, Config, Category="Brush Preview",
-        meta=(AllowedClasses="/Script/Engine.StaticMesh",
-              ToolTip="Mesh used to preview a cube brush shape. Editor‑only visualization; does not affect runtime hole generation."))
+    UPROPERTY(EditAnywhere, Config, Category="Brush Preview", meta=(AllowedClasses="/Script/Engine.StaticMesh"))
     TSoftObjectPtr<UStaticMesh> CubeBrushMesh;
 
-    /**
-     * Mesh used to preview a cylindrical brush.
-     * Useful for visualizing tunnel‑like or column‑shaped brush strokes.
-     */
-    UPROPERTY(EditAnywhere, Config, Category="Brush Preview",
-        meta=(AllowedClasses="/Script/Engine.StaticMesh",
-              ToolTip="Mesh used to preview a cylindrical brush. Helpful for tunnel‑shaped or column‑shaped digging previews."))
+    UPROPERTY(EditAnywhere, Config, Category="Brush Preview", meta=(AllowedClasses="/Script/Engine.StaticMesh"))
     TSoftObjectPtr<UStaticMesh> CylinderBrushMesh;
 
-    /**
-     * Mesh used to preview a capsule brush.
-     * Ideal for smooth, rounded tunnel shapes or sweeping dig motions.
-     */
-    UPROPERTY(EditAnywhere, Config, Category="Brush Preview",
-        meta=(AllowedClasses="/Script/Engine.StaticMesh",
-              ToolTip="Mesh used to preview a capsule brush. Useful for smooth, rounded tunnel or sweep‑based brush previews."))
+    UPROPERTY(EditAnywhere, Config, Category="Brush Preview", meta=(AllowedClasses="/Script/Engine.StaticMesh"))
     TSoftObjectPtr<UStaticMesh> CapsuleBrushMesh;
 
-    /**
-     * Mesh used to preview a cone‑shaped brush.
-     * Purely visual; does not affect runtime hole geometry.
-     */
-    UPROPERTY(EditAnywhere, Config, Category="Brush Preview",
-        meta=(AllowedClasses="/Script/Engine.StaticMesh",
-              ToolTip="Mesh used to preview a cone‑shaped brush. Editor‑only visualization; does not affect runtime hole geometry."))
+    UPROPERTY(EditAnywhere, Config, Category="Brush Preview", meta=(AllowedClasses="/Script/Engine.StaticMesh"))
     TSoftObjectPtr<UStaticMesh> ConeBrushMesh;
 
-    /**
-     * Mesh used to preview a torus (donut‑shaped) brush.
-     * Useful for visualizing ring‑shaped or hollow brush effects.
-     */
-    UPROPERTY(EditAnywhere, Config, Category="Brush Preview",
-        meta=(AllowedClasses="/Script/Engine.StaticMesh",
-              ToolTip="Mesh used to preview a torus (donut‑shaped) brush. Ideal for ring‑shaped or hollow brush previews."))
+    UPROPERTY(EditAnywhere, Config, Category="Brush Preview", meta=(AllowedClasses="/Script/Engine.StaticMesh"))
     TSoftObjectPtr<UStaticMesh> TorusBrushMesh;
 
     // -------------------------------------------------------------------------
     // MATERIALS
     // -------------------------------------------------------------------------
 
-    /**
-     * Material applied to all brush preview meshes in the editor viewport.
-     * A translucent or emissive material is recommended for clarity.
-     */
-    UPROPERTY(EditAnywhere, Config, Category="Brush Preview",
-        meta=(AllowedClasses="/Script/Engine.MaterialInterface",
-              ToolTip="Material applied to all brush preview meshes. A translucent or emissive material is recommended for clear visibility over terrain."))
+    UPROPERTY(EditAnywhere, Config, Category="Brush Preview", meta=(AllowedClasses="/Script/Engine.MaterialInterface"))
     TSoftObjectPtr<UMaterialInterface> BrushPreviewMaterial;
+
+    // -------------------------------------------------------------------------
+    // UI/HOLES
+    // -------------------------------------------------------------------------
+    
+    UPROPERTY(EditAnywhere, Config, Category="Outliner")
+    bool bShowDynamicHolesFolder = true;
+
+    // -------------------------------------------------------------------------
+    // MESHING PREFERENCES
+    // -------------------------------------------------------------------------
+
+    /** Distance within which vertices are welded after marching cubes. */
+    UPROPERTY(EditAnywhere, Config, Category="Mesh Generation", meta=(ClampMin="0.0001", ClampMax="5.0"))
+    float WeldVertexThreshold = 0.02f;
+
 
     // -------------------------------------------------------------------------
     // DEFAULT RESOURCES
     // -------------------------------------------------------------------------
 
-    /**
-     * Default Hole Shape Library used by the editor when previewing hole shapes.
-     * This does NOT affect runtime hole spawning — runtime uses UDiggerSettings.
-     */
-    UPROPERTY(EditAnywhere, Config, Category="Defaults",
-        meta=(AllowedClasses="/Script/Digger.HoleShapeLibrary",
-              ToolTip="Default Hole Shape Library used for editor previews. Does not affect runtime hole spawning; runtime uses UDiggerSettings."))
+    UPROPERTY(EditAnywhere, Config, Category="Defaults", meta=(AllowedClasses="/Script/Digger.HoleShapeLibrary"))
     TSoftObjectPtr<UHoleShapeLibrary> DefaultHoleLibrary;
 
 public:

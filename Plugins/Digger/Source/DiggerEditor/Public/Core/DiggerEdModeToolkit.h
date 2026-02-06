@@ -128,6 +128,23 @@ public:
     bool GetWorklightEnabled() const { return bWorklightEnabled; }
     bool GetAutoUnderLandscape() const { return bAutoUnderLandscape; }
     void GetElevationInfo(float& AbsoluteOut, float& RelativeOut) const;
+
+    // --- LIGHTING TOOLS ---
+    
+    // Worklight (Scene)
+    bool bWorklightEnabled = true;
+    float WorklightIntensity = 50000.0f; // Default high for visibility
+    float WorklightAttenuation = 5000.0f;
+    FLinearColor WorklightColor = FLinearColor::White;
+
+    
+    // Brush Light (Preview)
+    float BrushLightIntensity = 1500.0f;
+    float BrushLightAttenuation = 1000.0f;
+    bool bMatchBrushLightColor = true;
+
+    // Helper to save
+    void SaveLightingSettings();
     
     // --- Save System ---
     FString GetCurrentSaveFileName() const;
@@ -149,6 +166,7 @@ private:
     // --- SUB-WIDGET REFERENCES ---
     TSharedPtr<SDiggerCaveImporterWidget> CaveImporterWidget;
     TSharedPtr<SDiggerLobbyWidget> LobbyWidget;
+    
 
     // -------------------------------------------------------------------------
     // UI GENERATION
@@ -238,6 +256,10 @@ private:
     void SetBrushDigPreviewOverride(bool bInDig);
     void ClearBrushDigPreviewOverride();
 
+    // Hole Members
+    bool bShowDynamicHoles = true;
+
+
     // -------------------------------------------------------------------------
     // CUSTOM BRUSHES
     // -------------------------------------------------------------------------
@@ -262,10 +284,6 @@ private:
     TArray<TSharedPtr<FString>> WorklightTypeOptions;
     TSharedPtr<FString> SelectedWorklightTypeItem;
     
-    float WorklightIntensity = 5000.0f;
-    float WorklightAttenuation = 1000.0f;
-    FLinearColor WorklightColor = FLinearColor::White;
-    bool bWorklightEnabled = true;
     bool bAutoUnderLandscape = false;
 
     void UpdateWorklightType(const FString& NewType);
@@ -366,6 +384,16 @@ private:
     bool bShowRotation = false;
     bool bShowOffset = false;
     bool bShowBrushParameters = true;
+
+    // Outliner Helpers
+    // Helper to set the protected bListedInSceneOutliner property
+public:
+    static void SetActorListedInOutliner(AActor* Actor, bool bListed);
+
+    void SetDynamicHolesFolderVisible(bool bVisible);
+
+private:
+    
 
     // Helper Factory Methods
     TSharedRef<SWidget> MakeLabeledSliderRow(const FText& Label, TFunction<float()> Getter, TFunction<void(float)> Setter, float Min, float Max, const TArray<float>& QuickSet, float Reset = 0.0f, float Step = 1.0f, bool bIsAngle = false, float* MirrorTarget = nullptr);

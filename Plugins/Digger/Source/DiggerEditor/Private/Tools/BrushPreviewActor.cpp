@@ -4,6 +4,8 @@
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "DiggerEditorSettings.h"
+#include "BrushPreviewLightComponent.h"
+#include "Components/BillboardComponent.h"
 
 // Static cache to avoid reloading every time
 static UStaticMesh* CachedMeshSphere   = nullptr;
@@ -31,7 +33,19 @@ ABrushPreviewActor::ABrushPreviewActor()
     SetActorHiddenInGame(true);          // hidden in PIE
     PreviewMesh->SetHiddenInGame(true);  // hidden in PIE
     PreviewMesh->SetVisibility(true, true); // visible in editor viewport
+
+    ModeIndicator = CreateDefaultSubobject<UBillboardComponent>(TEXT("ModeIndicator"));
+    ModeIndicator->SetupAttachment(RootComponent);
+    ModeIndicator->SetHiddenInGame(true);
+    ModeIndicator->SetVisibility(false);
+    ModeIndicator->SetRelativeLocation(FVector(0, 0, 120)); // above brush
+
+    // Load textures (replace with your actual paths)
+    SculptSprite = LoadObject<UTexture2D>(nullptr, TEXT("/Digger/Digger/Icons/SculptIcon.SculptIcon"));
+    RotateSprite = LoadObject<UTexture2D>(nullptr, TEXT("/Digger/Digger/Icons/RotateIcon.RotateIcon"));
+    OffsetSprite = LoadObject<UTexture2D>(nullptr, TEXT("/Digger/Digger/Icons/OffsetIcon.OffsetIcon"));
 }
+
 
 void ABrushPreviewActor::SetVisible(bool bVisible)
 {
@@ -42,6 +56,9 @@ void ABrushPreviewActor::SetVisible(bool bVisible)
     SetActorHiddenInGame(true);
     PreviewMesh->SetHiddenInGame(true);
 }
+
+
+
 
 void ABrushPreviewActor::Initialize(UStaticMesh* ShapeMesh, UMaterialInterface* BaseMat)
 {

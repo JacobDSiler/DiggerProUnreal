@@ -22,9 +22,29 @@ public:
 	
 	// Helper to calculate MC index (Public so it can be tested/debugged if needed)
 	static int32 CalculateMarchingCubesIndex(const TArray<float>& CornerSDFValues);
+	int32 CalculateMarchingCubesIndex(const float CornerSDF[8]);
 
+	//TMap<FEdgeKey, int32> GlobalEdgeVertexCache;
+	
 	// Helper to interpolate vertices (Public for utility)
-	static FVector InterpolateVertex(const FVector& P1, const FVector& P2, float SDF1, float SDF2);
+	static FORCEINLINE FVector InterpolateVertex(
+		const FVector& P1, const FVector& P2,
+		float S1, float S2)
+	{
+		const float EPS = 1e-6f;
+
+		float Den = S1 - S2;
+		if (FMath::Abs(Den) < EPS)
+		{
+			return (P1 + P2) * 0.5f;
+		}
+
+		float T = S1 / (S1 - S2);
+		T = FMath::Clamp(T, 0.0f, 1.0f);
+
+		return P1 + (P2 - P1) * T;
+	}
+
 
 public:
 	// --- LIFECYCLE ---
@@ -91,6 +111,10 @@ public:
 	// Helper to grab heights safely on Game Thread before launching Async Task
 	TArray<float> CaptureHeightMap(const FVector& Origin, float VoxelSize, int32 GridResolution);
 
+	void WeldCloseVertices(
+		TArray<FVector>& Vertices,
+		TArray<int32>& Triangles);
+	
 	// Applies the smooth transition blend to landscape
 	FVector ApplyLandscapeTransition(const FVector& VertexWS) const;
 

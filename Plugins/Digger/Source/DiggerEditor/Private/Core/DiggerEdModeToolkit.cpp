@@ -12,6 +12,7 @@
 #include "EngineUtils.h"
 #include "Engine/StaticMesh.h"
 #include "Editor.h"
+#include "UObject/UnrealType.h" // Required for FBoolProperty and CastField
 
 // Content Browser
 #include "ContentBrowserModule.h"
@@ -24,6 +25,7 @@
 // Slate UI - Widgets
 #include "DesktopPlatformModule.h"
 #include "DetailLayoutBuilder.h"
+#include "DiggerEditorSettings.h"
 #include "Brushes/SlateImageBrush.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/PointLightComponent.h"
@@ -36,6 +38,7 @@
 #include "Styling/SlateStyleRegistry.h"
 #include "Widgets/Colors/SColorPicker.h"
 #include "EditorViewportClient.h"
+#include "Kismet/GameplayStatics.h"
 #include "Materials/DiggerTextureSet.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
@@ -48,11 +51,14 @@
 #include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/Layout/SSeparator.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Subsystems/EditorActorSubsystem.h"
 
 #define LOCTEXT_NAMESPACE "FDiggerEdModeToolkit"
 
 // --- Helper Functions ---
+
 
 static FString GetInitialProfileFolder()
 {
@@ -84,6 +90,61 @@ static void NotifyProfileArrayChanged(UDiggerMaterialProfile* Profile, const FNa
     }
     if (UPackage* Pkg = Profile->GetOutermost()) Pkg->MarkPackageDirty();
 #endif
+}
+
+
+
+void FDiggerEdModeToolkit::SetActorListedInOutliner(AActor* Actor, bool bListed)
+{
+    if (!Actor) return;
+
+    // Reflection cache to find the property once
+    static FBoolProperty* ListedProp = CastField<FBoolProperty>(
+        AActor::StaticClass()->FindPropertyByName(FName("bListedInSceneOutliner"))
+    );
+
+    if (ListedProp)
+    {
+        bool bCurrent = ListedProp->GetPropertyValue_InContainer(Actor);
+        if (bCurrent != bListed)
+        {
+            // Only modify if strictly necessary to avoid spamming the transaction buffer
+            Actor->Modify(); 
+            ListedProp->SetPropertyValue_InContainer(Actor, bListed);
+        }
+    }
+}
+
+void FDiggerEdModeToolkit::SetDynamicHolesFolderVisible(bool bVisible)
+{
+    if (!GEditor) return;
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    if (!World) return;
+
+    const FString TargetFolder = TEXT("Digger/DynamicHoles");
+    bool bChanged = false;
+
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(World, AActor::StaticClass(), AllActors);
+
+    for (AActor* Actor : AllActors)
+    {
+        if (!IsValid(Actor)) continue;
+        
+#if WITH_EDITOR
+        const FString ActorFolder = Actor->GetFolderPath().ToString();
+        if (ActorFolder == TargetFolder || ActorFolder == (TEXT("/") + TargetFolder))
+        {
+            SetActorListedInOutliner(Actor, bVisible);
+            bChanged = true;
+        }
+#endif
+    }
+
+    if (bChanged)
+    {
+        GEditor->BroadcastLevelActorListChanged();
+    }
 }
 
 // -----------------------------------------------------------------------------------
@@ -151,6 +212,23 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         DiggerStyleSet->Set("DiggerEditor.GoogleIcon", new FSlateImageBrush(DiggerStyleSet->RootToContentDir(TEXT("DiggerEditor/Resources/Icons/google_icon"), TEXT(".png")), FVector2D(16, 16)));
         FSlateStyleRegistry::RegisterSlateStyle(*DiggerStyleSet);
     }
+
+    // --- INITIALIZE SETTINGS FROM CONFIG ---
+    const UDiggerEditorSettings* Settings = UDiggerEditorSettings::Get();
+    if (Settings)
+    {
+        // Worklight (Scene Light)
+        // (If you want to save/load Scene Light settings to config, you'd load them here too,
+        //  but currently your settings file mainly has Brush Light settings. 
+        //  I will implement loading Brush Light settings here.)
+        
+        BrushLightIntensity     = Settings->BrushLightIntensity;
+        BrushLightAttenuation   = Settings->BrushLightAttenuationRadius;
+        BrushLightColor         = Settings->BrushLightColor;
+        bMatchBrushLightColor   = Settings->bMatchLightColorToBrush;
+        // Outliner Folders
+        SetDynamicHolesFolderVisible(Settings->bShowDynamicHolesFolder);
+    }
     
     AssetThumbnailPool = MakeShareable(new FAssetThumbnailPool(32, true));
     IslandGrid = SNew(SUniformGridPanel).SlotPadding(2.0f);
@@ -186,6 +264,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         if (FDiggerFeatureFlags::bEnableIslands) EnvContent->AddSlot().AutoHeight().Padding(8)[ MakeIslandsSection() ];
         if (FDiggerFeatureFlags::bEnableMaterialManager) EnvContent->AddSlot().AutoHeight().Padding(8)[ MakeMaterialManagerSection() ];
 
+        
         // Always add Refresh button
         EnvContent->AddSlot().AutoHeight().Padding(4)
         [
@@ -225,7 +304,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
 
     // 5. DEVELOPER SETTINGS (Editor Only)
     #if WITH_EDITOR && !UE_BUILD_SHIPPING
-    if (FDiggerFeatureFlags::bEnableDeveloperSettings)
+    if (true)//(FDiggerFeatureFlags::bEnableDeveloperSettings)
     {
         MainBox->AddSlot().AutoHeight().Padding(4)
         [
@@ -233,7 +312,39 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
             [
                 SNew(SVerticalBox)
                 + SVerticalBox::Slot().AutoHeight().Padding(2)[ SNew(SCheckBox).IsChecked_Lambda([](){ return FDiggerFeatureFlags::bEnableSplineBrush ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; }).OnCheckStateChanged_Lambda([](ECheckBoxState S){ FDiggerFeatureFlags::bEnableSplineBrush = (S==ECheckBoxState::Checked); })[ SNew(STextBlock).Text(FText::FromString("Enable Spline Brush")) ] ]
-                // Add other toggles here...
+
+                + SVerticalBox::Slot().AutoHeight().Padding(2)
+                [
+                    SNew(SCheckBox)
+                    .IsChecked_Lambda([]()
+                    {
+                        // READ from Settings
+                        const UDiggerEditorSettings* Settings = UDiggerEditorSettings::Get();
+                        return (Settings && Settings->bShowDynamicHolesFolder)
+                                   ? ECheckBoxState::Checked
+                                   : ECheckBoxState::Unchecked;
+                    })
+                    .OnCheckStateChanged_Lambda([this](ECheckBoxState State)
+                    {
+                        // 1. Calculate new boolean
+                        bool bNewVisible = (State == ECheckBoxState::Checked);
+
+                        // 2. WRITE to Settings & Save Config
+                        UDiggerEditorSettings* Settings = GetMutableDefault<UDiggerEditorSettings>();
+                        if (Settings)
+                        {
+                            Settings->bShowDynamicHolesFolder = bNewVisible;
+                            Settings->SaveConfig(); // <--- This writes to DefaultEditor.ini / User settings
+                        }
+
+                        // 3. Apply the logic immediately
+                        SetDynamicHolesFolderVisible(bNewVisible);
+                    })
+                    [
+                        SNew(STextBlock).Text(FText::FromString("Show Dynamic Holes Folder"))
+                    ]
+                ]
+
             ]
         ];
     }
@@ -473,6 +584,10 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeNavigationSection()
     ];
 }
 
+// -----------------------------------------------------------------------------------
+// WORKLIGHT & LIGHTING SECTION
+// -----------------------------------------------------------------------------------
+
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeWorklightSection()
 {
     if (!FDiggerFeatureFlags::bEnableWorklight) return SNew(SBox).Visibility(EVisibility::Collapsed);
@@ -480,29 +595,147 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeWorklightSection()
     return SNew(SVerticalBox)
     + SVerticalBox::Slot().AutoHeight().Padding(4)
     [
-        MakeRollDownHeader("Worklight", bShowWorklightSection)
+        MakeRollDownHeader("Lighting Tools", bShowWorklightSection)
     ]
     + SVerticalBox::Slot().AutoHeight().Padding(4)
     [
         SNew(SVerticalBox).Visibility_Lambda([this](){ return bShowWorklightSection ? EVisibility::Visible : EVisibility::Collapsed; })
+        
+        // --- SCENE WORKLIGHT ---
         + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SNew(STextBlock).Text(FText::FromString("Scene Worklight")).Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 2)
         [
             SNew(SComboBox<TSharedPtr<FString>>).OptionsSource(&WorklightTypeOptions)
             .OnGenerateWidget_Lambda([](TSharedPtr<FString> S){ return SNew(STextBlock).Text(FText::FromString(*S)); })
             .OnSelectionChanged_Lambda([this](TSharedPtr<FString> S, ESelectInfo::Type){ if(S){ SelectedWorkLightType = *S; UpdateWorklightType(SelectedWorkLightType); } })
             [ SNew(STextBlock).Text_Lambda([this](){ return FText::FromString(SelectedWorkLightType); }) ]
         ]
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 2)
         [
-            SNew(SSlider).Value_Lambda([this](){ return WorklightIntensity/10000.f; }).OnValueChanged_Lambda([this](float V){ UpdateWorklightIntensity(V*10000.f); })
+            MakeLabeledSliderRow(FText::FromString("Intensity"), 
+                [this](){ return WorklightIntensity / 5000.f; }, 
+                [this](float V){ UpdateWorklightIntensity(V * 5000.f); }, 
+                0.f, 20.f, {1.f, 5.f, 10.f}) // Scaled for UI usability
         ]
-        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 2)
+        [
+            MakeLabeledSliderRow(FText::FromString("Radius"), 
+                [this](){ return WorklightAttenuation; }, 
+                [this](float V){ UpdateWorklightAttenuation(V); }, 
+                100.f, 10000.f, {1000.f, 3000.f, 5000.f})
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 2)
         [
             SNew(SCheckBox).IsChecked_Lambda([this](){ return bWorklightEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
             .OnCheckStateChanged_Lambda([this](ECheckBoxState S){ ToggleWorklight(S==ECheckBoxState::Checked); })
-            [ SNew(STextBlock).Text(FText::FromString("Enabled")) ]
+            [ SNew(STextBlock).Text(FText::FromString("Enable Scene Light")) ]
+        ]
+
+        // --- SEPARATOR ---
+        + SVerticalBox::Slot().AutoHeight().Padding(0, 8)[ SNew(SSeparator).Orientation(Orient_Horizontal) ]
+
+        // --- BRUSH LIGHT ---
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SNew(STextBlock).Text(FText::FromString("Brush Preview Light")).Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 2)
+        [
+            MakeLabeledSliderRow(FText::FromString("Intensity"), 
+                [this](){ return BrushLightIntensity; }, 
+                [this](float V){ 
+                    BrushLightIntensity = V; 
+                    // Update Settings Object immediately for Live Preview
+                    if (UDiggerEditorSettings* S = GetMutableDefault<UDiggerEditorSettings>()) S->BrushLightIntensity = V;
+                }, 
+                0.f, 10000.f, {1500.f, 3000.f, 5000.f})
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 2)
+        [
+            MakeLabeledSliderRow(FText::FromString("Radius"), 
+                [this](){ return BrushLightAttenuation; }, 
+                [this](float V){ 
+                    BrushLightAttenuation = V; 
+                    if (UDiggerEditorSettings* S = GetMutableDefault<UDiggerEditorSettings>()) S->BrushLightAttenuationRadius = V;
+                }, 
+                100.f, 5000.f, {1000.f, 2000.f})
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 2)
+        [
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this](){ return bMatchBrushLightColor ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState S){ 
+                bMatchBrushLightColor = (S == ECheckBoxState::Checked); 
+                if (UDiggerEditorSettings* Set = GetMutableDefault<UDiggerEditorSettings>()) Set->bMatchLightColorToBrush = bMatchBrushLightColor;
+            })
+            [ SNew(STextBlock).Text(FText::FromString("Match Brush Mode Color (Red/Green)")) ]
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 2)
+        [
+            SNew(SHorizontalBox)
+            .Visibility_Lambda([this](){ return bMatchBrushLightColor ? EVisibility::Collapsed : EVisibility::Visible; })
+            + SHorizontalBox::Slot().AutoWidth().Padding(0,0,8,0).VAlign(VAlign_Center)
+            [ SNew(STextBlock).Text(FText::FromString("Custom Color")) ]
+            + SHorizontalBox::Slot().AutoWidth()
+            [
+                SNew(SColorBlock)
+                .Color_Lambda([this](){ return BrushLightColor; })
+                .ShowBackgroundForAlpha(false)
+                .OnMouseButtonDown_Lambda([this](const FGeometry&, const FPointerEvent&){
+                    FColorPickerArgs Args; 
+                    Args.bUseAlpha = false; 
+                    Args.InitialColor = BrushLightColor;
+                    Args.OnColorCommitted = FOnLinearColorValueChanged::CreateLambda([this](FLinearColor C){ 
+                        BrushLightColor = C; 
+                        if (UDiggerEditorSettings* S = GetMutableDefault<UDiggerEditorSettings>()) S->BrushLightColor = C;
+                    });
+                    OpenColorPicker(Args); 
+                    return FReply::Handled();
+                })
+            ]
+        ]
+
+        // --- SAVE BUTTON ---
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 10, 4, 4)
+        [
+            SNew(SButton)
+            .HAlign(HAlign_Center)
+            .Text(FText::FromString("Update Settings (Save to Config)"))
+            .ToolTipText(FText::FromString("Saves current Worklight and Brush Light settings to Project Settings so they persist."))
+            .OnClicked_Lambda([this]() {
+                SaveLightingSettings();
+                return FReply::Handled();
+            })
         ]
     ];
+}
+
+void FDiggerEdModeToolkit::SaveLightingSettings()
+{
+    UDiggerEditorSettings* Settings = GetMutableDefault<UDiggerEditorSettings>();
+    if (Settings)
+    {
+        // 1. Save Brush Light Settings
+        Settings->BrushLightIntensity = BrushLightIntensity;
+        Settings->BrushLightAttenuationRadius = BrushLightAttenuation;
+        Settings->BrushLightColor = BrushLightColor;
+        Settings->bMatchLightColorToBrush = bMatchBrushLightColor;
+
+        // 2. Save Scene Worklight Settings
+        // (Assuming you add these fields to DiggerEditorSettings.h, if not, only Brush settings will save)
+        // If you want Worklight settings to save, add them to UDiggerEditorSettings class first!
+        // For now, we update config.
+        
+        Settings->SaveConfig();
+        
+        // Notify user
+        FNotificationInfo Info(FText::FromString("Lighting Settings Saved"));
+        Info.ExpireDuration = 2.0f;
+        FSlateNotificationManager::Get().AddNotification(Info);
+    }
 }
 
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()

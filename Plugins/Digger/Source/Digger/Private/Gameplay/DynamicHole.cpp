@@ -12,6 +12,11 @@ ADynamicHole::ADynamicHole()
 	PrimaryActorTick.bCanEverTick = false;
 
 	// ---------------------------------------------------------
+	// Hole Validation
+	// ---------------------------------------------------------
+	ValidateSpawnAgainstLandscape();
+
+	// ---------------------------------------------------------
 	// 1. COMPONENT SETUP
 	// ---------------------------------------------------------
 	HoleMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("HoleMesh"));
@@ -114,6 +119,11 @@ void ADynamicHole::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// ---------------------------------------------------------
+	// Hole Validation
+	// ---------------------------------------------------------
+	ValidateSpawnAgainstLandscape();
+
 	// --- FIX: DO NOT SET MESH ON START ---
 	// Previously: UpdateHoleMesh();
     
@@ -170,28 +180,102 @@ void ADynamicHole::OnConstruction(const FTransform& Xform)
 
 void ADynamicHole::SetOwningChunk(UVoxelChunk* NewChunk)
 {
-	// Set the new chunk and update the hole's ID
-	if (OwningChunk != NewChunk)
+	if (OwningChunk == NewChunk)
+		return;
+
+	if (OwningChunk)
 	{
-		// Remove from old chunk
-		if (OwningChunk)
-		{
-			OwningChunk->RemoveHoleFromChunk(this);
-		}
-
-		// Set the new chunk
-		OwningChunk = NewChunk;
-
-		// Assign a new HoleID from the chunk
-		HoleID = OwningChunk->GenerateHoleID(); // Generate a unique Hole ID
-
-		// Add to the new chunk
-		if (OwningChunk)
-		{
-			OwningChunk->AddHoleToChunk(this);
-		}
+		OwningChunk->RemoveHoleFromChunk(this);
 	}
+
+	OwningChunk = NewChunk;
+
+	if (OwningChunk)
+	{
+		HoleID = OwningChunk->GenerateHoleID();
+		OwningChunk->AddHoleToChunk(this);
+	}
+	if (DiggerDebug::Holes())
+		UE_LOG(LogTemp, Warning,
+			TEXT("DynamicHole %s now owned by chunk %s"),
+			*GetName(),
+			OwningChunk ? *OwningChunk->GetChunkCoordinates().ToString() : TEXT("NONE"));
 }
+
+void ADynamicHole::ValidateSpawnAgainstLandscape()
+{
+    UWorld* World = GetWorld();
+    if (!World)
+        return;
+
+    const FVector Start = GetActorLocation();
+    const FVector Down  = FVector(0,0,-1);
+
+    FCollisionQueryParams Params(TEXT("HoleSpawnValidation"), false, this);
+
+    // --- 1. Trace down to find the landscape ---
+    FHitResult LandscapeHit;
+    bool bHitLandscape = World->LineTraceSingleByChannel(
+        LandscapeHit,
+        Start,
+        Start + Down * 5000.f,
+        ECC_Visibility,
+        Params
+    );
+
+    if (!bHitLandscape || !LandscapeHit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
+    {
+        // No landscape under us → valid hole
+        return;
+    }
+
+    // --- 2. Trace again just below the landscape ---
+    const FVector SecondStart = LandscapeHit.ImpactPoint + Down * 5.f;
+    const FVector SecondEnd   = SecondStart + Down * 150.f;
+
+    FHitResult MeshHit;
+    bool bHitMesh = World->LineTraceSingleByChannel(
+        MeshHit,
+        SecondStart,
+        SecondEnd,
+        ECC_WorldStatic,
+        Params
+    );
+
+    if (!bHitMesh)
+        return; // No mesh below → valid hole
+
+    // --- 3. Check if the hit is the skirt mesh ---
+    UPrimitiveComponent* HitComp = MeshHit.GetComponent();
+    if (!HitComp)
+        return;
+
+    // Must be a procedural mesh
+    if (!HitComp->IsA(UProceduralMeshComponent::StaticClass()))
+        return;
+
+    // Must be owned by *your* DiggerManager
+    AActor* Owner = HitComp->GetOwner();
+    if (!Owner || !Owner->IsA(ADiggerManager::StaticClass()))
+        return;
+
+    // --- 4. Check if the hit is shallow (skirt thickness) ---
+    const float Depth = (MeshHit.ImpactPoint - LandscapeHit.ImpactPoint).Size();
+    constexpr float MaxSkirtDepth = 15.f; // tune to your voxel size
+
+    if (Depth < MaxSkirtDepth)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("DynamicHole %s destroyed: spawned on skirt mesh (depth=%.2f)."),
+            *GetName(), Depth);
+
+        Destroy();
+        return;
+    }
+
+    // Otherwise: valid hole
+}
+
 
 
 UVoxelChunk* ADynamicHole::FindOwningChunk(const FIntVector& ChunkCoords) const

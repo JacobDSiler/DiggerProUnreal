@@ -8,6 +8,12 @@
 #include "VoxelChunk.h"
 #include "VoxelConversion.h"
 #include "Async/Async.h"
+#include "DiggerSettings.h"
+
+#if WITH_EDITOR
+class UDiggerEditorSettings;
+#endif
+
 
 // ----------------------------------------------------------------------------------
 // HELPERS
@@ -151,20 +157,17 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
 {
     const UDiggerSettings* Settings = UDiggerSettings::Get();
 
-    // 1. Settings
     const float ShellRadiusWorld = Settings ? Settings->SkirtRadiusWorld : 300.0f;
-    const float ClipBias = Settings ? Settings->SkirtClipBias : 2.0f;
+    const float ClipBias         = Settings ? Settings->SkirtClipBias   : 2.0f;
 
-    const int32 Dim = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
-    const int32 N = Dim;
+    const int32 Dim            = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const int32 N              = Dim;
     const int32 HeightMapWidth = N + 1;
 
     if (VoxelData.Num() == 0)
-    {
         return;
-    }
 
-    // --- SAFETY CHECK: HEIGHTMAP ---
+    // --- HEIGHTMAP SAFETY ---
     const int32 ExpectedSize = (N + 1) * (N + 1);
     TArray<float> FallbackHeights;
     const TArray<float>* PtrHeights = &HeightValues;
@@ -176,14 +179,14 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
     }
     const TArray<float>& SafeHeights = *PtrHeights;
 
-    // --- 2. ACTIVE MASK ---
+    // --- ACTIVE MASK ---
     TArray<bool> ActiveColumns;
     ActiveColumns.SetNumZeroed(N * N);
 
     auto GetIdx2D = [&](int32 X, int32 Y) { return (X * N) + Y; };
 
     int32 RadiusVal = FMath::CeilToInt(ShellRadiusWorld / VoxelSize);
-    int32 Padding = RadiusVal + 2;
+    int32 Padding   = RadiusVal + 2;
 
     for (const auto& Pair : VoxelData)
     {
@@ -195,20 +198,15 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
         int32 MaxY = FMath::Clamp(P.Y + Padding, 0, N - 1);
 
         for (int32 sx = MinX; sx <= MaxX; ++sx)
-        {
             for (int32 sy = MinY; sy <= MaxY; ++sy)
-            {
                 ActiveColumns[GetIdx2D(sx, sy)] = true;
-            }
-        }
     }
 
-    // --- 3. VERTEX CACHE (Integer key, chunk‑safe) ---
-    // We quantize to a grid based on VoxelSize to avoid float precision issues.
+    // --- VERTEX CACHE (1/16 voxel quantization) ---
     TMap<FIntVector, int32> VertexCache;
     VertexCache.Reserve(N * N * N / 4);
 
-    const float VertexQuantScale = 1.0f / (VoxelSize * 0.25f); // 1/4 voxel precision
+    const float VertexQuantScale = 1.0f / (VoxelSize * 0.0625f); // 1/16 voxel
 
     auto MakeKey = [&](const FVector& V)
     {
@@ -219,7 +217,7 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
         );
     };
 
-    // --- 4. HEIGHT LOOKUP ---
+    // --- HEIGHT LOOKUP ---
     auto GetHeightAt = [&](const FVector& Pos) -> float
     {
         FVector Local = Pos - Origin;
@@ -245,10 +243,17 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
         return FMath::Lerp(LerpX1, LerpX2, GY - (float)Y0);
     };
 
-    // Global safety floor: guarantees closure even if heightmap is garbage.
+    // --- GLOBAL FLOOR ---
     const float GlobalFloorZ = Origin.Z - ShellRadiusWorld * 2.0f - 4.0f * VoxelSize;
 
-    // --- 5. MAIN LOOP ---
+    auto InBounds = [&](const FIntVector& C)
+    {
+        return C.X >= 0 && C.X <= N &&
+               C.Y >= 0 && C.Y <= N &&
+               C.Z >= 0 && C.Z <= N;
+    };
+
+    // --- MAIN LOOP ---
     for (int32 x = 0; x < N; ++x)
     {
         for (int32 y = 0; y < N; ++y)
@@ -259,10 +264,10 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
             for (int32 z = 0; z < N; ++z)
             {
                 FVector CornerWS[8];
-                float CornerSDF[8];
+                float  CornerSDF[8];
 
                 bool bAllSolid = true;
-                bool bAllAir = true;
+                bool bAllAir   = true;
 
                 for (int32 i = 0; i < 8; i++)
                 {
@@ -271,78 +276,66 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
 
                     float SDF = 0.0f;
 
-                    // 1. Explicit SDF (edits)
-                    if (const FVoxelData* Data = VoxelData.Find(LocalCoord))
+                    if (!InBounds(LocalCoord))
+                    {
+                        SDF = +2.0f; // air
+                    }
+                    else if (const FVoxelData* Data = VoxelData.Find(LocalCoord))
                     {
                         SDF = Data->SDFValue;
                     }
                     else
                     {
-                        // 2. Implicit landscape SDF
                         float H = GetHeightAt(CornerWS[i]);
                         const float InvalidH = UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f;
 
                         if (H <= InvalidH)
                         {
-                            // Soft fail → deep solid
-                            SDF = -2.0f;
+                            SDF = +2.0f; // air if no landscape
                         }
                         else
                         {
-                            float Dist = CornerWS[i].Z - H;
+                            float Dist       = CornerWS[i].Z - H;
                             float BiasedDist = Dist + ClipBias;
 
-                            // Local floor relative to landscape
                             float LocalFloorZ = H - ShellRadiusWorld - 2.0f * VoxelSize;
                             if (CornerWS[i].Z < LocalFloorZ)
-                            {
                                 SDF = -2.0f;
-                            }
                             else
-                            {
                                 SDF = BiasedDist / VoxelSize;
-                            }
                         }
                     }
 
-                    // 3. Global floor SDF (absolute safety net)
                     if (CornerWS[i].Z < GlobalFloorZ)
-                    {
                         SDF = FMath::Min(SDF, -2.0f);
-                    }
 
-                    // Final clamp and store
-                    SDF = FMath::Clamp(SDF, -1.0f, 1.0f);
                     CornerSDF[i] = SDF;
 
                     if (SDF > 0.0f) bAllSolid = false;
-                    else bAllAir = false;
+                    else            bAllAir   = false;
                 }
 
                 if (bAllSolid || bAllAir)
                     continue;
 
-                int32 CubeIndex = CalculateMarchingCubesIndex(TArray<float>(CornerSDF, 8));
+                int32 CubeIndex = CalculateMarchingCubesIndex(CornerSDF);
                 if (CubeIndex == 0 || CubeIndex == 255)
                     continue;
 
                 const auto& ConnectionTable = MarchingCubesTables::TriangleConnectionTable;
-                const auto& EdgeTable = MarchingCubesTables::EdgeConnection;
+                const auto& EdgeTable       = MarchingCubesTables::EdgeConnection;
 
                 for (int32 i = 0; ConnectionTable[CubeIndex][i] != -1; i += 3)
                 {
-                    FVector TriVerts[3];
-
                     for (int32 j = 0; j < 3; ++j)
                     {
                         int32 EdgeIdx = ConnectionTable[CubeIndex][i + j];
 
                         FVector P1 = CornerWS[EdgeTable[EdgeIdx][0]];
                         FVector P2 = CornerWS[EdgeTable[EdgeIdx][1]];
-                        float S1 = CornerSDF[EdgeTable[EdgeIdx][0]];
-                        float S2 = CornerSDF[EdgeTable[EdgeIdx][1]];
+                        float   S1 = CornerSDF[EdgeTable[EdgeIdx][0]];
+                        float   S2 = CornerSDF[EdgeTable[EdgeIdx][1]];
 
-                        // Interpolation must be robust to nearly equal SDFs
                         FVector Interp = InterpolateVertex(P1, P2, S1, S2);
                         FIntVector Key = MakeKey(Interp);
 
@@ -363,28 +356,39 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
         }
     }
 
-    // --- NORMALS ---
-    OutNormals.SetNumZeroed(OutVertices.Num());
-    for (int32 i = 0; i < OutTriangles.Num(); i += 3)
-    {
-        int32 i0 = OutTriangles[i];
-        int32 i1 = OutTriangles[i + 1];
-        int32 i2 = OutTriangles[i + 2];
+	// ------------------------------------------------------------
+	// POST-PROCESS: WELD CLOSE VERTICES
+	// ------------------------------------------------------------
+	WeldCloseVertices(OutVertices, OutTriangles);
 
-        FVector Edge1 = OutVertices[i1] - OutVertices[i0];
-        FVector Edge2 = OutVertices[i2] - OutVertices[i0];
-        FVector FaceNormal = FVector::CrossProduct(Edge2, Edge1);
+	// ------------------------------------------------------------
+	// RECOMPUTE NORMALS AFTER WELDING
+	// ------------------------------------------------------------
+	OutNormals.SetNumZeroed(OutVertices.Num());
 
-        OutNormals[i0] += FaceNormal;
-        OutNormals[i1] += FaceNormal;
-        OutNormals[i2] += FaceNormal;
-    }
+	for (int32 i = 0; i < OutTriangles.Num(); i += 3)
+	{
+		int32 i0 = OutTriangles[i];
+		int32 i1 = OutTriangles[i + 1];
+		int32 i2 = OutTriangles[i + 2];
 
-    for (FVector& Normal : OutNormals)
-    {
-        Normal.Normalize();
-    }
+		FVector Edge1      = OutVertices[i1] - OutVertices[i0];
+		FVector Edge2      = OutVertices[i2] - OutVertices[i0];
+		FVector FaceNormal = FVector::CrossProduct(Edge2, Edge1);
+
+		OutNormals[i0] += FaceNormal;
+		OutNormals[i1] += FaceNormal;
+		OutNormals[i2] += FaceNormal;
+	}
+
+	for (FVector& Normal : OutNormals)
+	{
+		Normal.Normalize();
+	}
+
 }
+
+
 
 
 
@@ -419,41 +423,82 @@ TArray<float> UMarchingCubes::CaptureHeightMap(const FVector& Origin, float Voxe
 	return Heights;
 }
 
-FVector UMarchingCubes::InterpolateVertex(
-	const FVector& P1,
-	const FVector& P2,
-	float SDF1,
-	float SDF2
-)
+float GetWeldThreshold()
 {
-	// If signs are identical, no surface crosses this edge.
-	// Return midpoint to keep things deterministic.
-	if ((SDF1 > 0.0f && SDF2 > 0.0f) || (SDF1 < 0.0f && SDF2 < 0.0f))
+#if WITH_EDITOR
+	// If we are in PIE, use runtime settings
+	if (GEditor && GEditor->PlayWorld)
 	{
-		return (P1 + P2) * 0.5f;
+		return UDiggerSettings::Get()->WeldVertexThreshold;
 	}
 
-	float Delta = SDF2 - SDF1;
+	// Otherwise, get the editor settings WITHOUT including the header
+	static const FName ClassName = TEXT("/Script/DiggerEditor.DiggerEditorSettings");
+	UClass* EditorSettingsClass = FindObject<UClass>(nullptr, *ClassName.ToString());
 
-	// If the delta is extremely small, lerp is unstable.
-	// Use midpoint to avoid cracks.
-	const float Eps = 1e-6f;
-	if (FMath::Abs(Delta) < Eps)
+	if (EditorSettingsClass)
 	{
-		return (P1 + P2) * 0.5f;
+		UObject* DefaultObj = EditorSettingsClass->GetDefaultObject();
+		if (DefaultObj)
+		{
+			// Look up the property by name
+			static const FName PropName = TEXT("WeldVertexThreshold");
+			FProperty* Prop = EditorSettingsClass->FindPropertyByName(PropName);
+
+			if (FFloatProperty* FloatProp = CastField<FFloatProperty>(Prop))
+			{
+				return FloatProp->GetPropertyValue_InContainer(DefaultObj);
+			}
+		}
 	}
 
-	// Compute interpolation factor
-	float T = -SDF1 / Delta;
-
-	// Clamp to avoid overshoot due to floating point noise
-	T = FMath::Clamp(T, 0.0f, 1.0f);
-
-	// Symmetric interpolation (avoids P1/P2 ordering differences)
-	FVector Result = P1 + (P2 - P1) * T;
-
-	return Result;
+	// Fallback if anything fails
+	return 0.02f;
+#else
+	// Non-editor builds always use runtime settings
+	return UDiggerSettings::Get()->WeldVertexThreshold;
+#endif
 }
+
+
+void UMarchingCubes::WeldCloseVertices(
+	TArray<FVector>& Vertices,
+	TArray<int32>& Triangles)
+{
+	float WeldThreshold = GetWeldThreshold();
+	const float Inv = 1.0f / WeldThreshold;
+
+	TMap<FIntVector, int32> WeldMap;
+	WeldMap.Reserve(Vertices.Num());
+
+	TArray<int32> Remap;
+	Remap.SetNumUninitialized(Vertices.Num());
+
+	for (int32 i = 0; i < Vertices.Num(); ++i)
+	{
+		const FVector& V = Vertices[i];
+		FIntVector Key(
+			FMath::RoundToInt(V.X * Inv),
+			FMath::RoundToInt(V.Y * Inv),
+			FMath::RoundToInt(V.Z * Inv));
+
+		if (int32* Existing = WeldMap.Find(Key))
+		{
+			Remap[i] = *Existing;
+		}
+		else
+		{
+			WeldMap.Add(Key, i);
+			Remap[i] = i;
+		}
+	}
+
+	for (int32& Idx : Triangles)
+	{
+		Idx = Remap[Idx];
+	}
+}
+
 
 
 int32 UMarchingCubes::CalculateMarchingCubesIndex(const TArray<float>& CornerSDFValues)
@@ -465,6 +510,45 @@ int32 UMarchingCubes::CalculateMarchingCubesIndex(const TArray<float>& CornerSDF
 	}
 	return CubeIndex;
 }
+
+//Post Process Welding Setup Code!!!
+struct FEdgeKey
+{
+	FIntVector ChunkCoord;
+	uint8 EdgeAxis;   // 0=X,1=Y,2=Z
+	int32 I, J;       // index along the edge
+
+	bool operator==(const FEdgeKey& Other) const
+	{
+		return ChunkCoord == Other.ChunkCoord &&
+			   EdgeAxis   == Other.EdgeAxis &&
+			   I          == Other.I &&
+			   J          == Other.J;
+	}
+};
+
+uint32 GetTypeHash(const FEdgeKey& K)
+{
+	return HashCombine(
+		HashCombine(GetTypeHash(K.ChunkCoord), GetTypeHash(K.EdgeAxis)),
+		HashCombine(GetTypeHash(K.I), GetTypeHash(K.J)));
+}
+
+
+int32 UMarchingCubes::CalculateMarchingCubesIndex(const float CornerSDF[8])
+{
+	// If your original version used a TArray, just adapt it:
+	int32 CubeIndex = 0;
+	for (int32 i = 0; i < 8; i++)
+	{
+		if (CornerSDF[i] <= 0.0f) // solid = inside
+		{
+			CubeIndex |= (1 << i);
+		}
+	}
+	return CubeIndex;
+}
+
 
 FVector UMarchingCubes::ApplyLandscapeTransition(const FVector& VertexWS) const
 {

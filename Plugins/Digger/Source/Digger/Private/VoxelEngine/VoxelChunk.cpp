@@ -320,31 +320,27 @@ void UVoxelChunk::SpawnHoleFromData(const FSpawnedHoleData& HoleData)
         return;
     }
 
-    // 1. Validate Library
+    // 1. Validate / acquire HoleShapeLibrary
     if (!HoleShapeLibrary)
     {
         DiggerManager->EnsureHoleShapeLibrary();
-        HoleShapeLibrary = DiggerManager->GetHoleShapeLibrary(); // Add a getter if needed
+        HoleShapeLibrary = DiggerManager->GetHoleShapeLibrary();
 
         if (!HoleShapeLibrary)
         {
             if (DiggerDebug::Holes() || DiggerDebug::Error())
             {
-                UE_LOG(LogTemp, Error, TEXT("HoleShapeLibrary is not set in SpawnHoleFromData"));
+                UE_LOG(LogTemp, Error, TEXT("SpawnHoleFromData: HoleShapeLibrary is not set"));
             }
             return;
         }
     }
 
-    // 2. Resolve the Hole Actor Class (replaces HoleBP + GDefaultHoleBPPath)
-    TSubclassOf<AActor> HoleClass = nullptr;
-
-    // Prefer the manager's cached class
-    HoleClass = DiggerManager->GetDynamicHoleClass(); // Add a getter if needed
+    // 2. Resolve the Hole Actor Class
+    TSubclassOf<AActor> HoleClass = DiggerManager->GetDynamicHoleClass();
 
     if (!HoleClass)
     {
-        // As a safety net, we can still try to pull directly from settings
         const UDiggerSettings* Settings = UDiggerSettings::Get();
         if (Settings)
         {
@@ -356,7 +352,8 @@ void UVoxelChunk::SpawnHoleFromData(const FSpawnedHoleData& HoleData)
     {
         if (DiggerDebug::Holes() || DiggerDebug::Error())
         {
-            UE_LOG(LogTemp, Error, TEXT("VoxelChunk: Cannot spawn hole. No Class specified in Digger Settings or DiggerManager!"));
+            UE_LOG(LogTemp, Error,
+                TEXT("SpawnHoleFromData: Cannot spawn hole. No Class specified in Digger Settings or DiggerManager!"));
         }
         return;
     }
@@ -366,73 +363,69 @@ void UVoxelChunk::SpawnHoleFromData(const FSpawnedHoleData& HoleData)
     {
         if (DiggerDebug::Context() || DiggerDebug::Holes() || DiggerDebug::Error())
         {
-            UE_LOG(LogTemp, Error, TEXT("GetWorld() returned null in SpawnHoleFromData"));
+            UE_LOG(LogTemp, Error, TEXT("SpawnHoleFromData: GetWorld() returned null"));
         }
         return;
     }
 
     // 4. Spawn the Actor
-    AActor* SpawnedHole = SpawnTransientActor(GetWorld(), HoleClass, HoleData.Location, HoleData.Rotation, HoleData.Scale);
+    AActor* SpawnedHole = SpawnTransientActor(
+        GetWorld(), HoleClass,
+        HoleData.Location, HoleData.Rotation, HoleData.Scale);
+
     if (!SpawnedHole)
     {
         if (DiggerDebug::Holes() || DiggerDebug::Error())
         {
-            UE_LOG(LogTemp, Error, TEXT("Failed to spawn hole actor"));
+            UE_LOG(LogTemp, Error, TEXT("SpawnHoleFromData: Failed to spawn hole actor"));
         }
         return;
     }
 
-    // Track the instance
-	if (ADynamicHole* DynamicHole = Cast<ADynamicHole>(SpawnedHole))
-	{
-		SpawnedHoleInstances.Add(DynamicHole);
-	}
-	else if (DiggerDebug::Holes() || DiggerDebug::Chunks())
-	{
-		UE_LOG(LogTemp, Error, TEXT("Spawned hole is not ADynamicHole in SpawnHoleFromData"));
-	}
-
-
-
-    // 5. Apply the Mesh (The Fixed Logic)
-    UStaticMesh* HoleMesh = HoleShapeLibrary->GetMeshForShape(HoleData.Shape.ShapeType);
-
-    // Cast to the C++ class so we can call functions directly
+    // 5. Cast to ADynamicHole
     ADynamicHole* DynamicHole = Cast<ADynamicHole>(SpawnedHole);
-
-    if (DynamicHole)
+    if (!DynamicHole)
     {
-        // Inject the DiggerManager reference in case the hole needs it
-        DynamicHole->SetDiggerManager(this->DiggerManager);
-        DynamicHole->HoleShapeType = HoleData.Shape.ShapeType; // <--- The memory injection
-
-        if (HoleMesh)
-        {
-            // DIRECT C++ CALL - Replaces the broken ProcessEvent/InitializeHoleMesh logic
-            DynamicHole->SetHoleMesh(HoleMesh);
-        }
-        else
-        {
-            if (DiggerDebug::Holes() || DiggerDebug::Error())
-            {
-                UE_LOG(LogTemp, Warning, TEXT("No mesh found for shape %s - Hole will use default mesh"), *UEnum::GetValueAsString(HoleData.Shape.ShapeType));
-            }
-        }
+        UE_LOG(LogTemp, Error,
+            TEXT("CRITICAL ERROR: Spawned Hole is not of type ADynamicHole (class=%s). ")
+            TEXT("Please reparent BP_MeshHole to ADynamicHole in the Editor."),
+            *SpawnedHole->GetClass()->GetName());
+        return;
     }
-    else
+
+    // 6. Restore data onto the hole
+    DynamicHole->SetDiggerManager(DiggerManager);
+    DynamicHole->HoleShape     = HoleData.Shape;
+    DynamicHole->HoleShapeType = HoleData.Shape.ShapeType;
+
+    DynamicHole->SetActorLocation(HoleData.Location);
+    DynamicHole->SetActorRotation(HoleData.Rotation);
+    DynamicHole->SetActorScale3D(HoleData.Scale);
+
+    // 7. CRITICAL: assign owning chunk (this will internally register it via AddHoleToChunk)
+    DynamicHole->SetOwningChunk(this);
+
+    if (DiggerDebug::Holes())
     {
-        // This Error is critical: It means BP_MeshHole is not parented to ADynamicHole
-        UE_LOG(LogTemp, Error, TEXT("CRITICAL ERROR: Spawned Hole is not of type ADynamicHole! Please Reparent BP_MeshHole to ADynamicHole in the Editor."));
+        UE_LOG(LogTemp, Warning,
+            TEXT("SpawnHoleFromData: Spawned hole %s at %s for chunk %s (Shape=%s)"),
+            *DynamicHole->GetName(),
+            *HoleData.Location.ToString(),
+            *ChunkCoordinates.ToString(),
+            *UEnum::GetValueAsString(HoleData.Shape.ShapeType));
     }
 
 #if WITH_EDITOR
     if (GIsEditor)
     {
-        FString NewLabel = FString::Printf(TEXT("HoleBP_%s"), *UEnum::GetValueAsString(HoleData.Shape.ShapeType));
+        FString NewLabel = FString::Printf(
+            TEXT("HoleBP_%s"),
+            *UEnum::GetValueAsString(HoleData.Shape.ShapeType));
         SpawnedHole->SetActorLabel(NewLabel);
     }
 #endif
 }
+
 
 
 
@@ -553,8 +546,110 @@ void UVoxelChunk::RefreshSectionMesh()
 
 void UVoxelChunk::OnMeshReady(FIntVector Coord, int32 SectionIdx)
 {
-		UpdateIfDirty(); // Mesh was just rebuilt, time to lock it in
+    UE_LOG(LogTemp, Warning,
+        TEXT("OnMeshReady CALLED for chunk %s (incoming=%s, section=%d)"),
+        *ChunkCoordinates.ToString(),
+        *Coord.ToString(),
+        SectionIdx);
+
+    if (Coord != ChunkCoordinates)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("OnMeshReady IGNORED: Coord does not match this chunk (%s != %s)"),
+            *Coord.ToString(),
+            *ChunkCoordinates.ToString());
+        return;
+    }
+
+    if (!HoleShapeLibrary && DiggerManager)
+        HoleShapeLibrary = DiggerManager->GetHoleShapeLibrary();
+
+    if (!HoleShapeLibrary)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("OnMeshReady FAILED: HoleShapeLibrary is NULL"));
+        return;
+    }
+
+    UE_LOG(LogTemp, Warning,
+        TEXT("OnMeshReady: Processing %d registered holes for chunk %s"),
+        SpawnedHoleInstances.Num(),
+        *ChunkCoordinates.ToString());
+
+    for (const TWeakObjectPtr<ADynamicHole>& HolePtr : SpawnedHoleInstances)
+    {
+        ADynamicHole* Hole = HolePtr.Get();
+        if (!Hole)
+        {
+            UE_LOG(LogTemp, Error,
+                TEXT("OnMeshReady: Found invalid hole pointer (GC'd)"));
+            continue;
+        }
+
+        UStaticMeshComponent* MeshComp = Hole->GetHoleMeshComponent();
+        if (!MeshComp)
+        {
+            UE_LOG(LogTemp, Error,
+                TEXT("OnMeshReady: Hole %s has NO HoleMeshComponent"),
+                *Hole->GetName());
+            continue;
+        }
+
+        if (MeshComp->GetStaticMesh() != nullptr)
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("OnMeshReady: Hole %s already has mesh %s, skipping"),
+                *Hole->GetName(),
+                *MeshComp->GetStaticMesh()->GetName());
+            continue;
+        }
+
+        EHoleShapeType ShapeType = Hole->HoleShape.ShapeType;
+        UStaticMesh* HoleMesh = HoleShapeLibrary->GetMeshForShape(ShapeType);
+
+        if (!HoleMesh)
+        {
+            UE_LOG(LogTemp, Error,
+                TEXT("OnMeshReady: Hole %s: No mesh for shape %s"),
+                *Hole->GetName(),
+                *UEnum::GetValueAsString(ShapeType));
+            continue;
+        }
+
+        UE_LOG(LogTemp, Warning,
+            TEXT("OnMeshReady: Assigning mesh %s to hole %s"),
+            *HoleMesh->GetName(),
+            *Hole->GetName());
+
+        MeshComp->SetStaticMesh(HoleMesh);
+
+        if (Hole->WriterMaterial)
+        {
+            const int32 SlotCount = HoleMesh->GetStaticMaterials().Num();
+            for (int32 i = 0; i < SlotCount; i++)
+                MeshComp->SetMaterial(i, Hole->WriterMaterial);
+
+            UE_LOG(LogTemp, Warning,
+                TEXT("OnMeshReady: Applied WriterMaterial to hole %s (%d slots)"),
+                *Hole->GetName(), SlotCount);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("OnMeshReady: Hole %s has no WriterMaterial"),
+                *Hole->GetName());
+        }
+    }
+
+    UE_LOG(LogTemp, Warning,
+        TEXT("OnMeshReady FINISHED for chunk %s"),
+        *ChunkCoordinates.ToString());
 }
+
+
+
+
+
 
 
 void UVoxelChunk::GenerateMeshSyncronous()
@@ -870,26 +965,36 @@ void UVoxelChunk::RegenerateHolesFromData()
 
 void UVoxelChunk::AddHoleToChunk(ADynamicHole* Hole)
 {
-	if (Hole)
-	{
-		SpawnedHoleInstances.AddUnique(Hole);
-	}
+	if (!Hole)
+		return;
+
+	SpawnedHoleInstances.AddUnique(Hole);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("AddHoleToChunk: Registered hole %s to chunk %s"),
+		*Hole->GetName(),
+		*ChunkCoordinates.ToString());
 }
+
+void UVoxelChunk::RemoveHoleFromChunk(ADynamicHole* Hole)
+{
+	if (!Hole)
+		return;
+
+	SpawnedHoleInstances.Remove(Hole);
+
+	UE_LOG(LogTemp, Warning,
+		TEXT("RemoveHoleFromChunk: Unregistered hole %s from chunk %s"),
+		*Hole->GetName(),
+		*ChunkCoordinates.ToString());
+}
+
 
 
 
 int32 UVoxelChunk::GenerateHoleID()
 {
 	return HoleIDCounter++;
-}
-
-
-void UVoxelChunk::RemoveHoleFromChunk(ADynamicHole* Hole)
-{
-	if (Hole)
-	{
-		SpawnedHoleInstances.Remove(Hole);
-	}
 }
 
 

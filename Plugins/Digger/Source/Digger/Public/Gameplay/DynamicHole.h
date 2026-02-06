@@ -54,6 +54,7 @@ public:
 
 	// Set the owning chunk for the hole
 	void SetOwningChunk(UVoxelChunk* NewChunk);
+	void ValidateSpawnAgainstLandscape();
 
 	// Sync the hole's properties with the chunk's data
 	void SyncWithChunk();
@@ -110,6 +111,14 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Hole Mesh", meta = (AllowPrivateAccess = "true"))
 	UStaticMeshComponent* HoleMeshComponent;
 
+public:
+	[[nodiscard]] UStaticMeshComponent* GetHoleMeshComponent() const
+	{
+		return HoleMeshComponent;
+	}
+
+
+private:
 	// Update the mesh from the HoleShape library
 	void SetMeshForShape(EHoleShapeType ShapeType);
 	virtual void OnConstruction(const FTransform& Transform) override;

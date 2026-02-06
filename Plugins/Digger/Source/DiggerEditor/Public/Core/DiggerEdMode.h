@@ -15,6 +15,7 @@
 
 #include "ScopedTransaction.h" 
 
+class UPointLightComponent;
 class ABrushPreviewActor;
 class ADiggerManager;
 
@@ -25,13 +26,45 @@ class FDiggerEdModeToolkit;
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnDiggerModeChanged, bool);
 
 // Brush Hud Message System
+struct FBrushHUDMessage
+{
+    FString Text;
+    FLinearColor Color = FLinearColor::White;
+
+    float TimeRemaining = 0.f;
+    float Alpha = 1.f;
+
+    float YOffset = 20.f;     // slide-in offset
+    float SlideSpeed = 120.f; // px/sec
+
+    bool IsAlive() const { return Alpha > 0.f; }
+};
+
+
 struct FBrushHUDState
 {
+    TArray<FBrushHUDMessage> Messages;
     FString Text;
     float TimeRemaining = 0.f;
 
     bool bPaintingPaused = false;   // ⭐ NEW
 };
+
+enum class EDiggerMainMode : uint8
+{
+    Sculpt,
+    Rotate,
+    Offset
+};
+
+enum class EDiggerAxisMode : uint8
+{
+    None,
+    X,
+    Y,
+    Z
+};
+
 
 class DIGGEREDITOR_API FDiggerEdMode final : public FEdMode
 {
@@ -69,12 +102,15 @@ public:
         ELightBrushType LightType; 
     };
 
-    struct FContinuousSettings
+    struct FContinuousClickSettings
     {
-        bool bIsValid = false;
-        bool bRightClick = false;
+        bool bFinalBrushDig = false;
+        FRotator FinalRotation = FRotator::ZeroRotator;
         bool bCtrlPressed = false;
+        bool bRightClick = false;
+        bool bIsValid = false;
     };
+
 
     struct FBrushUIParams
     {
@@ -87,8 +123,13 @@ public:
         uint8 ShapeType;
     };
     
+    // Preview Light
+    TWeakObjectPtr<AActor> PreviewLightActor;
+    
+    UPointLightComponent* PreviewLightComponent = nullptr;
+    
 
-
+    
     // --- FEdMode Interface ---
     virtual void Enter() override;
     virtual void Exit() override;
@@ -142,15 +183,23 @@ private:
     void ApplyBrushWithSettings(ADiggerManager* Digger, const FVector& HitLocation, const FHitResult& Hit, const FBrushCache& Settings);
 
     // Preview
-    void EnsurePreviewExists();
+    void EnsurePreviewExists(FEditorViewportClient* ViewportClient);
     void DestroyPreview();
     void UpdatePreviewAtCursor(FEditorViewportClient* InViewportClient);
     bool TraceUnderCursor(FEditorViewportClient* InViewportClient, FHitResult& OutHit);
+    void SpawnOrUpdatePreviewLight();
+    void DestroyPreviewLight();
+    void UpdatePreviewModeIndicator();
     FBrushUIParams GetCurrentBrushUI() const;
+
+    // --- Brush UX Mode State ---
+    EDiggerMainMode CurrentMode = EDiggerMainMode::Sculpt;
+    EDiggerAxisMode CurrentAxis = EDiggerAxisMode::None;
+    
 
     // --- Brush Hud Message system ---
     FBrushHUDState BrushHUD;
-    void ShowBrushHUDMessage(const FString& Msg);
+    void ShowBrushHUDMessage(const FString& Msg, const FLinearColor& Color = FLinearColor::White);
     void HandleModifierBlocked(bool bBlocked);
 
 
@@ -163,6 +212,9 @@ private:
     bool bIsDragging = false;
     bool bMouseButtonDown = false;
     bool bIsContinuouslyApplying = false;
+    bool bRotationModeLatched = false;
+    bool bOffsetModeLatched   = false;
+    bool bIsSamplingNormal = false;
 
     // --- Scroll Velocity Variables ---
     float ScrollVelocity = 0.0f;
@@ -174,10 +226,10 @@ private:
     FVector LastStrokeHitLocation = FVector::ZeroVector;
     FVector LastStrokePreviewCenter = FVector::ZeroVector;
     FVector2D LastPaintLocation = FVector2D::ZeroVector;
-    float StrokeSpacing = 5.0f;
+    float ContinuousApplicationInterval = 5.0f;
 
     FBrushCache BrushCache;
-    FContinuousSettings ContinuousSettings;
+    FContinuousClickSettings ContinuousSettings;
 
     // Preview Actor Reference
     TWeakObjectPtr<ABrushPreviewActor> Preview;

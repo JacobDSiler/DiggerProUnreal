@@ -3,6 +3,7 @@
 #include "EditorModeRegistry.h"
 #include "DiggerEdMode.h"
 #include "AssetToolsModule.h"
+#include "DiggerEdModeToolkit.h"
 #include "IAssetTools.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Engine/CollisionProfile.h"
