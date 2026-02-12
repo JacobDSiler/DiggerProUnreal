@@ -6,24 +6,54 @@
 	"Description": "Voxel digging system",
 	"Category": "Other",
 	"CreatedBy": "J.D. Siler",
-	"CreatedByURL": "",
-	"DocsURL": "",
-	"MarketplaceURL": "",
-	"SupportURL": "",
 	"CanContainContent": true,
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
 	"Installed": false,
+
+	"Plugins": [
+		{
+			"Name": "ProceduralMeshComponent",
+			"Enabled": true
+		},
+		{
+			"Name": "SocketIOClient",
+			"Enabled": true
+		}
+	],
+
 	"Modules": [
 		{
 			"Name": "Digger",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux" ],
+			"AdditionalDependencies": [
+				"Core",
+				"CoreUObject",
+				"Engine",
+				"ProceduralMeshComponent",
+				"SocketIOClient",
+				"SocketIOLib",
+				"SIOJson"
+			]
 		},
 		{
 			"Name": "DiggerEditor",
 			"Type": "Editor",
-			"LoadingPhase": "PostEngineInit"
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [ "Win64", "Mac", "Linux" ],
+			"AdditionalDependencies": [
+				"Core",
+				"CoreUObject",
+				"Engine",
+				"UnrealEd",
+				"DeveloperSettings",
+				"ProceduralMeshComponent",
+				"SocketIOClient",
+				"SocketIOLib",
+				"SIOJson"
+			]
 		}
 	]
 }

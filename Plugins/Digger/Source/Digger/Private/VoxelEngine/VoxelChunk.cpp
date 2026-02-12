@@ -307,6 +307,23 @@ void UVoxelChunk::OnMarchingMeshComplete() const
 	// --- FIX END ---
 }
 
+static void SetHoleListedInOutliner(AActor* Actor, bool bListed)
+{
+#if WITH_EDITOR
+	if (!Actor) return;
+	// Use Reflection to find the protected property
+	static FBoolProperty* ListedProp = CastField<FBoolProperty>(
+		AActor::StaticClass()->FindPropertyByName(FName("bListedInSceneOutliner"))
+	);
+    
+	if (ListedProp && ListedProp->GetPropertyValue_InContainer(Actor) != bListed)
+	{
+		Actor->Modify();
+		ListedProp->SetPropertyValue_InContainer(Actor, bListed);
+	}
+#endif
+}
+
 
 void UVoxelChunk::SpawnHoleFromData(const FSpawnedHoleData& HoleData)
 {
@@ -381,6 +398,37 @@ void UVoxelChunk::SpawnHoleFromData(const FSpawnedHoleData& HoleData)
         }
         return;
     }
+
+	// --- INJECTED FOLDER LOGIC (Decoupled) ---
+#if WITH_EDITOR
+	if (GIsEditor)
+	{
+		// READ SETTINGS VIA CONFIG (No module dependency)
+		// We read directly from the config file/memory to avoid linking to DiggerEditor module
+		bool bShowHoles = false; 
+		GConfig->GetBool(
+			TEXT("/Script/DiggerEditor.DiggerEditorSettings"), // Section
+			TEXT("bShowDynamicHolesFolder"),                   // Key
+			bShowHoles,                                        // Output
+			GEditorPerProjectIni                               // Filename (usually Editor.ini)
+		);
+
+		if (bShowHoles)
+		{
+			// SHOW: Set folder path, ensure visible
+			SpawnedHole->SetFolderPath(FName("Digger/DynamicHoles"));
+			SetHoleListedInOutliner(SpawnedHole, true);
+		}
+		else
+		{
+			// HIDE: Clear path (prevents folder creation), hide in outliner
+			SpawnedHole->SetFolderPath(NAME_None);
+			SetHoleListedInOutliner(SpawnedHole, false);
+		}
+	}
+#endif
+	// --- END INJECTION ---
+
 
     // 5. Cast to ADynamicHole
     ADynamicHole* DynamicHole = Cast<ADynamicHole>(SpawnedHole);
@@ -969,11 +1017,11 @@ void UVoxelChunk::AddHoleToChunk(ADynamicHole* Hole)
 		return;
 
 	SpawnedHoleInstances.AddUnique(Hole);
-
-	UE_LOG(LogTemp, Warning,
-		TEXT("AddHoleToChunk: Registered hole %s to chunk %s"),
-		*Hole->GetName(),
-		*ChunkCoordinates.ToString());
+	if (DiggerDebug::Holes() || DiggerDebug::Chunks())
+		UE_LOG(LogTemp, Warning,
+			TEXT("AddHoleToChunk: Registered hole %s to chunk %s"),
+			*Hole->GetName(),
+			*ChunkCoordinates.ToString());
 }
 
 void UVoxelChunk::RemoveHoleFromChunk(ADynamicHole* Hole)
@@ -983,10 +1031,11 @@ void UVoxelChunk::RemoveHoleFromChunk(ADynamicHole* Hole)
 
 	SpawnedHoleInstances.Remove(Hole);
 
-	UE_LOG(LogTemp, Warning,
-		TEXT("RemoveHoleFromChunk: Unregistered hole %s from chunk %s"),
-		*Hole->GetName(),
-		*ChunkCoordinates.ToString());
+	if (DiggerDebug::Holes() || DiggerDebug::Chunks())
+		UE_LOG(LogTemp, Warning,
+			TEXT("RemoveHoleFromChunk: Unregistered hole %s from chunk %s"),
+			*Hole->GetName(),
+			*ChunkCoordinates.ToString());
 }
 
 
@@ -1306,175 +1355,126 @@ void UVoxelChunk::MulticastApplyBrushStroke_Implementation(const FBrushStroke& S
 
 void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 {
-	// CRITICAL FOR UNDO:
-	// This tells Unreal: "Save the current state of this object before I change it."
-	Modify();
-	
-    // 1. Validation
+    // 1. Mark Dirty for Undo system
+    Modify();
+
+    // 2. Validation
     UVoxelBrushShape* BrushShape = (DiggerManager) ? DiggerManager->GetBrushShapeForType(Stroke.BrushType) : nullptr;
     if (!DiggerManager || !BrushShape || !SparseVoxelGrid) return;
 
-    FThreadSafeCounter VoxelsDugCounter;
-    FThreadSafeCounter VoxelsAddedCounter;
+    // 3. Setup Metrics
+    const float LocalVoxelSize = FVoxelConversion::LocalVoxelSize;
+    if (LocalVoxelSize <= SMALL_NUMBER) return;
 
-    // 2. Setup Metrics
-    // ChunkOrigin is the World Space position of the chunk's (0,0,0) corner
     const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
-    const float CachedVoxelSize = FVoxelConversion::LocalVoxelSize;
-    if (CachedVoxelSize <= SMALL_NUMBER) return;
-
-    const int32 VoxelsPerChunk = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const int32 ChunkDim = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions; 
     
-    // Half Voxel offset is only needed to center the sample point inside the voxel grid cell
-    const float HalfVoxelSize = CachedVoxelSize * 0.5f;
+    // PADDING: Critical for seamless normals across chunks.
+    // We allow writing to -2..+N+2
+    const int32 GhostPad = 2; 
 
-    // 3. Bounds Calculation (World Space -> Local Voxel Space)
-    FVector BrushBounds = CalculateBrushBounds(Stroke); 
+    // 4. BOUNDS CALCULATION (Restored Historical Logic)
+    // We ask the brush shape for its exact world-space bounds.
+    // This handles rotation (Cube) and elongation (Capsule) correctly.
+    FVector BrushWorldBounds = CalculateBrushBounds(Stroke); 
     
-    // Convert Brush World Position to Local Space relative to the Chunk Corner
-    const FVector LocalBrushPos = Stroke.BrushPosition - ChunkOrigin;
+    // Convert World Bounds to Local Index Range
+    FVector LocalMin = (Stroke.BrushPosition - BrushWorldBounds) - ChunkOrigin;
+    FVector LocalMax = (Stroke.BrushPosition + BrushWorldBounds) - ChunkOrigin;
+
+    // Convert to Indices
+    int32 BrushMinX = FMath::FloorToInt(LocalMin.X / LocalVoxelSize);
+    int32 BrushMaxX = FMath::CeilToInt(LocalMax.X / LocalVoxelSize);
+    int32 BrushMinY = FMath::FloorToInt(LocalMin.Y / LocalVoxelSize);
+    int32 BrushMaxY = FMath::CeilToInt(LocalMax.Y / LocalVoxelSize);
+    int32 BrushMinZ = FMath::FloorToInt(LocalMin.Z / LocalVoxelSize);
+    int32 BrushMaxZ = FMath::CeilToInt(LocalMax.Z / LocalVoxelSize);
+
+    // 5. CLAMP TO CHUNK + PADDING
+    // We strictly limit the loop to the Chunk (+ Ghosts).
+    // This prevents writing into infinity.
+    int32 StartX = FMath::Max(BrushMinX, -GhostPad);
+    int32 EndX   = FMath::Min(BrushMaxX, ChunkDim + GhostPad);
+    int32 StartY = FMath::Max(BrushMinY, -GhostPad);
+    int32 EndY   = FMath::Min(BrushMaxY, ChunkDim + GhostPad);
+    int32 StartZ = FMath::Max(BrushMinZ, -GhostPad);
+    int32 EndZ   = FMath::Min(BrushMaxZ, ChunkDim + GhostPad);
+
+    // Early out if no overlap
+    if (StartX >= EndX || StartY >= EndY || StartZ >= EndZ) return;
+
+    bool bModified = false;
     
-    // Convert Radius/Bounds to Voxel Count
-    const int32 RangeX = FMath::CeilToInt(BrushBounds.X / CachedVoxelSize);
-    const int32 RangeY = FMath::CeilToInt(BrushBounds.Y / CachedVoxelSize);
-    const int32 RangeZ = FMath::CeilToInt(BrushBounds.Z / CachedVoxelSize);
+    // Counters for report
+    int32 VoxelsDug = 0;
+    int32 VoxelsAdded = 0;
 
-    // Get the center voxel index
-    const int32 CenterX = FMath::FloorToInt(LocalBrushPos.X / CachedVoxelSize);
-    const int32 CenterY = FMath::FloorToInt(LocalBrushPos.Y / CachedVoxelSize);
-    const int32 CenterZ = FMath::FloorToInt(LocalBrushPos.Z / CachedVoxelSize);
-
-    // Calculate Min/Max and CLAMP strictly to the chunk size (0 to N)
-    // This prevents negative sizes which caused your crash.
-    const int32 MinX = FMath::Clamp(CenterX - RangeX, 0, VoxelsPerChunk);
-    const int32 MaxX = FMath::Clamp(CenterX + RangeX, 0, VoxelsPerChunk);
-    
-    const int32 MinY = FMath::Clamp(CenterY - RangeY, 0, VoxelsPerChunk);
-    const int32 MaxY = FMath::Clamp(CenterY + RangeY, 0, VoxelsPerChunk);
-    
-    const int32 MinZ = FMath::Clamp(CenterZ - RangeZ, 0, VoxelsPerChunk);
-    const int32 MaxZ = FMath::Clamp(CenterZ + RangeZ, 0, VoxelsPerChunk);
-
-    // Calculate Sizes
-    // Since we clamped Min and Max, Size cannot be negative, preventing the TArray crash.
-    const int32 SizeX = MaxX - MinX; 
-    const int32 SizeY = MaxY - MinY;
-    const int32 SizeZ = MaxZ - MinZ;
-
-    // Safety: If the brush is completely outside the chunk, Size will be 0.
-    if (SizeX <= 0 || SizeY <= 0 || SizeZ <= 0) return;
-
-    // 4. Pre-Filter
-    TArray<FIntVector> AirVoxelsBelowTerrain;
-    struct FVoxelInfo { FIntVector Coords; FVector WorldPos; float TerrainHeight; };
-    TArray<FVoxelInfo> ValidVoxels;
-    
-    // Now this Reserve is safe because SizeX/Y/Z are guaranteed positive
-    int64 TotalVoxelsToProcess = (int64)SizeX * (int64)SizeY * (int64)SizeZ;
-    if (TotalVoxelsToProcess > 0)
+    // 6. ITERATION (Single Threaded for Safety)
+    // TMap (SparseGrid) is NOT thread-safe for writes. ParallelFor caused the "Straight Wall" bug.
+    for (int32 X = StartX; X < EndX; ++X)
     {
-        ValidVoxels.Reserve(TotalVoxelsToProcess);
-    }
-
-    // Loop through the bounds
-    for (int32 X = MinX; X < MaxX; ++X)
-    {
-        for (int32 Y = MinY; Y < MaxY; ++Y)
+        for (int32 Y = StartY; Y < EndY; ++Y)
         {
-            // Calculate Column World Position
-            // Origin + (Index * Size) + HalfVoxelOffset
-            const FVector ColumnWorldPos = ChunkOrigin + FVector(
-                (X * CachedVoxelSize) + HalfVoxelSize,
-                (Y * CachedVoxelSize) + HalfVoxelSize,
-                0 
-            );
+            // Optimization: Check landscape height for the whole column once
+            FVector ColumnPos = ChunkOrigin + FVector(X * LocalVoxelSize, Y * LocalVoxelSize, 0);
+            float TerrainHeight = DiggerManager->GetLandscapeHeightAt(ColumnPos);
+            
+            // Skip if Bedrock / Invalid
+            if (TerrainHeight <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f)) continue;
 
-            float TerrainHeight = DiggerManager->GetLandscapeHeightAt(ColumnWorldPos);
-
-            // Skip if underground is invalid/bedrock
-            if (TerrainHeight <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f)) continue; 
-
-            for (int32 Z = MinZ; Z < MaxZ; ++Z)
+            for (int32 Z = StartZ; Z < EndZ; ++Z)
             {
-                FVector WorldPos = ColumnWorldPos;
-                WorldPos.Z = ChunkOrigin.Z + (Z * CachedVoxelSize) + HalfVoxelSize;
+                FIntVector LocalCoord(X, Y, Z);
+                FVector VoxelWorldPos = ChunkOrigin + (FVector(LocalCoord) * LocalVoxelSize);
 
-                // Let the Brush Shape decide if we are inside the precise shape
-                if (!BrushShape->IsWithinBounds(WorldPos, Stroke)) continue;
+                // --- SHAPE FILTER (Restored) ---
+                // This ensures a Cube brush doesn't act like a sphere.
+                // It clips the corners of the bounding box.
+                if (!BrushShape->IsWithinBounds(VoxelWorldPos, Stroke)) continue;
 
-                FVoxelInfo Info;
-                Info.Coords = FIntVector(X, Y, Z);
-                Info.WorldPos = WorldPos;
-                Info.TerrainHeight = TerrainHeight;
-                ValidVoxels.Add(Info);
-            }
-        }
-    }
+                // --- SDF CALCULATION ---
+                // This uses the gradient-friendly logic we added to the brush classes
+                float BrushSDF = BrushShape->CalculateSDF(VoxelWorldPos, Stroke, TerrainHeight);
 
-    // 5. Parallel Process
-    ParallelFor(ValidVoxels.Num(), [&](int32 VoxelIndex)
-    {
-        const FVoxelInfo& Info = ValidVoxels[VoxelIndex];
-        const bool bAboveTerrain = Info.WorldPos.Z >= Info.TerrainHeight;
+                // Optimization: Ignore negligible changes
+                if (FMath::IsNearlyZero(BrushSDF, 0.001f)) continue;
 
-        // Calculate SDF
-        float SDF = BrushShape->CalculateSDF(Info.WorldPos, Stroke, Info.TerrainHeight);
+                // --- APPLY TO GRID ---
+                // Get current value (or implicit 0.0f)
+                float CurrentSDF = SparseVoxelGrid->GetVoxel(X, Y, Z);
+                float NewSDF = CurrentSDF;
 
-        // Apply Smoothing
-        if (Stroke.BrushFalloff > SMALL_NUMBER)
-        {
-            const float DistParams = FMath::Clamp(FMath::Abs(SDF) / Stroke.BrushFalloff, 0.0f, 1.0f);
-            const float SmoothedFactor = FMath::SmoothStep(0.0f, 1.0f, DistParams);
-            SDF = FMath::Sign(SDF) * (SmoothedFactor * Stroke.BrushFalloff);
-        }
-
-        if (Stroke.bDig)
-        {
-            if (SDF > 0.1f) // Air
-            {
-                // Safety depth check
-                if (FMath::Abs(Info.WorldPos.Z - Stroke.BrushPosition.Z) <= Stroke.BrushRadius * 2.0f)
+                if (Stroke.bDig)
                 {
-                    SparseVoxelGrid->SetVoxel(Info.Coords.X, Info.Coords.Y, Info.Coords.Z, SDF, true);
-                    VoxelsDugCounter.Increment();
-
-                    if (!bAboveTerrain)
-                    {
-                        FScopeLock Lock(&BrushStrokeMutex);
-                        AirVoxelsBelowTerrain.Add(Info.Coords);
-                    }
+                    // Digging: Add Air (Positive)
+                    NewSDF = CurrentSDF + FMath::Abs(BrushSDF);
+                    NewSDF = FMath::Min(NewSDF, 5.0f); // Clamp Air
+                    VoxelsDug++;
                 }
-            }
-        }
-        else // Add
-        {
-            if (SDF < -0.1f) // Solid
-            {
-                SparseVoxelGrid->SetVoxel(Info.Coords.X, Info.Coords.Y, Info.Coords.Z, SDF, false);
-                VoxelsAddedCounter.Increment();
-            }
-        }
-    });
+                else
+                {
+                    // Adding: Subtract to make Solid (Negative)
+                    NewSDF = CurrentSDF - FMath::Abs(BrushSDF);
+                    NewSDF = FMath::Max(NewSDF, -5.0f); // Clamp Solid
+                    VoxelsAdded++;
+                }
 
-    // 6. Solid Shell
-    if (!AirVoxelsBelowTerrain.IsEmpty())
-    {
-    //	CreateSolidShellAroundAirVoxels(AirVoxelsBelowTerrain, Stroke.bHiddenSeam);
+                SparseVoxelGrid->SetVoxel(X, Y, Z, NewSDF, Stroke.bDig);
+                bModified = true;
+            }
+        }
     }
 
-    // 7. Broadcast
-    if (VoxelsDugCounter.GetValue() > 0 || VoxelsAddedCounter.GetValue() > 0)
+    // 7. BROADCAST REPORT
+    if (bModified && DiggerManager)
     {
-        if (DiggerManager)
-        {
-            FVoxelModificationReport Report;
-            Report.VoxelsDug = VoxelsDugCounter.GetValue();
-            Report.VoxelsAdded = VoxelsAddedCounter.GetValue();
-            Report.ChunkCoordinates = ChunkCoordinates;
-            Report.BrushPosition = Stroke.BrushPosition;
-            Report.BrushRadius = Stroke.BrushRadius;
-            DiggerManager->OnVoxelsModified.Broadcast(Report);
-        }
+        FVoxelModificationReport Report;
+        Report.ChunkCoordinates = ChunkCoordinates;
+        Report.BrushPosition = Stroke.BrushPosition;
+        Report.BrushRadius = Stroke.BrushRadius;
+        Report.VoxelsDug = VoxelsDug;
+        Report.VoxelsAdded = VoxelsAdded;
+        DiggerManager->OnVoxelsModified.Broadcast(Report);
     }
 }
 
@@ -1659,40 +1659,46 @@ void UVoxelChunk::DedupHoles()
 
 void UVoxelChunk::DeclutterHoles()
 {
-	// for (int32 i = SpawnedHoles.Num() - 1; i >= 0; --i)
-	// {
-	// 	ADynamicHole* A = SpawnedHoles[i];
-	// 	if (!A) continue;
-	//
-	// 	const FVector ALoc = A->GetActorLocation();
-	// 	const float ARadius = A->GetEffectiveRadius();
-	//
-	// 	bool bRemoveA = false;
-	//
-	// 	for (int32 j = 0; j < SpawnedHoles.Num(); ++j)
-	// 	{
-	// 		if (i == j) continue;
-	//
-	// 		ADynamicHole* B = SpawnedHoles[j];
-	// 		if (!B) continue;
-	//
-	// 		const float BRadius = B->GetEffectiveRadius();
-	// 		const float Dist = FVector::Dist(ALoc, B->GetActorLocation());
-	//
-	// 		if (Dist + ARadius <= BRadius)
-	// 		{
-	// 			bRemoveA = true;
-	// 			break;
-	// 		}
-	// 	}
-	//
-	// 	if (bRemoveA)
-	// 	{
-	// 		A->Destroy();
-	// 		SpawnedHoles.RemoveAt(i);
-	// 	}
-	// }
+	const float OverlapThreshold = 0.7f; // 70% inside = redundant
+
+	for (int32 i = SpawnedHoles.Num() - 1; i >= 0; --i)
+	{
+		ADynamicHole* A = SpawnedHoles[i];
+		if (!A) continue;
+
+		const FVector ALoc = A->GetActorLocation();
+		const float AR = A->GetEffectiveRadius();
+
+		bool bRemoveA = false;
+
+		for (int32 j = 0; j < SpawnedHoles.Num(); ++j)
+		{
+			if (i == j) continue;
+
+			ADynamicHole* B = SpawnedHoles[j];
+			if (!B) continue;
+
+			const FVector BLoc = B->GetActorLocation();
+			const float BR = B->GetEffectiveRadius();
+
+			const float Dist = FVector::Dist(ALoc, BLoc);
+
+			// If A is significantly inside B
+			if (Dist + AR <= BR * (1.0f + OverlapThreshold))
+			{
+				bRemoveA = true;
+				break;
+			}
+		}
+
+		if (bRemoveA)
+		{
+			A->Destroy();
+			SpawnedHoles.RemoveAt(i);
+		}
+	}
 }
+
 
 void UVoxelChunk::MergeHoles()
 {

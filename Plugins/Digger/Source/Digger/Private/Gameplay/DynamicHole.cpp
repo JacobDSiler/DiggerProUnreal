@@ -135,46 +135,65 @@ void ADynamicHole::BeginPlay()
 	}
 }
 
-// ADynamicHole.cpp
 
 void ADynamicHole::OnConstruction(const FTransform& Xform)
 {
-	Super::OnConstruction(Xform);
+    Super::OnConstruction(Xform);
 
-	// 📌 Assign World Outliner folder (Editor only)
+    // 📌 Assign World Outliner folder (Editor only) - RESPECTING SETTINGS
 #if WITH_EDITOR
-	const FName NewFolderPath = FName(TEXT("Digger/DynamicHoles"));
+    if (GIsEditor)
+    {
+        // 1. Read the user preference directly from Config (Decoupled from Editor Module)
+        bool bShowHoles = false; // Default to hidden
+        if (GConfig)
+        {
+            GConfig->GetBool(
+                TEXT("/Script/DiggerEditor.DiggerEditorSettings"), // Section
+                TEXT("bShowDynamicHolesFolder"),                   // Key
+                bShowHoles,                                        // Output
+                GEditorPerProjectIni                               // Filename
+            );
+        }
+
+        // 2. Determine the Target Path
+        // If Show: "Digger/DynamicHoles"
+        // If Hide: NAME_None (Root) -> Prevents folder creation/reappearance
+        const FName TargetFolderPath = bShowHoles ? FName(TEXT("Digger/DynamicHoles")) : NAME_None;
+
+        // 3. Set the Folder Path (Preserving your UE5/UE4 logic)
 #if ENGINE_MAJOR_VERSION >= 5
-	if (GetClass()->FindFunctionByName(TEXT("SetFolderPath_Recursively")))
-	{
-		SetFolderPath_Recursively(NewFolderPath);
-	}
-	else
-	{
-		SetFolderPath(NewFolderPath);
-	}
+        if (GetClass()->FindFunctionByName(TEXT("SetFolderPath_Recursively")))
+        {
+            SetFolderPath_Recursively(TargetFolderPath);
+        }
+        else
+        {
+            SetFolderPath(TargetFolderPath);
+        }
 #else
-	SetFolderPath(FolderPath);
+        SetFolderPath(TargetFolderPath);
 #endif
+    }
 #endif // WITH_EDITOR
 
-	// 📍 Track hole movement and update chunk registration
-	FVector HoleLocation = GetActorLocation();
-	CurrentChunkCoords = FVoxelConversion::WorldToChunk(HoleLocation);
+    // 📍 Track hole movement and update chunk registration
+    FVector HoleLocation = GetActorLocation();
+    CurrentChunkCoords = FVoxelConversion::WorldToChunk(HoleLocation);
 
-	if (OwningChunk && PreviousChunkCoords != CurrentChunkCoords)
-	{
-		// Hole has moved — update chunk registration
-		OwningChunk->RemoveHoleFromChunk(this);
+    if (OwningChunk && PreviousChunkCoords != CurrentChunkCoords)
+    {
+        // Hole has moved — update chunk registration
+        OwningChunk->RemoveHoleFromChunk(this);
 
-		OwningChunk = FindOwningChunk(CurrentChunkCoords);
-		if (OwningChunk)
-		{
-			OwningChunk->AddHoleToChunk(this);
-		}
+        OwningChunk = FindOwningChunk(CurrentChunkCoords);
+        if (OwningChunk)
+        {
+            OwningChunk->AddHoleToChunk(this);
+        }
 
-		PreviousChunkCoords = CurrentChunkCoords;
-	}
+        PreviousChunkCoords = CurrentChunkCoords;
+    }
 }
 
 
@@ -255,8 +274,8 @@ void ADynamicHole::ValidateSpawnAgainstLandscape()
         return;
 
     // Must be owned by *your* DiggerManager
-    AActor* Owner = HitComp->GetOwner();
-    if (!Owner || !Owner->IsA(ADiggerManager::StaticClass()))
+    AActor* OwnerActor = HitComp->GetOwner();
+    if (!OwnerActor || !OwnerActor->IsA(ADiggerManager::StaticClass()))
         return;
 
     // --- 4. Check if the hit is shallow (skirt thickness) ---

@@ -59,6 +59,12 @@ public:
 	// Sync the hole's properties with the chunk's data
 	void SyncWithChunk();
 
+	float GetEffectiveRadius() const
+	{
+		return CachedStroke.BrushRadius;
+	}
+
+
 public:
 
 	FVector GetBrushPosition() const

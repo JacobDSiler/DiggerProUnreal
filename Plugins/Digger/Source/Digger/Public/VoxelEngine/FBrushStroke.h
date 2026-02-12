@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "BrushPushMode.h"
 #include "FLightBrushTypes.h"
 #include "VoxelBrushTypes.h"
 #include "FHoleShape.h"
@@ -119,6 +120,14 @@ struct FBrushStroke
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Brush")
     bool bDig;
+    
+    // NEW: Force scalar (0–1)
+    UPROPERTY()
+    float BrushForce = 0.0f;
+
+    // NEW: Push mode (Ray / Normal / Blended)
+    UPROPERTY()
+    EDiggerPushMode PushMode = EDiggerPushMode::Ray;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel Brush")
     bool bUseAdvancedCubeBrush;

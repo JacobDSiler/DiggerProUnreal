@@ -8,11 +8,6 @@
 #include "VoxelChunk.h"
 #include "VoxelConversion.h"
 #include "Async/Async.h"
-#include "DiggerSettings.h"
-
-#if WITH_EDITOR
-class UDiggerEditorSettings;
-#endif
 
 
 // ----------------------------------------------------------------------------------
@@ -85,6 +80,77 @@ void UMarchingCubes::GenerateMeshSyncronous(UVoxelChunk* Chunk)
 	}
 }
 
+
+
+void UMarchingCubes::GenerateMesh_MarchingCubes(
+    const TMap<FIntVector, FVoxelData>& VoxelData,
+    const FVector& Origin,
+    float VoxelSize,
+    const TArray<float>& HeightValues,
+    TArray<FVector>& OutVertices,
+    TArray<int32>& OutTriangles,
+    TArray<FVector>& OutNormals
+)
+{
+    const UDiggerSettings* Runtime = UDiggerSettings::Get();
+
+    FDiggerMeshConfig Config;
+
+#if WITH_EDITOR
+    // Detect if we are in PIE or Editor Preview
+    const bool bIsPIE = (GEditor && GEditor->PlayWorld != nullptr);
+
+    if (!bIsPIE)
+    {
+        // ------------------------------------------------------------
+        // EDITOR PREVIEW MODE
+        //
+        // The editor module (DiggerEditor) is responsible for
+        // providing a merged config. It injects it via a global
+        // override before calling this function.
+        //
+        // If no override exists, fall back to runtime settings.
+        // ------------------------------------------------------------
+
+        if (FDiggerMeshConfig* Override = FDiggerMeshConfig::GetEditorPreviewOverride())
+        {
+            Config = *Override;
+        }
+        else
+        {
+            // Fallback: pure runtime settings
+            Config.ShadingMode = Runtime->ShadingMode;
+            Config.SkirtRadius = Runtime->SkirtRadiusWorld;
+            Config.ClipBias    = Runtime->SkirtClipBias;
+            Config.IsoLevel    = 0.0f;
+        }
+    }
+    else
+#endif
+    {
+        // ------------------------------------------------------------
+        // PIE or Packaged → pure runtime settings
+        // ------------------------------------------------------------
+        Config.ShadingMode = Runtime->ShadingMode;
+        Config.SkirtRadius = Runtime->SkirtRadiusWorld;
+        Config.ClipBias    = Runtime->SkirtClipBias;
+        Config.IsoLevel    = 0.0f;
+    }
+
+    // Forward to the real implementation
+    GenerateMesh_MarchingCubes(
+        VoxelData,
+        Origin,
+        VoxelSize,
+        HeightValues,
+        Config,
+        OutVertices,
+        OutTriangles,
+        OutNormals
+    );
+}
+
+
 // ----------------------------------------------------------------------------------
 // LOW LEVEL API (HANDLERS)
 // ----------------------------------------------------------------------------------
@@ -140,6 +206,8 @@ void UMarchingCubes::GenerateMeshFromGrid(
 	GenerateMesh_MarchingCubes(VoxelData, Origin, VoxelSize, HeightValues, OutVertices, OutTriangles, OutNormals);
 }
 
+
+
 // ----------------------------------------------------------------------------------
 // THE CORE WORKER (LOGIC ENGINE)
 // ----------------------------------------------------------------------------------
@@ -150,246 +218,404 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
     const FVector& Origin,
     float VoxelSize,
     const TArray<float>& HeightValues,
+    const FDiggerMeshConfig& Config,
     TArray<FVector>& OutVertices,
     TArray<int32>& OutTriangles,
     TArray<FVector>& OutNormals
 )
 {
-    const UDiggerSettings* Settings = UDiggerSettings::Get();
+    // ============================================================
+    // LOCAL TEST FLAG — toggle hardened density pipeline
+    // ============================================================
+    const bool bUseHardenedDensity = true;
+    // ============================================================
 
-    const float ShellRadiusWorld = Settings ? Settings->SkirtRadiusWorld : 300.0f;
-    const float ClipBias         = Settings ? Settings->SkirtClipBias   : 2.0f;
+    OutVertices.Reset();
+    OutTriangles.Reset();
+    OutNormals.Reset();
 
-    const int32 Dim            = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
-    const int32 N              = Dim;
-    const int32 HeightMapWidth = N + 1;
+    const float ShellRadiusWorld = Config.SkirtRadius;
+    const float ClipBias         = Config.ClipBias;
+    const EDiggerShadingMode ShadingMode = Config.ShadingMode;
 
-    if (VoxelData.Num() == 0)
-        return;
+    const int32 ChunkSize = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+    const int32 Pad       = 2;
+    const int32 GridDim   = ChunkSize + (2 * Pad);
+    const int32 TotalGridSize = GridDim * GridDim * GridDim;
 
-    // --- HEIGHTMAP SAFETY ---
-    const int32 ExpectedSize = (N + 1) * (N + 1);
-    TArray<float> FallbackHeights;
-    const TArray<float>* PtrHeights = &HeightValues;
+    TArray<float> DensityGrid;
+    DensityGrid.SetNumUninitialized(TotalGridSize);
 
-    if (HeightValues.Num() != ExpectedSize)
+    auto GetGridIdx = [&](int32 X, int32 Y, int32 Z)
     {
-        FallbackHeights.Init(UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT, ExpectedSize);
-        PtrHeights = &FallbackHeights;
-    }
-    const TArray<float>& SafeHeights = *PtrHeights;
-
-    // --- ACTIVE MASK ---
-    TArray<bool> ActiveColumns;
-    ActiveColumns.SetNumZeroed(N * N);
-
-    auto GetIdx2D = [&](int32 X, int32 Y) { return (X * N) + Y; };
-
-    int32 RadiusVal = FMath::CeilToInt(ShellRadiusWorld / VoxelSize);
-    int32 Padding   = RadiusVal + 2;
-
-    for (const auto& Pair : VoxelData)
-    {
-        FIntVector P = Pair.Key;
-
-        int32 MinX = FMath::Clamp(P.X - Padding, 0, N - 1);
-        int32 MaxX = FMath::Clamp(P.X + Padding, 0, N - 1);
-        int32 MinY = FMath::Clamp(P.Y - Padding, 0, N - 1);
-        int32 MaxY = FMath::Clamp(P.Y + Padding, 0, N - 1);
-
-        for (int32 sx = MinX; sx <= MaxX; ++sx)
-            for (int32 sy = MinY; sy <= MaxY; ++sy)
-                ActiveColumns[GetIdx2D(sx, sy)] = true;
-    }
-
-    // --- VERTEX CACHE (1/16 voxel quantization) ---
-    TMap<FIntVector, int32> VertexCache;
-    VertexCache.Reserve(N * N * N / 4);
-
-    const float VertexQuantScale = 1.0f / (VoxelSize * 0.0625f); // 1/16 voxel
-
-    auto MakeKey = [&](const FVector& V)
-    {
-        return FIntVector(
-            FMath::RoundToInt(V.X * VertexQuantScale),
-            FMath::RoundToInt(V.Y * VertexQuantScale),
-            FMath::RoundToInt(V.Z * VertexQuantScale)
-        );
+        return (X + Pad) + ((Y + Pad) * GridDim) + ((Z + Pad) * GridDim * GridDim);
     };
 
-    // --- HEIGHT LOOKUP ---
-    auto GetHeightAt = [&](const FVector& Pos) -> float
+    const int32 HMapWidth   = ChunkSize + 1;
+    const bool  bHasHeights = (HeightValues.Num() == (HMapWidth * HMapWidth));
+    const float GlobalFloorZ = Origin.Z - ShellRadiusWorld - (VoxelSize * 4.0f);
+    const float InvalidH     = UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f;
+
+    if (bUseHardenedDensity)
     {
-        FVector Local = Pos - Origin;
-        float GX = Local.X / VoxelSize;
-        float GY = Local.Y / VoxelSize;
-
-        int32 X0 = FMath::Clamp(FMath::FloorToInt(GX), 0, N);
-        int32 Y0 = FMath::Clamp(FMath::FloorToInt(GY), 0, N);
-        int32 X1 = FMath::Min(X0 + 1, N);
-        int32 Y1 = FMath::Min(Y0 + 1, N);
-
-        float H00 = SafeHeights[Y0 * HeightMapWidth + X0];
-        float H10 = SafeHeights[Y0 * HeightMapWidth + X1];
-        float H01 = SafeHeights[Y1 * HeightMapWidth + X0];
-        float H11 = SafeHeights[Y1 * HeightMapWidth + X1];
-
-        const float InvalidH = UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f;
-        if (H00 <= InvalidH || H10 <= InvalidH || H01 <= InvalidH || H11 <= InvalidH)
-            return InvalidH;
-
-        float LerpX1 = FMath::Lerp(H00, H10, GX - (float)X0);
-        float LerpX2 = FMath::Lerp(H01, H11, GX - (float)X0);
-        return FMath::Lerp(LerpX1, LerpX2, GY - (float)Y0);
-    };
-
-    // --- GLOBAL FLOOR ---
-    const float GlobalFloorZ = Origin.Z - ShellRadiusWorld * 2.0f - 4.0f * VoxelSize;
-
-    auto InBounds = [&](const FIntVector& C)
-    {
-        return C.X >= 0 && C.X <= N &&
-               C.Y >= 0 && C.Y <= N &&
-               C.Z >= 0 && C.Z <= N;
-    };
-
-    // --- MAIN LOOP ---
-    for (int32 x = 0; x < N; ++x)
-    {
-        for (int32 y = 0; y < N; ++y)
+        // ---------------------------------------------
+        // 1A. Baseline fill (with seam‑friendly extrapolation)
+        // ---------------------------------------------
+        for (int32 Z = -Pad; Z < ChunkSize + Pad; ++Z)
         {
-            if (!ActiveColumns[GetIdx2D(x, y)])
-                continue;
+            const float WorldZ = Origin.Z + (Z * VoxelSize);
+            const bool bBelowFloor = (WorldZ < GlobalFloorZ);
+            const int32 ZOffset = (Z + Pad) * GridDim * GridDim;
 
-            for (int32 z = 0; z < N; ++z)
+            for (int32 Y = -Pad; Y < ChunkSize + Pad; ++Y)
             {
-                FVector CornerWS[8];
-                float  CornerSDF[8];
+                const int32 YOffset = (Y + Pad) * GridDim;
 
-                bool bAllSolid = true;
-                bool bAllAir   = true;
-
-                for (int32 i = 0; i < 8; i++)
+                for (int32 X = -Pad; X < ChunkSize + Pad; ++X)
                 {
-                    FIntVector LocalCoord = FIntVector(x, y, z) + GetCornerOffset(i);
-                    CornerWS[i] = Origin + FVector(LocalCoord) * VoxelSize;
+                    const int32 GridIndex = ZOffset + YOffset + (X + Pad);
 
-                    float SDF = 0.0f;
-
-                    if (!InBounds(LocalCoord))
+                    if (bBelowFloor)
                     {
-                        SDF = +2.0f; // air
+                        DensityGrid[GridIndex] = -2.0f;
+                        continue;
                     }
-                    else if (const FVoxelData* Data = VoxelData.Find(LocalCoord))
-                    {
-                        SDF = Data->SDFValue;
-                    }
-                    else
-                    {
-                        float H = GetHeightAt(CornerWS[i]);
-                        const float InvalidH = UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f;
 
-                        if (H <= InvalidH)
+                    float SDF = 2.0f;
+
+                    if (bHasHeights)
+                    {
+                        int32 cX = FMath::Clamp(X, 0, ChunkSize);
+                        int32 cY = FMath::Clamp(Y, 0, ChunkSize);
+
+                        float H = HeightValues[cY * HMapWidth + cX];
+
+                        // --- SEAM FIX: EXTRAPOLATION (keep this even in hardened path) ---
+
+                        // X extrapolation
+                        if (X < 0)
                         {
-                            SDF = +2.0f; // air if no landscape
+                            float H_Next = HeightValues[cY * HMapWidth + (cX + 1)];
+                            H += (H - H_Next) * (float)(-X);
                         }
-                        else
+                        else if (X > ChunkSize)
                         {
-                            float Dist       = CornerWS[i].Z - H;
-                            float BiasedDist = Dist + ClipBias;
+                            float H_Prev = HeightValues[cY * HMapWidth + (cX - 1)];
+                            H += (H - H_Prev) * (float)(X - ChunkSize);
+                        }
 
-                            float LocalFloorZ = H - ShellRadiusWorld - 2.0f * VoxelSize;
-                            if (CornerWS[i].Z < LocalFloorZ)
+                        // Y extrapolation
+                        if (Y < 0)
+                        {
+                            float H0 = HeightValues[0 * HMapWidth + cX];
+                            float H1 = HeightValues[1 * HMapWidth + cX];
+                            H += (H0 - H1) * (float)(-Y);
+                        }
+                        else if (Y > ChunkSize)
+                        {
+                            float HN  = HeightValues[ChunkSize * HMapWidth + cX];
+                            float HN1 = HeightValues[(ChunkSize - 1) * HMapWidth + cX];
+                            H += (HN - HN1) * (float)(Y - ChunkSize);
+                        }
+
+                        // --- END SEAM FIX ---
+
+                        if (H > InvalidH)
+                        {
+                            const float Dist        = WorldZ - H;
+                            const float LocalFloorZ = H - ShellRadiusWorld - 2.0f * VoxelSize;
+
+                            if (WorldZ < LocalFloorZ)
                                 SDF = -2.0f;
                             else
-                                SDF = BiasedDist / VoxelSize;
+                                SDF = (Dist + ClipBias) / VoxelSize;
                         }
                     }
 
-                    if (CornerWS[i].Z < GlobalFloorZ)
-                        SDF = FMath::Min(SDF, -2.0f);
-
-                    CornerSDF[i] = SDF;
-
-                    if (SDF > 0.0f) bAllSolid = false;
-                    else            bAllAir   = false;
+                    DensityGrid[GridIndex] = SDF;
                 }
+            }
+        }
 
-                if (bAllSolid || bAllAir)
-                    continue;
+        // Snapshot baseline landscape SDF BEFORE voxel edits
+        TArray<float> LandscapeGrid = DensityGrid;
 
-                int32 CubeIndex = CalculateMarchingCubesIndex(CornerSDF);
-                if (CubeIndex == 0 || CubeIndex == 255)
-                    continue;
+        // ---------------------------------------------
+        // 1B. Voxel overlay (unchanged)
+        // ---------------------------------------------
+        for (const auto& Pair : VoxelData)
+        {
+            const FIntVector& P = Pair.Key;
+            if (P.X >= -Pad && P.X < ChunkSize + Pad &&
+                P.Y >= -Pad && P.Y < ChunkSize + Pad &&
+                P.Z >= -Pad && P.Z < ChunkSize + Pad)
+            {
+                DensityGrid[GetGridIdx(P.X, P.Y, P.Z)] = Pair.Value.SDFValue;
+            }
+        }
 
-                const auto& ConnectionTable = MarchingCubesTables::TriangleConnectionTable;
-                const auto& EdgeTable       = MarchingCubesTables::EdgeConnection;
+        // ---------------------------------------------
+        // 1C. Minimal poke‑through fix (only tiny upward sign flips)
+        // ---------------------------------------------
+        const float MaxPoke = 0.35f;      // how far above surface we tolerate
+        const float MaxDepth = -0.75f;    // only near the surface, not deep interior
 
-                for (int32 i = 0; ConnectionTable[CubeIndex][i] != -1; i += 3)
+        for (int32 Z = 0; Z < ChunkSize; ++Z)
+        for (int32 Y = 0; Y < ChunkSize; ++Y)
+        for (int32 X = 0; X < ChunkSize; ++X)
+        {
+            const int32 Idx = GetGridIdx(X, Y, Z);
+
+            const float L = LandscapeGrid[Idx]; // baseline landscape SDF
+            const float V = DensityGrid[Idx];   // voxel‑modified SDF
+
+            // Only touch: landscape solid, voxel air, small poke, near surface
+            if (L < 0.0f && L > MaxDepth && V > 0.0f && V < MaxPoke)
+            {
+                // Snap back to just inside the surface (slightly negative)
+                DensityGrid[Idx] = FMath::Min(-0.05f, L * 0.5f);
+            }
+        }
+    }
+    else
+    {
+        // ORIGINAL PATH (unchanged)
+        for (int32 Z = -Pad; Z < ChunkSize + Pad; ++Z)
+        {
+            float WorldZ = Origin.Z + (Z * VoxelSize);
+            bool bBelowFloor = (WorldZ < GlobalFloorZ);
+            int32 ZOffset = (Z + Pad) * GridDim * GridDim;
+
+            for (int32 Y = -Pad; Y < ChunkSize + Pad; ++Y)
+            {
+                int32 YOffset = (Y + Pad) * GridDim;
+
+                for (int32 X = -Pad; X < ChunkSize + Pad; ++X)
                 {
-                    for (int32 j = 0; j < 3; ++j)
+                    int32 GridIndex = ZOffset + YOffset + (X + Pad);
+                    if (bBelowFloor) { DensityGrid[GridIndex] = -2.0f; continue; }
+
+                    float SDF = 2.0f;
+                    if (bHasHeights)
                     {
-                        int32 EdgeIdx = ConnectionTable[CubeIndex][i + j];
+                        int32 cX = FMath::Clamp(X, 0, ChunkSize);
+                        int32 cY = FMath::Clamp(Y, 0, ChunkSize);
 
-                        FVector P1 = CornerWS[EdgeTable[EdgeIdx][0]];
-                        FVector P2 = CornerWS[EdgeTable[EdgeIdx][1]];
-                        float   S1 = CornerSDF[EdgeTable[EdgeIdx][0]];
-                        float   S2 = CornerSDF[EdgeTable[EdgeIdx][1]];
+                        float H = HeightValues[cY * HMapWidth + cX];
 
-                        FVector Interp = InterpolateVertex(P1, P2, S1, S2);
-                        FIntVector Key = MakeKey(Interp);
-
-                        int32* CacheIdx = VertexCache.Find(Key);
-                        if (CacheIdx)
+                        if (X < 0)
                         {
-                            OutTriangles.Add(*CacheIdx);
+                            float H_Next = HeightValues[cY * HMapWidth + (cX + 1)];
+                            H += (H - H_Next) * (float)(-X);
+                        }
+                        else if (X > ChunkSize)
+                        {
+                            float H_Prev = HeightValues[cY * HMapWidth + (cX - 1)];
+                            H += (H - H_Prev) * (float)(X - ChunkSize);
+                        }
+
+                        if (Y < 0)
+                        {
+                            float H_Y0 = HeightValues[0 * HMapWidth + cX];
+                            float H_Y1 = HeightValues[1 * HMapWidth + cX];
+                            H += (H_Y0 - H_Y1) * (float)(-Y);
+                        }
+                        else if (Y > ChunkSize)
+                        {
+                            float H_YN   = HeightValues[ChunkSize * HMapWidth + cX];
+                            float H_YN_1 = HeightValues[(ChunkSize - 1) * HMapWidth + cX];
+                            H += (H_YN - H_YN_1) * (float)(Y - ChunkSize);
+                        }
+
+                        if (H > InvalidH)
+                        {
+                            float Dist = WorldZ - H;
+                            float LocalFloorZ = H - ShellRadiusWorld - 2.0f * VoxelSize;
+                            if (WorldZ < LocalFloorZ) SDF = -2.0f;
+                            else SDF = (Dist + ClipBias) / VoxelSize;
+                        }
+                    }
+                    DensityGrid[GridIndex] = SDF;
+                }
+            }
+        }
+
+        for (const auto& Pair : VoxelData)
+        {
+            const FIntVector& P = Pair.Key;
+            if (P.X >= -Pad && P.X < ChunkSize + Pad &&
+                P.Y >= -Pad && P.Y < ChunkSize + Pad &&
+                P.Z >= -Pad && P.Z < ChunkSize + Pad)
+            {
+                DensityGrid[GetGridIdx(P.X, P.Y, P.Z)] = Pair.Value.SDFValue;
+            }
+        }
+    }
+
+    // --- STEP 2: PRE-CALCULATE NORMALS (unchanged) ---
+    TArray<FVector> NormalGrid;
+    if (ShadingMode == EDiggerShadingMode::OrganicGradient)
+    {
+        NormalGrid.SetNumUninitialized(TotalGridSize);
+
+        for (int32 Z = -Pad + 1; Z < ChunkSize + Pad - 1; ++Z)
+        {
+            for (int32 Y = -Pad + 1; Y < ChunkSize + Pad - 1; ++Y)
+            {
+                for (int32 X = -Pad + 1; X < ChunkSize + Pad - 1; ++X)
+                {
+                    int32 Idx = GetGridIdx(X, Y, Z);
+
+                    float nx = DensityGrid[Idx + 1]              - DensityGrid[Idx - 1];
+                    float ny = DensityGrid[Idx + GridDim]        - DensityGrid[Idx - GridDim];
+                    float nz = DensityGrid[Idx + (GridDim*GridDim)] - DensityGrid[Idx - (GridDim*GridDim)];
+
+                    FVector N(nx, ny, nz);
+                    if (!N.Normalize()) N = FVector::UpVector;
+                    NormalGrid[Idx] = N;
+                }
+            }
+        }
+    }
+
+    // --- STEP 3: MARCHING CUBES (unchanged) ---
+    TMap<FIntVector, int32> VertexCache;
+    VertexCache.Reserve(ChunkSize * ChunkSize * 2);
+    const float VertexQuant = 1.0f / (VoxelSize * 0.01f);
+
+    const int32 StrideY = GridDim;
+    const int32 StrideZ = GridDim * GridDim;
+
+    for (int32 X = 0; X < ChunkSize; ++X)
+    {
+        for (int32 Y = 0; Y < ChunkSize; ++Y)
+        {
+            for (int32 Z = 0; Z < ChunkSize; ++Z)
+            {
+                int32 BaseIdx = GetGridIdx(X, Y, Z);
+                float CornerSDF[8];
+                int32 CubeIndex = 0;
+
+                CornerSDF[0] = DensityGrid[BaseIdx];
+                CornerSDF[1] = DensityGrid[BaseIdx + 1];
+                CornerSDF[2] = DensityGrid[BaseIdx + StrideY + 1];
+                CornerSDF[3] = DensityGrid[BaseIdx + StrideY];
+                CornerSDF[4] = DensityGrid[BaseIdx + StrideZ];
+                CornerSDF[5] = DensityGrid[BaseIdx + StrideZ + 1];
+                CornerSDF[6] = DensityGrid[BaseIdx + StrideZ + StrideY + 1];
+                CornerSDF[7] = DensityGrid[BaseIdx + StrideZ + StrideY];
+
+                for (int32 i = 0; i < 8; ++i)
+                    if (CornerSDF[i] < Config.IsoLevel) CubeIndex |= (1 << i);
+
+                if (CubeIndex == 0 || CubeIndex == 255) continue;
+
+                FVector BasePos = Origin + FVector(X, Y, Z) * VoxelSize;
+                const int32* TriEdges = MarchingCubesTables::TriangleConnectionTable[CubeIndex];
+
+                for (int32 i = 0; TriEdges[i] != -1; i += 3)
+                {
+                    int32 VertIndices[3];
+
+                    for (int32 v = 0; v < 3; ++v)
+                    {
+                        int32 EdgeIdx = TriEdges[i + v];
+                        int32 v1 = MarchingCubesTables::EdgeConnection[EdgeIdx][0];
+                        int32 v2 = MarchingCubesTables::EdgeConnection[EdgeIdx][1];
+
+                        float S1 = CornerSDF[v1];
+                        float S2 = CornerSDF[v2];
+                        float Alpha = 0.5f;
+                        if (FMath::Abs(S2 - S1) > 1e-5f)
+                            Alpha = FMath::Abs(S1 - Config.IsoLevel) /
+                                    (FMath::Abs(S1 - Config.IsoLevel) + FMath::Abs(S2 - Config.IsoLevel));
+
+                        FVector P1 = BasePos + (FVector(GetCornerOffset(v1)) * VoxelSize);
+                        FVector P2 = BasePos + (FVector(GetCornerOffset(v2)) * VoxelSize);
+                        FVector InterpPos = FMath::Lerp(P1, P2, Alpha);
+
+                        if (ShadingMode == EDiggerShadingMode::FlatLowPoly)
+                        {
+                            VertIndices[v] = OutVertices.Add(InterpPos);
                         }
                         else
                         {
-                            int32 NewIdx = OutVertices.Add(Interp);
-                            VertexCache.Add(Key, NewIdx);
-                            OutTriangles.Add(NewIdx);
+                            FVector RelP = InterpPos - Origin;
+                            FIntVector Key(
+                                FMath::RoundToInt(RelP.X * VertexQuant),
+                                FMath::RoundToInt(RelP.Y * VertexQuant),
+                                FMath::RoundToInt(RelP.Z * VertexQuant)
+                            );
+
+                            if (int32* Cached = VertexCache.Find(Key))
+                            {
+                                VertIndices[v] = *Cached;
+                            }
+                            else
+                            {
+                                int32 NewIdx = OutVertices.Add(InterpPos);
+                                VertexCache.Add(Key, NewIdx);
+                                VertIndices[v] = NewIdx;
+
+                                if (ShadingMode == EDiggerShadingMode::OrganicGradient)
+                                {
+                                    auto GetN = [&](int32 CI)
+                                    {
+                                        FIntVector Off = GetCornerOffset(CI);
+                                        return NormalGrid[BaseIdx + Off.X + (Off.Y * StrideY) + (Off.Z * StrideZ)];
+                                    };
+                                    FVector InterpNormal = FMath::Lerp(GetN(v1), GetN(v2), Alpha);
+                                    InterpNormal.Normalize();
+                                    OutNormals.Add(InterpNormal);
+                                }
+                            }
                         }
+                    }
+
+                    OutTriangles.Add(VertIndices[0]);
+                    OutTriangles.Add(VertIndices[1]);
+                    OutTriangles.Add(VertIndices[2]);
+
+                    if (ShadingMode == EDiggerShadingMode::FlatLowPoly)
+                    {
+                        FVector Edge1 = OutVertices[VertIndices[1]] - OutVertices[VertIndices[0]];
+                        FVector Edge2 = OutVertices[VertIndices[2]] - OutVertices[VertIndices[0]];
+                        FVector FaceNormal = FVector::CrossProduct(Edge2, Edge1).GetSafeNormal();
+                        OutNormals.Add(FaceNormal);
+                        OutNormals.Add(FaceNormal);
+                        OutNormals.Add(FaceNormal);
                     }
                 }
             }
         }
     }
 
-	// ------------------------------------------------------------
-	// POST-PROCESS: WELD CLOSE VERTICES
-	// ------------------------------------------------------------
-	WeldCloseVertices(OutVertices, OutTriangles);
+    if (ShadingMode == EDiggerShadingMode::SurfaceGeometry)
+    {
+        WeldCloseVertices(OutVertices, OutTriangles);
 
-	// ------------------------------------------------------------
-	// RECOMPUTE NORMALS AFTER WELDING
-	// ------------------------------------------------------------
-	OutNormals.SetNumZeroed(OutVertices.Num());
+        OutNormals.SetNumZeroed(OutVertices.Num());
+        for (int32 i = 0; i < OutTriangles.Num(); i += 3)
+        {
+            int32 i0 = OutTriangles[i];
+            int32 i1 = OutTriangles[i + 1];
+            int32 i2 = OutTriangles[i + 2];
 
-	for (int32 i = 0; i < OutTriangles.Num(); i += 3)
-	{
-		int32 i0 = OutTriangles[i];
-		int32 i1 = OutTriangles[i + 1];
-		int32 i2 = OutTriangles[i + 2];
+            FVector Edge1 = OutVertices[i1] - OutVertices[i0];
+            FVector Edge2 = OutVertices[i2] - OutVertices[i0];
+            FVector FaceNormal = FVector::CrossProduct(Edge2, Edge1);
 
-		FVector Edge1      = OutVertices[i1] - OutVertices[i0];
-		FVector Edge2      = OutVertices[i2] - OutVertices[i0];
-		FVector FaceNormal = FVector::CrossProduct(Edge2, Edge1);
+            OutNormals[i0] += FaceNormal;
+            OutNormals[i1] += FaceNormal;
+            OutNormals[i2] += FaceNormal;
+        }
 
-		OutNormals[i0] += FaceNormal;
-		OutNormals[i1] += FaceNormal;
-		OutNormals[i2] += FaceNormal;
-	}
-
-	for (FVector& Normal : OutNormals)
-	{
-		Normal.Normalize();
-	}
-
+        for (FVector& Normal : OutNormals)
+        {
+            Normal.Normalize();
+        }
+    }
 }
-
-
-
 
 
 

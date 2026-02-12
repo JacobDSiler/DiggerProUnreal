@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DiggerConfig.h"
 #include "DiggerDebug.h"
 #include "SparseVoxelGrid.h"
 #include "MarchingCubes.generated.h"
@@ -67,6 +68,18 @@ public:
 	// Explicit Sync call (for ForceUpdate scenarios)
 	UFUNCTION()
 	void GenerateMeshSyncronous(UVoxelChunk* Chunk);
+
+	void GenerateMesh_MarchingCubes(
+	const TMap<FIntVector, FVoxelData>& VoxelData,
+	const FVector& Origin,
+	float VoxelSize,
+	const TArray<float>& HeightValues,
+	const FDiggerMeshConfig& Config,
+	TArray<FVector>& OutVertices,
+	TArray<int32>& OutTriangles,
+	TArray<FVector>& OutNormals
+);
+
 
 	// --- WORKER API (Called by VoxelChunk Async Tasks) ---
 
@@ -168,8 +181,7 @@ private:
 		float VoxelSize,
 		const TArray<float>& HeightValues,
 		TArray<FVector>& OutVertices,
-		TArray<int32>& OutTriangles,
-		TArray<FVector>& OutNormals
+		TArray<int32>& OutTriangles, TArray<FVector>& OutNormals
 	);
 
 	// Helper to get vertex index for deduplication

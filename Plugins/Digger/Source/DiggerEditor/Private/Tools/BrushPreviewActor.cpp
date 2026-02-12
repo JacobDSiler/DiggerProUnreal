@@ -5,6 +5,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "DiggerEditorSettings.h"
 #include "BrushPreviewLightComponent.h"
+#include "VoxelConversion.h"
 #include "Components/BillboardComponent.h"
 
 // Static cache to avoid reloading every time
@@ -29,22 +30,43 @@ ABrushPreviewActor::ABrushPreviewActor()
     PreviewMesh->SetReceivesDecals(false);
     PreviewMesh->SetMobility(EComponentMobility::Movable);
 
-    // Show in editor only
-    SetActorHiddenInGame(true);          // hidden in PIE
-    PreviewMesh->SetHiddenInGame(true);  // hidden in PIE
-    PreviewMesh->SetVisibility(true, true); // visible in editor viewport
+    AActor::SetActorHiddenInGame(true);
+    PreviewMesh->SetHiddenInGame(true);
+    PreviewMesh->SetVisibility(true, true);
 
     ModeIndicator = CreateDefaultSubobject<UBillboardComponent>(TEXT("ModeIndicator"));
     ModeIndicator->SetupAttachment(RootComponent);
     ModeIndicator->SetHiddenInGame(true);
     ModeIndicator->SetVisibility(false);
-    ModeIndicator->SetRelativeLocation(FVector(0, 0, 120)); // above brush
+    ModeIndicator->SetRelativeLocation(FVector(0, 0, 120));
+    ModeIndicator->SetRelativeScale3D(FVector(10.0f));
+    ModeIndicator->bIsScreenSizeScaled = true; // optional but recommended
+    ModeIndicator->SetHiddenInGame(true);
+    ModeIndicator->SetVisibility(false);
+    ModeIndicator->SetRelativeLocation(FVector(0, 0, 50));
+    ModeIndicator->SetRelativeScale3D(FVector(10.0f));
+    ModeIndicator->bIsScreenSizeScaled = true; // optional but recommended
 
-    // Load textures (replace with your actual paths)
-    SculptSprite = LoadObject<UTexture2D>(nullptr, TEXT("/Digger/Digger/Icons/SculptIcon.SculptIcon"));
-    RotateSprite = LoadObject<UTexture2D>(nullptr, TEXT("/Digger/Digger/Icons/RotateIcon.RotateIcon"));
-    OffsetSprite = LoadObject<UTexture2D>(nullptr, TEXT("/Digger/Digger/Icons/OffsetIcon.OffsetIcon"));
+
+    // ---------------------------------------------------------------------
+    // Correct plugin content paths for icons
+    // ---------------------------------------------------------------------
+    const UDiggerEditorSettings* Settings = UDiggerEditorSettings::Get();
+
+    if (Settings)
+    {
+        SculptSprite  = Settings->SculptIcon.LoadSynchronous();
+        RotateSprite  = Settings->RotateIcon.LoadSynchronous();
+        OffsetSprite  = Settings->OffsetIcon.LoadSynchronous();
+    }
+    
+
+    // Debug logs
+    if (!SculptSprite) UE_LOG(LogTemp, Error, TEXT("Failed to load SculptSprite"));
+    if (!RotateSprite) UE_LOG(LogTemp, Error, TEXT("Failed to load RotateSprite"));
+    if (!OffsetSprite) UE_LOG(LogTemp, Error, TEXT("Failed to load OffsetSprite"));
 }
+
 
 
 void ABrushPreviewActor::SetVisible(bool bVisible)
@@ -55,6 +77,36 @@ void ABrushPreviewActor::SetVisible(bool bVisible)
     // Always hidden in PIE / game
     SetActorHiddenInGame(true);
     PreviewMesh->SetHiddenInGame(true);
+}
+
+void ABrushPreviewActor::UpdateModeIcon(EDiggerMainMode Mode)
+{
+    if (!ModeIndicator)
+        return;
+
+    // Choose sprite
+    switch (Mode)
+    {
+    case EDiggerMainMode::Rotate:
+        ModeIndicator->SetSprite(RotateSprite);
+        break;
+
+    case EDiggerMainMode::Offset:
+        ModeIndicator->SetSprite(OffsetSprite);
+        break;
+
+    default:
+        ModeIndicator->SetSprite(SculptSprite);
+        break;
+    }
+
+    // Visibility rules
+    const bool bShow =
+        (Mode == EDiggerMainMode::Rotate ||
+         Mode == EDiggerMainMode::Offset);
+
+    ModeIndicator->SetVisibility(bShow);
+    ModeIndicator->SetHiddenInGame(true); // always hidden in PIE
 }
 
 
@@ -97,25 +149,48 @@ void ABrushPreviewActor::UpdatePreview(
     const FVector& RadiusXYZ,
     float Falloff,
     bool bAddMode,
-    float CellSize,
+    float CellSize,                 // ignored for snapping now
     EBrushPreviewShape Shape,
     const FQuat& RotationWS)
 {
-    const float Cell = FMath::Max(1.f, CellSize);
-    auto Snap = [Cell](float v) { return FMath::GridSnap(v, Cell); };
+    const UDiggerEditorSettings* Settings = UDiggerEditorSettings::Get();
 
-    const FVector Snapped(
-        Snap(CenterWS.X),
-        Snap(CenterWS.Y),
-        Snap(CenterWS.Z));
+    // ---------------------------------------------------------
+    // 1. Determine snapping behavior
+    // ---------------------------------------------------------
+    const bool bSnapToGrid =
+        Settings ? Settings->bSnapPreviewToGrid : true;
 
-    SetActorLocation(Snapped);
+    // Use voxel size directly from FVoxelConversion
+    const float VoxelSize = FVoxelConversion::LocalVoxelSize;
+    const float Cell = FMath::Max(1.f, VoxelSize);
+
+    FVector FinalCenter = CenterWS;
+
+    if (bSnapToGrid)
+    {
+        auto Snap = [Cell](float v) { return FMath::GridSnap(v, Cell); };
+
+        FinalCenter = FVector(
+            Snap(CenterWS.X),
+            Snap(CenterWS.Y),
+            Snap(CenterWS.Z));
+    }
+
+    // ---------------------------------------------------------
+    // 2. Apply transform
+    // ---------------------------------------------------------
+    SetActorLocation(FinalCenter);
     SetActorRotation(RotationWS);
 
-    // Ensure the right mesh is displayed
+    // ---------------------------------------------------------
+    // 3. Ensure correct mesh
+    // ---------------------------------------------------------
     SetShape(Shape);
 
-    // Scale by desired world radii vs mesh’s native radius
+    // ---------------------------------------------------------
+    // 4. Scale preview mesh
+    // ---------------------------------------------------------
     const FVector SafeR(
         FMath::Max(0.5f * Cell, RadiusXYZ.X),
         FMath::Max(0.5f * Cell, RadiusXYZ.Y),
@@ -128,6 +203,9 @@ void ABrushPreviewActor::UpdatePreview(
 
     PreviewMesh->SetWorldScale3D(Scale);
 
+    // ---------------------------------------------------------
+    // 5. Update material parameters
+    // ---------------------------------------------------------
     if (MID)
     {
         MID->SetScalarParameterValue(TEXT("Falloff"), FMath::Clamp(Falloff, 0.f, 1.f));
@@ -143,6 +221,8 @@ void ABrushPreviewActor::UpdatePreview(
                 0.f));
     }
 }
+
+
 
 void ABrushPreviewActor::EnsureMeshesLoaded()
 {

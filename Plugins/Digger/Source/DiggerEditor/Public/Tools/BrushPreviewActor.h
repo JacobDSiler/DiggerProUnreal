@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "BrushPreviewLightComponent.h"
 #include "GameFramework/Actor.h"
+#include "DiggerModeTypes.h"
 #include "BrushPreviewActor.generated.h"
 
 class UStaticMeshComponent;
@@ -63,6 +64,9 @@ public:
 					   const FQuat& RotationWS);
 
 	void SetVisible(bool bVisible);
+	
+	void UpdateModeIcon(EDiggerMainMode Mode);
+
 
 private:
 	float MeshUnitRadius = 50.f;

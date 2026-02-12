@@ -6,8 +6,9 @@
 #include "DiggerEdMode.h"
 #include "EdMode.h"
 #include "EditorModeManager.h"
+#include "DiggerModeTypes.h"
 #include "VoxelBrushTypes.h"
-#include "FLightBrushTypes.h" 
+#include "FLightBrushTypes.h"
 
 #include "CanvasItem.h"
 #include "CanvasTypes.h"
@@ -50,21 +51,6 @@ struct FBrushHUDState
     bool bPaintingPaused = false;   // ⭐ NEW
 };
 
-enum class EDiggerMainMode : uint8
-{
-    Sculpt,
-    Rotate,
-    Offset
-};
-
-enum class EDiggerAxisMode : uint8
-{
-    None,
-    X,
-    Y,
-    Z
-};
-
 
 class DIGGEREDITOR_API FDiggerEdMode final : public FEdMode
 {
@@ -86,6 +72,9 @@ public:
         bool bFinalBrushDig;
         FRotator Rotation;
         FVector Offset;
+
+        float Force = 1.0f; // 0–1 normalized
+        EDiggerPushMode PushMode = EDiggerPushMode::Ray; // default
         
         // Advanced
         bool bIsFilled;
@@ -121,6 +110,10 @@ public:
         FVector Offset;
         float CellSize;
         uint8 ShapeType;
+
+        // NEW: Force + Push Mode
+        float Force = 0.0f; // 0–1 scalar
+        EDiggerPushMode PushMode = EDiggerPushMode::Ray;
     };
     
     // Preview Light
@@ -128,7 +121,6 @@ public:
     
     UPointLightComponent* PreviewLightComponent = nullptr;
     
-
     
     // --- FEdMode Interface ---
     virtual void Enter() override;
@@ -153,6 +145,12 @@ public:
 
     // --- Custom Methods ---
     bool GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVector& OutHitLocation, FHitResult& OutHit);
+private:
+    void OnLevelActorAdded(AActor* InActor);
+    
+    // Handles for delegates
+    FDelegateHandle OnLevelActorAddedHandle;
+public:
     
     // Legacy/Helper methods
     void SetPaintMode(bool bEnabled) { bPaintingEnabled = bEnabled; }
@@ -215,6 +213,8 @@ private:
     bool bRotationModeLatched = false;
     bool bOffsetModeLatched   = false;
     bool bIsSamplingNormal = false;
+    bool bHasLastStrokeSample = false;
+
 
     // --- Scroll Velocity Variables ---
     float ScrollVelocity = 0.0f;

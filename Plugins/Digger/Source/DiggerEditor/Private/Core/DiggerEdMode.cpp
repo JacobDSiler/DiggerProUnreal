@@ -127,6 +127,85 @@ static FORCEINLINE float WheelStep(float BaseStep, float Delta, float DeltaTime,
     return sgn * BaseStep * accel;
 }
 
+static bool IsInsideExistingHole(ADiggerManager* Digger, const FVector& Pos, float Radius)
+{
+    UWorld* World = Digger->GetWorld();
+    if (!World) return false;
+
+    for (TActorIterator<ADynamicHole> It(World); It; ++It)
+    {
+        ADynamicHole* Hole = *It;
+        if (!Hole) continue;
+
+        const float HR = Hole->GetEffectiveRadius();
+        const float Dist = FVector::Dist2D(Pos, Hole->GetActorLocation());
+
+        if (Dist < HR * 0.9f) // 90% inside
+            return true;
+    }
+
+    return false;
+}
+
+
+
+static bool IsHoleRedundant(UWorld* World, const FVector& NewHolePos, float NewHoleRadius);
+
+static bool ShouldSpawnHole(
+    ADiggerManager* Digger,
+    const FVector& BrushPos,
+    float BrushRadius)
+{
+    if (!Digger)
+        return false;
+
+    UWorld* World = Digger->GetWorld();
+    if (!World)
+        return false;
+
+    // 1) Check if brush is over landscape
+    TOptional<float> TerrainHeight = Digger->GetLandscapeHeightAt_Internal(BrushPos);
+    if (!TerrainHeight.IsSet())
+    {
+        // Not over landscape → no hole BPs above ground
+        return false;
+    }
+
+    const float Height = TerrainHeight.GetValue();
+
+    // 2) Brush must intersect the landscape surface at all
+    const float VerticalDist = FMath::Abs(BrushPos.Z - Height);
+    if (VerticalDist > BrushRadius)
+    {
+        // Too far above or below to touch the surface
+        return false;
+    }
+
+    // 3) 60% BELOW RULE
+    //
+    // Depth = how far the TOP of the brush sphere is below the landscape
+    const float Depth = Height - (BrushPos.Z + BrushRadius);
+
+    // Allow up to 60% burial
+    const float MaxAllowedDepth = BrushRadius * 0.6f;
+
+    if (Depth > MaxAllowedDepth)
+    {
+        // Brush is too far underground → suppress hole spawn
+        return false;
+    }
+
+    // 4) Redundancy gate
+    if (IsHoleRedundant(World, BrushPos, BrushRadius))
+        return false;
+
+    return true;
+}
+
+
+
+
+
 // -----------------------------------------------------------------------------------
 // LIFECYCLE
 // -----------------------------------------------------------------------------------
@@ -197,6 +276,44 @@ static void EnsureDiggerPrereqs()
 #endif
 }
 
+
+void FDiggerEdMode::OnLevelActorAdded(AActor* InActor)
+{
+    // Safety checks
+    if (!InActor || !InActor->IsA(ADynamicHole::StaticClass())) return;
+
+    // Check Settings
+    const UDiggerEditorSettings* Settings = UDiggerEditorSettings::Get();
+    bool bShowHoles = Settings ? Settings->bShowDynamicHolesFolder : false;
+
+    // Apply Visibility Logic
+    if (!bShowHoles)
+    {
+        // 1. Ensure it's hidden in outliner
+        // (We call the static helper we made earlier)
+        FDiggerEdModeToolkit::SetActorListedInOutliner(InActor, false);
+
+        // 2. Ensure it's at the root (prevents folder creation)
+        if (!InActor->GetFolderPath().IsNone())
+        {
+            InActor->SetFolderPath(NAME_None);
+        }
+
+        // 3. FORCE UI REFRESH
+        // This is the missing link! It tells the Outliner to redraw immediately.
+        if (GEditor)
+        {
+            // We use a timer to defer the refresh slightly, ensuring the spawn transaction is fully complete
+            // before we ask the UI to rebuild. This prevents glitches.
+            GEditor->GetTimerManager()->SetTimerForNextTick([this]()
+            {
+                if (GEditor) GEditor->BroadcastLevelActorListChanged();
+            });
+        }
+    }
+}
+
+
 void FDiggerEdMode::Enter()
 {
     FEdMode::Enter();
@@ -229,6 +346,7 @@ void FDiggerEdMode::Enter()
         {
             DiggerToolkit->SetDynamicHolesFolderVisible(Settings->bShowDynamicHolesFolder);
         }
+                FDiggerEdModeToolkit::SetDynamicHolesFolderVisible(Settings->bShowDynamicHolesFolder);
     }
 
     // Subscribe to modifier‑blocked notifications
@@ -247,6 +365,9 @@ void FDiggerEdMode::Enter()
 
     // Make sure the preview actor exists (no viewport client needed here)
     EnsurePreviewExists(nullptr);
+    
+    // 2. Start Listening for new spawns
+    OnLevelActorAddedHandle = GEngine->OnLevelActorAdded().AddRaw(this, &FDiggerEdMode::OnLevelActorAdded);
 }
 
 
@@ -259,6 +380,17 @@ void FDiggerEdMode::Exit()
     }
 
     DestroyPreview();
+    
+    // 1. Stop Listening
+    if (OnLevelActorAddedHandle.IsValid())
+    {
+        // Check GEngine exists before accessing (prevent crash on engine shutdown)
+        if (GEngine)
+        {
+            GEngine->OnLevelActorAdded().Remove(OnLevelActorAddedHandle);
+        }
+        OnLevelActorAddedHandle.Reset();
+    }
 
 
 
@@ -277,7 +409,6 @@ void FDiggerEdMode::Exit()
         // If Checked: Leave it visible. 
         // If Unchecked: Hide it.
         bool bFinalVisibilityState = Settings ? Settings->bShowDynamicHolesFolder : false;
-        
 
         // 3. Apply the state
         DiggerToolkit->SetDynamicHolesFolderVisible(bFinalVisibilityState);
@@ -428,6 +559,8 @@ void FDiggerEdMode::UpdateBrushSettingsFromUI(const FHitResult& TraceHit, bool b
     BrushCache.Radius    = DiggerToolkit->GetBrushRadius();
     BrushCache.Falloff   = DiggerToolkit->GetBrushFalloff();
     BrushCache.Strength  = DiggerToolkit->GetBrushStrength();
+    BrushCache.Force    = DiggerToolkit->GetBrushForce();
+    BrushCache.PushMode = DiggerToolkit->GetBrushPushMode();
     BrushCache.LightType = DiggerToolkit->GetCurrentLightType();
 
     // Dig / Add mode (with right‑click inversion)
@@ -473,8 +606,8 @@ void FDiggerEdMode::UpdateBrushSettingsFromUI(const FHitResult& TraceHit, bool b
 
     // Use the WYSIWYG preview center, not the raw surface hit
     // (UpdatePreviewAtCursor is responsible for keeping CachedBrushPreviewCenter in sync)
-    LastStrokeHitLocation   = BrushCache.CachedBrushPreviewCenter;
     LastStrokePreviewCenter = BrushCache.CachedBrushPreviewCenter;
+    bHasLastStrokeSample = false;
 }
 
 void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient)
@@ -486,15 +619,13 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
     if (!IsValid(Digger) || !InViewportClient || !InViewportClient->Viewport)
         return;
 
-    // 1. MODIFIER CHECK — using a modifier to navigate / scroll / rotate
-    // should *end* the stroke, not just pause it.
+    // 1. Modifier check — ends the stroke
     const bool bShift = InViewportClient->Viewport->KeyState(EKeys::LeftShift)  || InViewportClient->Viewport->KeyState(EKeys::RightShift);
     const bool bCtrl  = InViewportClient->Viewport->KeyState(EKeys::LeftControl) || InViewportClient->Viewport->KeyState(EKeys::RightControl);
     const bool bAlt   = InViewportClient->Viewport->KeyState(EKeys::LeftAlt)    || InViewportClient->Viewport->KeyState(EKeys::RightAlt);
 
     if (bShift || bAlt)
     {
-        // Snap the stroke end to the current hit so the last sweep is correct
         FVector PauseHitLoc;
         FHitResult PauseHit;
         if (GetMouseWorldHit(InViewportClient, PauseHitLoc, PauseHit))
@@ -502,7 +633,6 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
             LastStrokeHitLocation = PauseHitLoc;
         }
 
-        // Terminate continuous application cleanly
         bMouseButtonDown          = false;
         bIsPainting               = false;
         bIsContinuouslyApplying   = false;
@@ -517,29 +647,57 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
         return;
     }
 
-    // 2. Get current hit for context (normal, landscape vs voxel, etc.)
+    // 2. Raycast
     FVector MouseHitLocation;
     FHitResult Hit;
     if (!GetMouseWorldHit(InViewportClient, MouseHitLocation, Hit))
         return;
 
-    // Use the *preview center* as the canonical brush position.
+    // Use preview center as canonical brush position
     const FVector HitLocation = BrushCache.CachedBrushPreviewCenter.IsNearlyZero()
         ? MouseHitLocation
         : BrushCache.CachedBrushPreviewCenter;
 
-    // Distance check to avoid over‑sampling
+    // ---------------------------------------------------------
+    // ⭐ FIRST SAMPLE — ALWAYS APPLY
+    // ---------------------------------------------------------
+    if (!bHasLastStrokeSample)
+    {
+        // Apply a single brush sample immediately
+        ApplyBrushWithSettings(Digger, HitLocation, Hit, BrushCache);
+
+        LastStrokeHitLocation = HitLocation;
+        bHasLastStrokeSample = true;
+        return;
+    }
+
+    // ---------------------------------------------------------
+    // ⭐ GLOBAL JUMP FILTER — protects ALL brush types
+    // ---------------------------------------------------------
     const float DistanceSquared = FVector::DistSquared(HitLocation, LastStrokeHitLocation);
-    if (DistanceSquared < 1.0f)
+    const float JumpDistSq = FMath::Square(BrushCache.Radius);
+
+    if (DistanceSquared > JumpDistSq)
+    {
+        // Skip entire tick — no voxels, no holes, no interpolation
+        LastStrokeHitLocation = HitLocation;
+        return;
+    }
+
+    // ---------------------------------------------------------
+    // ⭐ OVERSAMPLING FILTER
+    // ---------------------------------------------------------
+    if (bIsContinuouslyApplying && DistanceSquared < 1.0f)
         return;
 
-    // Snapshot current settings for this stroke
+    // Snapshot settings
     FBrushCache CurrentSettings = BrushCache;
 
-    // Surface context
     const bool bIsLandscapeHit = Hit.GetActor() && Hit.GetActor()->IsA(ALandscapeProxy::StaticClass());
 
-    // 3. Sphere / Capsule sweep logic
+    // ---------------------------------------------------------
+    // 3. Sphere / Capsule swept strokes
+    // ---------------------------------------------------------
     if (CurrentSettings.BrushType == EVoxelBrushType::Sphere ||
         CurrentSettings.BrushType == EVoxelBrushType::Capsule)
     {
@@ -549,7 +707,7 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
             SweptStroke.bDig          = CurrentSettings.bFinalBrushDig;
             SweptStroke.BrushStrength = CurrentSettings.Strength;
             SweptStroke.BrushFalloff  = CurrentSettings.Falloff;
-            SweptStroke.BrushType     = EVoxelBrushType::Capsule; // swept representation
+            SweptStroke.BrushType     = EVoxelBrushType::Capsule;
             SweptStroke.LightType     = CurrentSettings.LightType;
 
             Digger->ActiveBrush->SetupSweptStroke(
@@ -561,37 +719,17 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
 
             Digger->ApplyBrushToAllChunks(SweptStroke);
 
-            if (SweptStroke.bDig)
+            if (SweptStroke.bDig && ShouldSpawnHole(Digger, SweptStroke.BrushPosition, CurrentSettings.Radius))
             {
-                bool bShouldSpawnHole = false;
-
-                // CASE A: Direct Landscape Hit → always cut holes
-                if (bIsLandscapeHit)
-                {
-                    bShouldSpawnHole = true;
-                }
-                // CASE B: Voxel / Cave Hit → redundancy check
-                else
-                {
-                    const bool bRedundant = IsHoleRedundant(
-                        InViewportClient->GetWorld(),
-                        SweptStroke.BrushPosition,   // canonical stroke center
-                        CurrentSettings.Radius
-                    );
-
-                    bShouldSpawnHole = !bRedundant;
-                }
-
-                if (bShouldSpawnHole)
-                {
-                    Digger->HandleHoleSpawn(SweptStroke);
-                }
+                Digger->HandleHoleSpawn(SweptStroke);
             }
         }
     }
     else
     {
-        // 4. Cube (and other non‑swept) logic — interpolate along the stroke
+        // ---------------------------------------------------------
+        // 4. Cube / non-swept interpolation
+        // ---------------------------------------------------------
         const float StepSize = CurrentSettings.Radius * 0.25f;
         const float Distance = FMath::Sqrt(DistanceSquared);
         const int32 Steps    = FMath::Clamp(FMath::FloorToInt(Distance / StepSize), 1, 20);
@@ -612,124 +750,142 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
         }
     }
 
-    // 5. Update last stroke location for the next tick
+    // 5. Update last stroke location
     LastStrokeHitLocation = HitLocation;
+    bIsContinuouslyApplying = true;
 }
 
 
-void FDiggerEdMode::ApplyBrushWithSettings(ADiggerManager* Digger, const FVector& HitLocation, const FHitResult& Hit, const FBrushCache& Settings)
+void FDiggerEdMode::ApplyBrushWithSettings(
+    ADiggerManager* Digger,
+    const FVector& HitLocation,
+    const FHitResult& Hit,
+    const FBrushCache& Settings)
 {
     if (!Digger) return;
-    
 
     Digger->Modify(); // Undo support
 
-    // 1. Push settings to Manager
-    Digger->EditorBrushRadius      = Settings.Radius;
-    Digger->EditorBrushDig         = Settings.bFinalBrushDig;
-    Digger->EditorBrushRotation    = Settings.Rotation;
-    Digger->EditorBrushIsFilled    = Settings.bIsFilled;
-    Digger->EditorBrushAngle       = Settings.Angle;
-    Digger->EditorBrushType        = Settings.BrushType;
-    Digger->EditorBrushLightType   = Settings.LightType;
-    Digger->EditorBrushHiddenSeam  = Settings.bHiddenSeam;
+    // ---------------------------------------------------------------------
+    // 1. Push scalar settings to Manager
+    // ---------------------------------------------------------------------
+    Digger->EditorBrushRadius           = Settings.Radius;
+    Digger->EditorBrushDig              = Settings.bFinalBrushDig;
+    Digger->EditorBrushIsFilled         = Settings.bIsFilled;
+    Digger->EditorBrushAngle            = Settings.Angle;
+    Digger->EditorBrushType             = Settings.BrushType;
+    Digger->EditorBrushLightType        = Settings.LightType;
+    Digger->EditorBrushHiddenSeam       = Settings.bHiddenSeam;
     Digger->EditorbUseAdvancedCubeBrush = Settings.bUseAdvancedCube;
-    Digger->EditorCubeHalfExtentX  = Settings.CubeHalfExtentX;
-    Digger->EditorCubeHalfExtentY  = Settings.CubeHalfExtentY;
-    Digger->EditorCubeHalfExtentZ  = Settings.CubeHalfExtentZ;
-    
+    Digger->EditorCubeHalfExtentX       = Settings.CubeHalfExtentX;
+    Digger->EditorCubeHalfExtentY       = Settings.CubeHalfExtentY;
+    Digger->EditorCubeHalfExtentZ       = Settings.CubeHalfExtentZ;
 
-    // 2. Offset handling (Z projected along normal when rotated)
+    // ---------------------------------------------------------------------
+    // 2. Offset handling (local, not world)
+    // ---------------------------------------------------------------------
     FVector OffsetXY(Settings.Offset.X, Settings.Offset.Y, 0.f);
     const float ZDistance = Settings.Offset.Z;
     FVector FinalOffset   = OffsetXY;
 
     if (!Settings.Rotation.IsNearlyZero())
-    {
         FinalOffset += Hit.ImpactNormal * ZDistance;
-    }
     else
-    {
         FinalOffset.Z = ZDistance;
-    }
 
-    Digger->EditorBrushOffset = FinalOffset;
-
-    // 3. Position — prefer WYSIWYG preview center
+    // ---------------------------------------------------------------------
+    // 3. WYSIWYG brush position
+    // ---------------------------------------------------------------------
     const FVector BrushPos = Settings.CachedBrushPreviewCenter;
 
-
     Digger->EditorBrushPosition = BrushPos;
+    Digger->EditorBrushOffset   = FinalOffset;
+    Digger->EditorBrushRotation = Settings.Rotation;
 
-    // --- NEW: Force WYSIWYG rotation when preview is using surface-normal alignment ---
     if (Preview.IsValid())
-    {
-        FRotator PreviewRotation = Preview->GetActorRotation();
-        FVector PreviewOffset = Preview->GetActorLocation();
+        Digger->EditorBrushRotation = Preview->GetActorRotation();
 
-        // Write our new rotation and offset to the brush cache so it will persist.
-        //BrushCache.Rotation = PreviewRotation;
-        //BrushCache.Offset = PreviewOffset;
-        
-        // Use the preview actor's actual rotation for the editor brush rotation
-        Digger->EditorBrushRotation = PreviewRotation;
-
-        // Use the preview actor's world offset (center) for the editor brush offset
-        Digger->EditorBrushOffset = PreviewOffset;
-
-        // Use the preview actor's world position for the editor brush position
-        Digger->EditorBrushPosition = BrushPos + PreviewOffset;
-    }
-
-    // 4. Apply voxels
+    // ---------------------------------------------------------------------
+    // 4. Apply voxel sculpting
+    // ---------------------------------------------------------------------
     Digger->ApplyBrushInEditor(Settings.bFinalBrushDig);
 
-    // 5. Apply hole (redundancy‑gated)
+    // ---------------------------------------------------------------------
+    // 5. HOLE SPAWN GATES (Editor only)
+    // ---------------------------------------------------------------------
+#if WITH_EDITOR
     if (Settings.bFinalBrushDig)
     {
-        const bool bIsLandscapeHit = Hit.GetActor() && Hit.GetActor()->IsA(ALandscapeProxy::StaticClass());
-        bool bShouldSpawnHole = false;
+        UWorld* World = Digger->GetWorld();
+        if (!World)
+            return;
 
-        if (bIsLandscapeHit)
+        // -------------------------------------------------------------
+        // 5.a Cooldown: limit hole spawn rate
+        // -------------------------------------------------------------
+        static float LastHoleSpawnTime = -1000.f;
+        const float HoleSpawnInterval  = 0.10f; // 100ms
+
+        const float Now = World->GetTimeSeconds();
+        if (Now - LastHoleSpawnTime < HoleSpawnInterval)
+            return;
+
+        // -------------------------------------------------------------
+        // 5.b Inside existing hole? (use real shape logic)
+        // -------------------------------------------------------------
+        for (TActorIterator<ADynamicHole> It(World); It; ++It)
         {
-            bShouldSpawnHole = true;
-        }
-        else
-        {
-            const bool bRedundant = IsHoleRedundant(
-                Digger->GetWorld(),
-                BrushPos,
-                Settings.Radius
-            );
-            bShouldSpawnHole = !bRedundant;
-        }
-        
-        if (bShouldSpawnHole)
-        {
-            // Checking if we will be peeling the landscape if we spawn the hole.
-            if (TOptional<float> TerrainHeight = Digger->GetLandscapeHeightAt_Internal(BrushPos))
+            ADynamicHole* Hole = *It;
+            if (!IsValid(Hole)) continue;
+
+            if (Hole->ContainsPoint(BrushPos))
             {
-                const float HeightDiff = BrushPos.Z - TerrainHeight.GetValue();
-                // If the brush is too close to the terrain surface, skip hole spawn
-                // // Tune this threshold (e.g. 5–15 units) depending on your voxel size
-                constexpr float DepthThreshold = 5.0f;
-                if (FMath::Abs(HeightDiff) < DepthThreshold) { bShouldSpawnHole = false; }
+                // Already inside a hole → do NOT spawn another
+                return;
             }
         }
-        
-        // Now if we passed all the checks we can spawn a hole.
-        if (bShouldSpawnHole)
-        {
-            FBrushStroke HoleStroke;
-            HoleStroke.BrushPosition = BrushPos;
-            HoleStroke.BrushRadius   = Settings.Radius;
-            HoleStroke.BrushType     = Settings.BrushType;
-            HoleStroke.bDig          = true;
 
-            Digger->HandleHoleSpawn(HoleStroke);
+        // -------------------------------------------------------------
+        // 5.c Landscape height + 60% burial rule
+        // -------------------------------------------------------------
+        TOptional<float> TerrainHeight = Digger->GetLandscapeHeightAt_Internal(BrushPos);
+        if (!TerrainHeight.IsSet())
+            return; // Not over landscape → no hole BPs
+
+        const float Height = TerrainHeight.GetValue();
+
+        // How far the TOP of the brush sphere is below the landscape
+        const float Depth = Height - (BrushPos.Z + Settings.Radius);
+        const float MaxAllowedDepth = Settings.Radius * 0.6f;
+
+        if (Depth > MaxAllowedDepth)
+        {
+            // Too deep → suppress hole spawn
+            return;
         }
+
+        // -------------------------------------------------------------
+        // 5.d Final redundancy / surface gate
+        // -------------------------------------------------------------
+        if (!ShouldSpawnHole(Digger, BrushPos, Settings.Radius))
+            return;
+
+        // -------------------------------------------------------------
+        // 6. Spawn hole
+        // -------------------------------------------------------------
+        FBrushStroke HoleStroke;
+        HoleStroke.BrushPosition = BrushPos;
+        HoleStroke.BrushRadius   = Settings.Radius;
+        HoleStroke.BrushType     = Settings.BrushType;
+        HoleStroke.bDig          = true;
+
+        Digger->HandleHoleSpawn(HoleStroke);
+        LastHoleSpawnTime = Now;
     }
+#endif // WITH_EDITOR
 }
+
+
 
 
 // -----------------------------------------------------------------------------------
@@ -895,33 +1051,8 @@ void FDiggerEdMode::UpdatePreviewModeIndicator()
     if (!Preview.IsValid())
         return;
 
-    UBillboardComponent* Indicator = Preview->ModeIndicator;
-    if (!Indicator)
-        return;
-
-    switch (CurrentMode)
-    {
-    case EDiggerMainMode::Rotate:
-        Indicator->SetSprite(Preview->RotateSprite);
-        Indicator->SetHiddenInGame(false);
-        Indicator->SetVisibility(true);
-        break;
-
-    case EDiggerMainMode::Offset:
-        Indicator->SetSprite(Preview->OffsetSprite);
-        Indicator->SetHiddenInGame(false);
-        Indicator->SetVisibility(true);
-        break;
-
-    default:
-        Indicator->SetSprite(Preview->SculptSprite);
-        Indicator->SetHiddenInGame(true);
-        Indicator->SetVisibility(false);
-        break;
-    }
+    Preview->UpdateModeIcon(CurrentMode);
 }
-
-
 
 
 void FDiggerEdMode::EnsurePreviewExists(FEditorViewportClient* ViewportClient)
@@ -1017,12 +1148,15 @@ FDiggerEdMode::FBrushUIParams FDiggerEdMode::GetCurrentBrushUI() const
 
 void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClient)
 {
-    EnsurePreviewExists({});
+    EnsurePreviewExists(nullptr);
     if (!Preview.IsValid())
         return;
 
+    const UDiggerEditorSettings* Settings = UDiggerEditorSettings::Get();
+    const bool bSnapPreviewToGrid = Settings ? Settings->bSnapPreviewToGrid : true;
+
     // ---------------------------------------------------------
-    // 1. TRACE UNDER CURSOR (Fresh every tick)
+    // 1. TRACE UNDER CURSOR
     // ---------------------------------------------------------
     FHitResult Hit;
     if (!TraceUnderCursor(InViewportClient, Hit))
@@ -1035,19 +1169,20 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
     Preview->SetVisible(true);
 
     // ---------------------------------------------------------
-    // 2. GATHER UI BRUSH PARAMS
+    // 2. UI BRUSH PARAMS (includes Force + PushMode)
     // ---------------------------------------------------------
     FBrushUIParams P = GetCurrentBrushUI();
 
     // ---------------------------------------------------------
-    // 3. CALCULATE CENTER & ALIGNMENT
+    // 3. BASE CENTER = SMART TRACE RESULT
     // ---------------------------------------------------------
     FVector Center = Hit.ImpactPoint;
 
-    //Update the preview actor light
     SpawnOrUpdatePreviewLight();
-    
-    // Check Ctrl
+
+    // ---------------------------------------------------------
+    // 3A. SURFACE NORMAL ALIGNMENT
+    // ---------------------------------------------------------
     bool bCtrlHeld = false;
     if (InViewportClient && InViewportClient->Viewport)
     {
@@ -1055,38 +1190,64 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
                     InViewportClient->Viewport->KeyState(EKeys::RightControl);
     }
 
-    // Determine if we should align
     bool bShouldAlign = false;
     if (TSharedPtr<FDiggerEdModeToolkit> LocalToolkit = GetDiggerToolkit())
     {
         bShouldAlign = LocalToolkit->UseSurfaceNormalRotation();
     }
 
-    // Ctrl forces alignment ON
     if (bCtrlHeld)
-    {
         bShouldAlign = true;
-    }
 
     if (bShouldAlign)
     {
         const FVector Normal = Hit.ImpactNormal.GetSafeNormal();
         const FQuat AlignRotation = FQuat::FindBetweenNormals(FVector::UpVector, Normal);
 
-        // Ctrl = pure alignment
         if (bCtrlHeld)
         {
             P.Rotation = AlignRotation.Rotator();
         }
         else
         {
-            // Toolkit = additive alignment
             P.Rotation = (AlignRotation * P.Rotation.Quaternion()).Rotator();
         }
     }
 
     // ---------------------------------------------------------
-    // 3B. APPLY OFFSETS (must happen BEFORE landscape correction)
+    // 3B. APPLY FORCE PUSH BEFORE OFFSET
+    // ---------------------------------------------------------
+    if (P.Force > KINDA_SMALL_NUMBER)
+    {
+        FVector PushDir = FVector::ZeroVector;
+
+        switch (P.PushMode)
+        {
+            case EDiggerPushMode::Ray:
+                PushDir = (Hit.TraceStart - Hit.ImpactPoint).GetSafeNormal();
+                break;
+
+            case EDiggerPushMode::Normal:
+                PushDir = Hit.ImpactNormal.GetSafeNormal();
+                break;
+
+            case EDiggerPushMode::Blended:
+            {
+                FVector RayDir = (Hit.TraceStart - Hit.ImpactPoint).GetSafeNormal();
+                FVector Normal = Hit.ImpactNormal.GetSafeNormal();
+                PushDir = (RayDir + Normal).GetSafeNormal();
+                break;
+            }
+        }
+
+        const float MaxPushDistance = P.RadiusXYZ.X * 2.0f;
+        const float PushDistance = P.Force * MaxPushDistance;
+
+        Center += PushDir * PushDistance;
+    }
+
+    // ---------------------------------------------------------
+    // 3C. APPLY OFFSET (local)
     // ---------------------------------------------------------
     FVector FinalOffset = P.Offset;
 
@@ -1098,31 +1259,47 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
     Center += FinalOffset;
 
     // ---------------------------------------------------------
-    // 4. LANDSCAPE SPECIAL CASE (Vertical Snap)
+    // 4. OPTIONAL GRID SNAP
     // ---------------------------------------------------------
-    bool bIsLandscapeHit = Hit.GetActor() && Hit.GetActor()->IsA(ALandscapeProxy::StaticClass());
-
-    if (bIsLandscapeHit)
+    if (bSnapPreviewToGrid)
     {
-        if (UWorld* World = InViewportClient ? InViewportClient->GetWorld() : nullptr)
+        ADiggerManager* Manager = FindDiggerManager();
+        if (Manager)
         {
-            FHitResult VerticalHit;
-            const FVector XY(Center.X, Center.Y, 0.f);
-            const FVector Start(XY.X, XY.Y, 100000.f);
-            const FVector End  (XY.X, XY.Y, -100000.f);
+            TOptional<float> TerrainHeight = Manager->GetLandscapeHeightAt_Internal(Center);
+            const bool bIsLandscapeHit = TerrainHeight.IsSet();
 
-            if (World->LineTraceSingleByChannel(VerticalHit, Start, End, ECC_Visibility))
+            if (bIsLandscapeHit &&
+                Hit.GetActor() &&
+                Hit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
             {
-                if (VerticalHit.GetActor() && VerticalHit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
+                const float Height = TerrainHeight.GetValue();
+
+                if (Center.Z >= Height)
                 {
-                    Center.Z = VerticalHit.ImpactPoint.Z + FinalOffset.Z;
+                    UWorld* World = InViewportClient ? InViewportClient->GetWorld() : nullptr;
+                    if (World)
+                    {
+                        FHitResult VerticalHit;
+                        const FVector XY(Center.X, Center.Y, 0.f);
+                        const FVector Start(XY.X, XY.Y, 100000.f);
+                        const FVector End  (XY.X, XY.Y, -100000.f);
+
+                        if (World->LineTraceSingleByChannel(VerticalHit, Start, End, ECC_Visibility))
+                        {
+                            if (VerticalHit.GetActor() && VerticalHit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
+                            {
+                                Center.Z = VerticalHit.ImpactPoint.Z;
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
     // ---------------------------------------------------------
-    // 5. BUILD STROKE DATA (Authoritative brush state)
+    // 5. BUILD STROKE DATA (Force + PushMode included)
     // ---------------------------------------------------------
     FBrushStroke Stroke;
     Stroke.BrushPosition = Center;
@@ -1132,15 +1309,23 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
     Stroke.bDig          = P.bAdd;
     Stroke.BrushRotation = P.Rotation;
     Stroke.BrushLength   = P.RadiusXYZ.Z;
-    Stroke.BrushType     = EVoxelBrushType::Sphere;
+    
+    float SettingsForceMultiplier = Settings? Settings->ForceMultiplier : 250.f;
+    Stroke.BrushForce    = P.Force * SettingsForceMultiplier; // ToDo: replace magic number with settings ForceMultiplier value!
+    Stroke.PushMode      = P.PushMode;
 
     if (TSharedPtr<FDiggerEdModeToolkit> FoundToolkit = GetDiggerToolkit())
     {
         Stroke.BrushType = FoundToolkit->GetCurrentBrushType();
+        
+    }
+    else
+    {
+        Stroke.BrushType = EVoxelBrushType::Sphere;
     }
 
     // ---------------------------------------------------------
-    // 6. GET PREVIEW SHAPE & EXTENTS FROM ACTIVE BRUSH
+    // 6. PREVIEW SHAPE
     // ---------------------------------------------------------
     FVector Extents(P.RadiusXYZ.X);
     FQuat Rotation = P.Rotation.Quaternion();
@@ -1151,7 +1336,14 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
     {
         if (IsValid(Digger->ActiveBrush))
         {
-            Digger->ActiveBrush->GetPreviewData(Center, Extents, Rotation, Falloff, Stroke.BrushType, Stroke);
+            Digger->ActiveBrush->GetPreviewData(
+                Center,
+                Extents,
+                Rotation,
+                Falloff,
+                Stroke.BrushType,
+                Stroke
+            );
 
             switch (Stroke.BrushType)
             {
@@ -1180,7 +1372,7 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
     }
 
     // ---------------------------------------------------------
-    // 7. UPDATE PREVIEW ACTOR TRANSFORM & MESH
+    // 7. UPDATE PREVIEW ACTOR
     // ---------------------------------------------------------
     Preview->UpdatePreview(
         Center,
@@ -1191,52 +1383,54 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
         PreviewShapeType,
         Rotation);
 
-    // Cache for painting logic
     BrushCache.CachedBrushPreviewCenter = Center;
     BrushCache.Radius = P.RadiusXYZ.X;
     LastStrokePreviewCenter = Center;
 
     // ---------------------------------------------------------
-    // 8. APPLY COLOR & LIGHTING
+    // 8. COLOR & LIGHTING
     // ---------------------------------------------------------
-    const UDiggerEditorSettings* Settings = UDiggerEditorSettings::Get();
-    FLinearColor TargetColor = P.bAdd ? Settings->BrushColorDig : Settings->BrushColorAdd;
-
-    // Update material color
-    TArray<UStaticMeshComponent*> MeshComps;
-    Preview->GetComponents<UStaticMeshComponent>(MeshComps);
-
-    for (UStaticMeshComponent* MeshComp : MeshComps)
+    if (Settings)
     {
-        UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(MeshComp->GetMaterial(0));
-        if (!MID)
-        {
-            MID = MeshComp->CreateAndSetMaterialInstanceDynamic(0);
-        }
-        if (MID)
-        {
-            MID->SetVectorParameterValue(FName("PreviewColor"), TargetColor);
-        }
-    }
+        FLinearColor TargetColor = P.bAdd ? Settings->BrushColorDig : Settings->BrushColorAdd;
 
-    // Update preview light
-    if (UPointLightComponent* LightComp = Preview->FindComponentByClass<UPointLightComponent>())
-    {
-        LightComp->SetIntensity(Settings->BrushLightIntensity);
-        LightComp->SetAttenuationRadius(Settings->BrushLightAttenuationRadius);
+        TArray<UStaticMeshComponent*> MeshComps;
+        Preview->GetComponents<UStaticMeshComponent>(MeshComps);
 
-        if (Settings->bMatchLightColorToBrush)
+        for (UStaticMeshComponent* MeshComp : MeshComps)
         {
-            FLinearColor LightColor = TargetColor;
-            LightColor.A = 1.0f;
-            LightComp->SetLightColor(LightColor);
+            if (!MeshComp) continue;
+
+            UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(MeshComp->GetMaterial(0));
+            if (!MID)
+            {
+                MID = MeshComp->CreateAndSetMaterialInstanceDynamic(0);
+            }
+            if (MID)
+            {
+                MID->SetVectorParameterValue(FName("PreviewColor"), TargetColor);
+            }
         }
-        else
+
+        if (UPointLightComponent* LightComp = Preview->FindComponentByClass<UPointLightComponent>())
         {
-            LightComp->SetLightColor(Settings->BrushLightColor);
+            LightComp->SetIntensity(Settings->BrushLightIntensity);
+            LightComp->SetAttenuationRadius(Settings->BrushLightAttenuationRadius);
+
+            if (Settings->bMatchLightColorToBrush)
+            {
+                FLinearColor LightColor = TargetColor;
+                LightColor.A = 1.0f;
+                LightComp->SetLightColor(LightColor);
+            }
+            else
+            {
+                LightComp->SetLightColor(Settings->BrushLightColor);
+            }
         }
     }
 }
+
 
 
 // -----------------------------------------------------------------------------------

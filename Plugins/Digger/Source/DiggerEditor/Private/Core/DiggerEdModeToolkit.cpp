@@ -21,6 +21,7 @@
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 #include "Factories/DataAssetFactory.h"
+#include "EditorActorFolders.h"
 
 // Slate UI - Widgets
 #include "DesktopPlatformModule.h"
@@ -93,60 +94,6 @@ static void NotifyProfileArrayChanged(UDiggerMaterialProfile* Profile, const FNa
 }
 
 
-
-void FDiggerEdModeToolkit::SetActorListedInOutliner(AActor* Actor, bool bListed)
-{
-    if (!Actor) return;
-
-    // Reflection cache to find the property once
-    static FBoolProperty* ListedProp = CastField<FBoolProperty>(
-        AActor::StaticClass()->FindPropertyByName(FName("bListedInSceneOutliner"))
-    );
-
-    if (ListedProp)
-    {
-        bool bCurrent = ListedProp->GetPropertyValue_InContainer(Actor);
-        if (bCurrent != bListed)
-        {
-            // Only modify if strictly necessary to avoid spamming the transaction buffer
-            Actor->Modify(); 
-            ListedProp->SetPropertyValue_InContainer(Actor, bListed);
-        }
-    }
-}
-
-void FDiggerEdModeToolkit::SetDynamicHolesFolderVisible(bool bVisible)
-{
-    if (!GEditor) return;
-    UWorld* World = GEditor->GetEditorWorldContext().World();
-    if (!World) return;
-
-    const FString TargetFolder = TEXT("Digger/DynamicHoles");
-    bool bChanged = false;
-
-    TArray<AActor*> AllActors;
-    UGameplayStatics::GetAllActorsOfClass(World, AActor::StaticClass(), AllActors);
-
-    for (AActor* Actor : AllActors)
-    {
-        if (!IsValid(Actor)) continue;
-        
-#if WITH_EDITOR
-        const FString ActorFolder = Actor->GetFolderPath().ToString();
-        if (ActorFolder == TargetFolder || ActorFolder == (TEXT("/") + TargetFolder))
-        {
-            SetActorListedInOutliner(Actor, bVisible);
-            bChanged = true;
-        }
-#endif
-    }
-
-    if (bChanged)
-    {
-        GEditor->BroadcastLevelActorListChanged();
-    }
-}
-
 // -----------------------------------------------------------------------------------
 // CONSTRUCTOR & DESTRUCTOR
 // -----------------------------------------------------------------------------------
@@ -167,6 +114,10 @@ FDiggerEdModeToolkit::FDiggerEdModeToolkit() : FModeToolkit()
     {
         CurrentLightType = *LightTypeOptions[0];
     }
+
+    PushModeOptions.Add(MakeShared<EDiggerPushMode>(EDiggerPushMode::Ray));
+    PushModeOptions.Add(MakeShared<EDiggerPushMode>(EDiggerPushMode::Normal));
+    PushModeOptions.Add(MakeShared<EDiggerPushMode>(EDiggerPushMode::Blended));
 
     CustomBrushEntries.RemoveAll([](const FCustomBrushEntry& Entry) 
     {
@@ -518,6 +469,52 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushParameterSection()
         [
             MakeLabeledSliderRow(FText::FromString("Falloff"), [this](){return BrushFalloff;}, [this](float V){BrushFalloff=V;}, 0.f, 1.f, {0.1f, 0.5f, 1.f})
         ]
+        + SVerticalBox::Slot().AutoHeight()
+        [
+            MakeLabeledSliderRow(
+                FText::FromString("Force"),
+                [this]() { return BrushForce; },
+                [this](float V) { BrushForce = V; },
+                0.f, 1.f,
+                {0.f, 0.5f, 1.f}
+            )
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(4)
+        [
+            SNew(SHorizontalBox)
+
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString("Push Mode"))
+            ]
+
+            + SHorizontalBox::Slot().FillWidth(1.f).Padding(8,0)
+            [
+                SNew(SComboBox<TSharedPtr<EDiggerPushMode>>)
+                .OptionsSource(&PushModeOptions)
+                .OnGenerateWidget_Lambda([](TSharedPtr<EDiggerPushMode> Mode)
+                {
+                    return SNew(STextBlock)
+                        .Text(FText::FromString(
+                            StaticEnum<EDiggerPushMode>()->GetNameStringByValue((int64)*Mode)));
+                })
+                .OnSelectionChanged_Lambda([this](TSharedPtr<EDiggerPushMode> Mode, ESelectInfo::Type)
+                {
+                    if (Mode.IsValid())
+                        CurrentPushMode = *Mode;
+                })
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([this]()
+                    {
+                        return FText::FromString(
+                            StaticEnum<EDiggerPushMode>()->GetNameStringByValue((int64)CurrentPushMode));
+                    })
+                ]
+            ]
+        ]
+
     ];
 }
 
@@ -1240,6 +1237,109 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDebugCheckbox(const FDiggerDebug::
 {
     return MakeDebugCheckbox(FlagEntry.Key.ToString(), FlagEntry.Value);
 }
+
+// Outliner Helpers
+
+// Helper to toggle the protected bListedInSceneOutliner
+void FDiggerEdModeToolkit::SetActorListedInOutliner(AActor* Actor, bool bListed)
+{
+    if (!Actor) return;
+    static FBoolProperty* ListedProp = CastField<FBoolProperty>(
+        AActor::StaticClass()->FindPropertyByName(FName("bListedInSceneOutliner"))
+    );
+    
+    // Only modify if the value is actually different to avoid dirtying the transaction buffer
+    if (ListedProp && ListedProp->GetPropertyValue_InContainer(Actor) != bListed)
+    {
+        Actor->Modify();
+        ListedProp->SetPropertyValue_InContainer(Actor, bListed);
+    }
+}
+
+void FDiggerEdModeToolkit::SetDynamicHolesFolderVisible(bool bVisible)
+{
+    // --- 0. PERSISTENCE: Save to Config ---
+    {
+        UDiggerEditorSettings* Settings = GetMutableDefault<UDiggerEditorSettings>();
+        if (Settings)
+        {
+            // Only save if it actually changed to prevent spamming config I/O
+            if (Settings->bShowDynamicHolesFolder != bVisible)
+            {
+                Settings->bShowDynamicHolesFolder = bVisible;
+
+                // This saves to DefaultEditor.ini (or User settings)
+                Settings->SaveConfig();
+
+                // Notify other systems that settings changed
+                Settings->TryUpdateDefaultConfigFile();
+            }
+        }
+    }
+
+    if (!GEditor) return;
+
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    if (!World) return;
+
+    // --- 1. Get Manager (Static Logic) ---
+    ADiggerManager* Mgr = ADiggerManager::FindDiggerManager(World);
+    if (!Mgr || !Mgr->DynamicHoleClass) return;
+
+    // --- 2. Find Actors by Class ---
+    TArray<AActor*> HoleActors;
+    UGameplayStatics::GetAllActorsOfClass(World, Mgr->DynamicHoleClass, HoleActors);
+    if (HoleActors.Num() == 0) return;
+
+    const FName TargetPath = FName("Digger/DynamicHoles");
+    bool bChanged = false;
+
+    if (bVisible)
+    {
+        // --- SHOW LOGIC ---
+        for (AActor* Hole : HoleActors)
+        {
+            if (Hole->GetFolderPath() != TargetPath)
+            {
+                Hole->SetFolderPath(TargetPath);
+            }
+
+            SetActorListedInOutliner(Hole, true);
+        }
+        bChanged = true;
+    }
+    else
+    {
+        // --- HIDE LOGIC ---
+        for (AActor* Hole : HoleActors)
+        {
+            SetActorListedInOutliner(Hole, false);
+
+            if (!Hole->GetFolderPath().IsNone())
+            {
+                Hole->SetFolderPath(NAME_None);
+            }
+        }
+
+        // --- DELETE FOLDER (new API) ---
+        if (FActorFolders::IsAvailable())
+        {
+            // Construct folder using the modern API
+            FFolder FolderToDelete(World, TargetPath);
+
+            FActorFolders::Get().DeleteFolder(*World, FolderToDelete);
+        }
+
+        bChanged = true;
+    }
+
+    // --- 3. Refresh UI ---
+    if (bChanged)
+    {
+        GEditor->BroadcastLevelActorListChanged();
+    }
+}
+
 
 // -----------------------------------------------------------------------------------
 // 5. GENERATION SECTION

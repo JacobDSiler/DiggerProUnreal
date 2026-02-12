@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DiggerConfig.h"
 #include "Engine/DeveloperSettings.h"
 #include "DiggerSettings.generated.h"
 
@@ -53,6 +54,13 @@ public:
     UPROPERTY(EditAnywhere, Config, Category="Mesh Generation",
     meta=(ClampMin="0.0001", ClampMax="5.0"))
     float WeldVertexThreshold = 0.02f;
+
+    UPROPERTY(EditAnywhere, Config, Category="Mesh Generation")
+    bool bUseEditorShadingSettings = true;
+
+    UPROPERTY(EditAnywhere, Config, Category="Mesh Generation",
+        meta=(EditCondition="!bUseEditorShadingSettings"))
+    EDiggerShadingMode ShadingMode = EDiggerShadingMode::OrganicGradient;
 
 
     // --- Resources ---

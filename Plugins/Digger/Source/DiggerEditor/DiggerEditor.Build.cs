@@ -6,11 +6,13 @@ public class DiggerEditor : ModuleRules
 {
     public DiggerEditor(ReadOnlyTargetRules Target) : base(Target)
     {
-        PublicDependencyModuleNames.AddRange(new string[] { "Digger" });
-        PrivateDependencyModuleNames.AddRange(new string[] { "Digger" });
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-        // Public includes (exposed headers)
+        // Depend on runtime module
+        PublicDependencyModuleNames.AddRange(new string[] { "Digger" });
+        PrivateDependencyModuleNames.AddRange(new string[] { "Digger" });
+
+        // Public includes (editor-only headers)
         PublicIncludePaths.AddRange(new[]
         {
             Path.Combine(ModuleDirectory, "Public/Core"),
@@ -18,9 +20,10 @@ public class DiggerEditor : ModuleRules
             Path.Combine(ModuleDirectory, "Public/Tools"),
             Path.Combine(ModuleDirectory, "Public/Assets"),
             Path.Combine(ModuleDirectory, "Public/Settings"),
+            // Removed: Public/VoxelEngine (that folder belongs to runtime module)
         });
 
-        // Private includes (internal implementation)
+        // Private includes (editor implementation)
         PrivateIncludePaths.AddRange(new[]
         {
             Path.Combine(ModuleDirectory, "Private/Core"),
@@ -28,11 +31,18 @@ public class DiggerEditor : ModuleRules
             Path.Combine(ModuleDirectory, "Private/Tools"),
             Path.Combine(ModuleDirectory, "Private/Assets"),
             Path.Combine(ModuleDirectory, "Private/Settings"),
+            // Removed: Private/VoxelEngine (no such folder in editor module)
         });
 
-        // Link to runtime module
-        PrivateDependencyModuleNames.Add("Digger");
+        PublicDependencyModuleNames.AddRange(new[]
+        {
+            "Core",
+            "CoreUObject",
+            "Engine",
+            "DeveloperSettings"   // ← REQUIRED FOR UHT TO GENERATE THE HEADER
+        });
 
+        
         // Core engine dependencies
         PrivateDependencyModuleNames.AddRange(new[]
         {
@@ -56,7 +66,7 @@ public class DiggerEditor : ModuleRules
             "InteractiveToolsFramework",
             "EditorInteractiveToolsFramework",
             "DeveloperSettings",
-            "Landscape", // <--- ADD THIS LINE HERE
+            "Landscape",
         });
 
         // Slate UI

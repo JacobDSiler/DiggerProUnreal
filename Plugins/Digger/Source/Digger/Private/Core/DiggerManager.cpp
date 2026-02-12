@@ -1599,85 +1599,25 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke, bool Force
 void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
 {
     const UVoxelBrushShape* ActiveBrushShape = GetActiveBrushShape(BrushStroke.BrushType);
-    if (!ActiveBrushShape)
-    {
-        if (DiggerDebug::Brush())
-        {
-            UE_LOG(LogTemp, Error, TEXT("ActiveBrushShape is null for brush type %d"), (int32)BrushStroke.BrushType);
-        }
-        return;
-    }
+    if (!ActiveBrushShape) return;
 
-    //Modify();
-
-    // If Brush and Verbose Debug Flags are both on, give the full brush details.
-    if (DiggerDebug::Brush() && DiggerDebug::Verbose())
-    {
-        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: === BRUSH STROKE DEBUG ==="));
-        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Position: %s"), *BrushStroke.BrushPosition.ToString());
-        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Radius: %f"), BrushStroke.BrushRadius);
-        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Falloff: %f"), BrushStroke.BrushFalloff);
-        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Strength: %f"), BrushStroke.BrushStrength);
-        UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: bDig: %s"), BrushStroke.bDig ? TEXT("true") : TEXT("false"));
-    }
-
-    
     if (FVoxelConversion::LocalVoxelSize <= 0.0f)
     {
         FVoxelConversion::InitFromConfig(8, 4, 100.0f, FVector::ZeroVector);
     }
 
-    // Handle hole spawn ONCE per brush stroke, before processing chunks
-    if (BrushStroke.bDig)
-    {
-        // 1. Get Height
-        float TerrainHeight = GetLandscapeHeightAt(BrushStroke.BrushPosition);
+    // Handle Holes (Keep your existing logic here)
+    // ...
 
-        // 2. Check for Sentinel (Cache Miss)
-        bool bHeightValid = (TerrainHeight > (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f));
-
-        if (!bHeightValid)
-        {
-            // CASE A: Cache Missed.
-            // We assume we are digging on a valid surface that just hasn't cached yet.
-            // Force the spawn attempt. HandleHoleSpawn has its own internal checks if needed.
-            if (DiggerDebug::Holes())
-            {
-                UE_LOG(LogTemp, Warning, TEXT("ApplyBrushToAllChunks: Height Cache Miss at %s. Attempting Hole Spawn anyway."), 
-                    *BrushStroke.BrushPosition.ToString());
-            }
-            HandleHoleSpawn(BrushStroke);
-        }
-        else
-        {
-            // CASE B: Valid Height.
-            // Check if the bottom of the brush penetrates the surface.
-            // Formula: BrushBottom (Center - Radius + Falloff) <= SurfaceHeight
-            float BrushBottom = BrushStroke.BrushPosition.Z - BrushStroke.BrushRadius + BrushStroke.BrushFalloff;
-            
-            if (BrushBottom <= TerrainHeight)
-            {
-                HandleHoleSpawn(BrushStroke);
-            }
-            else
-            {
-                // We are digging in the air above the terrain? Don't spawn a black cap.
-                if (DiggerDebug::Holes())
-                {
-                    // Optional verbose log
-                     UE_LOG(LogTemp, Warning, TEXT("Skipped Hole Spawn: Brush is above terrain."));
-                }
-            }
-        }
-    }
-
+    VoxelSize = FVoxelConversion::LocalVoxelSize;
     float BrushEffectRadius = BrushStroke.BrushRadius + BrushStroke.BrushFalloff;
-    float ChunkWorldSize = FVoxelConversion::ChunkSize * FVoxelConversion::LocalVoxelSize;
-    float ChunkDiagonal = ChunkWorldSize * 1.732f; // sqrt(3) for 3D diagonal
-    float SafetyPadding = BrushEffectRadius + ChunkDiagonal;
+    
+    // PADDING: We added 2 voxels of padding in ApplyBrushStroke.
+    // We add 3 here to be safe and ensure those chunks are found.
+    float RoutingPadding = BrushEffectRadius + (VoxelSize * 3.0f);
 
-    FVector Min = BrushStroke.BrushPosition - FVector(SafetyPadding);
-    FVector Max = BrushStroke.BrushPosition + FVector(SafetyPadding);
+    FVector Min = BrushStroke.BrushPosition - FVector(RoutingPadding);
+    FVector Max = BrushStroke.BrushPosition + FVector(RoutingPadding);
 
     FIntVector MinChunk = FVoxelConversion::WorldToChunk(Min);
     FIntVector MaxChunk = FVoxelConversion::WorldToChunk(Max);
@@ -1690,42 +1630,25 @@ void ADiggerManager::ApplyBrushToAllChunks(FBrushStroke& BrushStroke)
             {
                 FIntVector ChunkCoords(X, Y, Z);
                 
-                // Add this logging
-                if (DiggerDebug::Chunks())
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("Trying to get/create chunk at: %s"), *ChunkCoords.ToString());
-                }
-                
+                // If we are near the border, GetOrCreate allows the neighbor 
+                // to receive the "ghost" data needed to mesh the seam seamlessly.
                 if (UVoxelChunk* Chunk = GetOrCreateChunkAtChunk(ChunkCoords))
                 {
-                    if (DiggerDebug::Chunks())
-                    {
-                        UE_LOG(LogTemp, Warning, TEXT("Successfully got chunk at: %s"), *ChunkCoords.ToString());
-                    }
-                    
                     ENetMode NetMode = GetWorld()->GetNetMode();
                     if (NetMode == NM_Standalone)
                     {
-                        // Single player: call the local method directly
                         Chunk->ApplyBrushStroke(BrushStroke);
                     }
                     else
                     {
-                        // Multiplayer: call the multicast function (from the server)
                         Chunk->MulticastApplyBrushStroke(BrushStroke);
-                    }
-                }
-                else
-                {
-                    if (DiggerDebug::Chunks())
-                    {
-                        UE_LOG(LogTemp, Error, TEXT("Failed to get/create chunk at: %s"), *ChunkCoords.ToString());
                     }
                 }
             }
         }
     }
 }
+
 
 void ADiggerManager::SetVoxelAtWorldPosition(const FVector& WorldPos, float Value)
 {
@@ -3630,7 +3553,8 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     if (!ActiveBrush)
     {
 #if WITH_EDITOR
-        UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: ActiveBrush is NULL in Editor!"));
+        if (DiggerDebug::Brush())
+            UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: ActiveBrush is NULL in Editor!"));
         return;
 #else
         ActiveBrush = NewObject<UVoxelBrushShape>(this);
@@ -3649,19 +3573,18 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 
     if (!ActiveBrush)
     {
-        UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: ActiveBrush is still NULL after initialization."));
+        if (DiggerDebug::Holes())
+            UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: ActiveBrush is still NULL after initialization."));
         return;
     }
 
     // 2. AUTHORITATIVE CENTER / ROTATION FROM STROKE (PREVIEW-DRIVEN)
-    FVector Center   = Stroke.BrushPosition;              // ✅ already WYSIWYG from preview
+    FVector Center   = Stroke.BrushPosition; // WYSIWYG from preview
     FVector Extents  = FVector(Stroke.BrushRadius);
     FQuat   Rotation = Stroke.BrushRotation.Quaternion();
     float   Falloff  = Stroke.BrushFalloff;
     EVoxelBrushType BrushType = Stroke.BrushType;
 
-    // If you still need brush to refine extents/rotation, let it,
-    // but do NOT let it move Center away from the preview center.
     ActiveBrush->GetPreviewData(
         Center,
         Extents,
@@ -3670,7 +3593,6 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
         BrushType,
         Stroke);
 
-    // Use the (preview-aligned) center as spawn location
     FVector  SpawnLocation = Center;
     FRotator SpawnRotation = Rotation.Rotator();
 
@@ -3703,6 +3625,28 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
         UE_LOG(LogTemp, Warning,
             TEXT("HandleHoleSpawn: No landscape detected near brush center. Skipping hole spawn."));
         return;
+    }
+
+    // 3.b 60% SUBMERGED MAX GATE
+    if (bValidTerrainZ)
+    {
+        const float Radius = Stroke.BrushRadius;
+
+        // Depth of the TOP of the brush sphere below the landscape
+        const float Depth = TerrainZ - (SpawnLocation.Z + Radius);
+        const float MaxAllowedDepth = Radius * 0.6f;
+
+        if (Depth > MaxAllowedDepth)
+        {
+            // Brush is too far underground → do not spawn a hole
+            if (DiggerDebug::Holes())
+            {
+                UE_LOG(LogTemp, Verbose,
+                    TEXT("HandleHoleSpawn: Suppressed hole (too deep). Depth=%.2f, MaxAllowed=%.2f"),
+                    Depth, MaxAllowedDepth);
+            }
+            return;
+        }
     }
 
     // 4. SCALE
@@ -3742,6 +3686,7 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
         *SpawnLocation.ToString(),
         *Chunk->GetChunkCoordinates().ToString());
 }
+
 
 
 

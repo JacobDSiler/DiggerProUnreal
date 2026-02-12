@@ -260,15 +260,14 @@ FHitResult UVoxelBrushShape::RecursiveTraceThroughHoles_Internal(
     }
 
     FHitResult Hit;
-    bool bHit = World->SweepSingleByChannel(
+    bool bHit = World->LineTraceSingleByChannel(
         Hit,
         Start,
         End,
-        FQuat::Identity,
         ECC_Visibility,
-        FCollisionShape::MakeSphere(BrushRadius),
         Params
     );
+
 
     if (!bHit || !Hit.GetActor())
         return FHitResult();

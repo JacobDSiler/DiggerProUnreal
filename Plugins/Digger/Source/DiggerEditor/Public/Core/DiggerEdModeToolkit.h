@@ -9,6 +9,7 @@
 #include "FCustomBrushEntry.h"
 
 // --- NEW WIDGET INCLUDES ---
+#include "DiggerEdMode.h"
 #include "DiggerFeatureFlags.h"
 #include "SDiggerCaveImporterWidget.h"
 #include "SDiggerLobbyWidget.h"
@@ -73,6 +74,9 @@ public:
     float GetBrushFalloff() const { return BrushFalloff; }
     void SetBrushFalloff(float InFalloff) { BrushFalloff = InFalloff; }
 
+    float GetBrushForce() const { return BrushForce; }
+    void SetBrushForce(float InForce) { BrushForce = InForce; }
+
     float GetBrushLength() const { return BrushLength; }
     void SetBrushLength(float InLength) { BrushLength = InLength; }
 
@@ -89,6 +93,11 @@ public:
     
     EVoxelBrushType GetCurrentBrushType() const { return CurrentBrushType; }
     void SetCurrentBrushType(EVoxelBrushType NewType);
+
+    EDiggerPushMode GetBrushPushMode() const { return CurrentPushMode; }
+    void SetBrushPushMode(EDiggerPushMode Mode) { CurrentPushMode = Mode; }
+    // Options array for the dropdown
+    TArray<TSharedPtr<EDiggerPushMode>> PushModeOptions;
 
     // Light Brush Specifics (Fixed: This was missing)
     ELightBrushType GetCurrentLightType() const { return CurrentLightType; }
@@ -202,6 +211,7 @@ private:
     float BrushRadius = 50.0f;
     float BrushFalloff = 0.2f;
     float BrushStrength = 0.8f;
+    float BrushForce = 0.5f;
     float BrushLength = 200.0f;
     
     // Rotation & Offset
@@ -214,6 +224,8 @@ private:
     EVoxelBrushType CurrentBrushType = EVoxelBrushType::Sphere;
     bool bBrushDig = false;
     TOptional<bool> TemporaryDigOverride;
+
+    EDiggerPushMode CurrentPushMode = EDiggerPushMode::Ray;
     
     float ConeAngle = 45.0f;
     float MinConeAngle = 5.0f;
@@ -388,9 +400,10 @@ private:
     // Outliner Helpers
     // Helper to set the protected bListedInSceneOutliner property
 public:
+    // Make this public and static so the Spawner can use it
     static void SetActorListedInOutliner(AActor* Actor, bool bListed);
 
-    void SetDynamicHolesFolderVisible(bool bVisible);
+    static void SetDynamicHolesFolderVisible(bool bVisible);
 
 private:
     

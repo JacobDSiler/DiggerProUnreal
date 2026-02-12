@@ -6,6 +6,7 @@
 #include "DiggerManager.h"
 
 
+
 /**
  * FVoxelConversion - Utility struct for converting between different coordinate spaces in a voxel-based terrain system.
  * 
@@ -21,7 +22,7 @@
  * - Voxels within a chunk can be addressed using local coordinates
  * - A 1-voxel overflow region exists on each side of the chunk for seamless transitions
  */
-struct FVoxelConversion
+struct DIGGER_API FVoxelConversion
 {
     /** Number of grid squares per chunk (e.g., 8) */
     static int32 ChunkSize;
