@@ -9,99 +9,81 @@ float UCubeBrushShape::CalculateSDF_Implementation(
     float TerrainHeight
 ) const
 {
-    // 1. Transform Point to Local Space
-    FVector Center = Stroke.BrushPosition + Stroke.BrushOffset;
+    const FVector Center = Stroke.BrushPosition + Stroke.BrushOffset;
     FVector LocalPos = WorldPos - Center;
-    
+
     if (!Stroke.BrushRotation.IsNearlyZero())
     {
         LocalPos = Stroke.BrushRotation.UnrotateVector(LocalPos);
     }
 
-    // 2. Determine Extents
-    FVector HalfExtents = Stroke.bUseAdvancedCubeBrush
+    // True half-extents of the box
+    const FVector HalfExtents = Stroke.bUseAdvancedCubeBrush
         ? FVector(
             Stroke.AdvancedCubeHalfExtentX,
             Stroke.AdvancedCubeHalfExtentY,
-            Stroke.AdvancedCubeHalfExtentZ
-        )
+            Stroke.AdvancedCubeHalfExtentZ)
         : FVector(Stroke.BrushRadius);
 
-    // 3. Compute Exact Signed Distance to Box
-    // d = abs(p) - b
-    FVector d = FVector(
+    // Signed distance to box (0 = surface, <0 inside, >0 outside)
+    const FVector q(
         FMath::Abs(LocalPos.X),
         FMath::Abs(LocalPos.Y),
         FMath::Abs(LocalPos.Z)
-    ) - HalfExtents;
+    );
 
-    // Inside (Negative) and Outside (Positive) components
-    float InsideDist = FMath::Min(FMath::Max(d.X, FMath::Max(d.Y, d.Z)), 0.0f);
-    
-    // Euclidean length for outside (Rounded corners)
-    FVector OutsideVec = FVector(FMath::Max(d.X, 0.0f), FMath::Max(d.Y, 0.0f), FMath::Max(d.Z, 0.0f));
-    float OutsideDist = OutsideVec.Size();
+    const FVector d = q - HalfExtents;
 
-    // The raw distance to the box surface (0 is surface, <0 inside, >0 outside)
-    float SignedDistance = InsideDist + OutsideDist;
+    const float OutsideDist = FVector(
+        FMath::Max(d.X, 0.0f),
+        FMath::Max(d.Y, 0.0f),
+        FMath::Max(d.Z, 0.0f)
+    ).Size();
 
-    // 4. Centered Falloff Logic
-    // We want the surface (SDF=0) to align with SignedDistance=0 (The Box Edge).
-    // So we shift the transition window to [-Falloff/2, +Falloff/2].
-    
-    float HalfFalloff = Stroke.BrushFalloff * 0.5f;
-    float SDFValue = 0.0f;
+    const float InsideDist = FMath::Min(FMath::Max(d.X, FMath::Max(d.Y, d.Z)), 0.0f);
+
+    const float SignedDist = OutsideDist + InsideDist; // classic box SDF
+
+    const float HalfFalloff = Stroke.BrushFalloff * 0.5f;
+
+    float ResultSDF;
 
     if (Stroke.bDig)
     {
-        // DIGGING:
-        // Dist <= -HalfFalloff  -> Pure Air (1.0)
-        // Dist == 0             -> Surface (0.0) -> Matches Preview
-        // Dist >= +HalfFalloff  -> Pure Solid (-1.0)
-
-        if (SignedDistance <= -HalfFalloff)
-        {
-            SDFValue = FVoxelConversion::SDF_AIR;
-        }
-        else if (SignedDistance >= HalfFalloff)
-        {
-            SDFValue = FVoxelConversion::SDF_SOLID;
-        }
-        else
-        {
-            // Map range [-HalfFalloff, +HalfFalloff] to [0, 1]
-            float t = (SignedDistance + HalfFalloff) / Stroke.BrushFalloff;
-            
-            // SmoothStep for nice organic blending
-            t = FMath::SmoothStep(0.0f, 1.0f, t);
-            
-            // Lerp from Air (Inside) to Solid (Outside)
-            SDFValue = FMath::Lerp(FVoxelConversion::SDF_AIR, FVoxelConversion::SDF_SOLID, t);
-        }
+        // Dig: inside → air (positive), outside → solid (negative)
+        ResultSDF = -SignedDist;
     }
-    else // Adding
+    else
     {
-        // ADDING: Inverse logic
-        if (SignedDistance <= -HalfFalloff)
+        // Add: inside → solid (negative), outside → air (positive)
+        ResultSDF = SignedDist;
+    }
+
+    if (Stroke.BrushFalloff > KINDA_SMALL_NUMBER &&
+        FMath::Abs(SignedDist) < HalfFalloff)
+    {
+        float Alpha = (SignedDist + HalfFalloff) / Stroke.BrushFalloff;
+        Alpha = FMath::SmoothStep(0.0f, 1.0f, Alpha);
+
+        if (Stroke.bDig)
         {
-            SDFValue = FVoxelConversion::SDF_SOLID;
-        }
-        else if (SignedDistance >= HalfFalloff)
-        {
-            SDFValue = FVoxelConversion::SDF_AIR;
+            ResultSDF = FMath::Lerp(
+                FVoxelConversion::SDF_AIR,
+                FVoxelConversion::SDF_SOLID,
+                Alpha);
         }
         else
         {
-            float t = (SignedDistance + HalfFalloff) / Stroke.BrushFalloff;
-            t = FMath::SmoothStep(0.0f, 1.0f, t);
-            
-            // Lerp from Solid (Inside) to Air (Outside)
-            SDFValue = FMath::Lerp(FVoxelConversion::SDF_SOLID, FVoxelConversion::SDF_AIR, t);
+            ResultSDF = FMath::Lerp(
+                FVoxelConversion::SDF_SOLID,
+                FVoxelConversion::SDF_AIR,
+                Alpha);
         }
     }
 
-    return SDFValue * Stroke.BrushStrength;
+    return ResultSDF * Stroke.BrushStrength;
 }
+
 
 // Keep the Fixed Bounds check from before
 bool UCubeBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const
@@ -114,14 +96,14 @@ bool UCubeBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke
         LocalPos = Stroke.BrushRotation.UnrotateVector(LocalPos);
     }
 
-    FVector HalfExtents = Stroke.bUseAdvancedCubeBrush
-        ? FVector(Stroke.AdvancedCubeHalfExtentX, Stroke.AdvancedCubeHalfExtentY, Stroke.AdvancedCubeHalfExtentZ)
+    const FVector HalfExtents = Stroke.bUseAdvancedCubeBrush
+        ? FVector(
+            Stroke.AdvancedCubeHalfExtentX,
+            Stroke.AdvancedCubeHalfExtentY,
+            Stroke.AdvancedCubeHalfExtentZ)
         : FVector(Stroke.BrushRadius);
 
-    // We check against Extents + Falloff to be safe. 
-    // Since we now use centered falloff, the effect ends at +HalfFalloff, 
-    // but checking +FullFalloff is safer and cheap.
-    FVector SearchExtents = HalfExtents + Stroke.BrushFalloff + 2.0f;
+    const FVector SearchExtents = HalfExtents + FVector(Stroke.BrushFalloff + 2.0f);
 
     return FMath::Abs(LocalPos.X) <= SearchExtents.X &&
            FMath::Abs(LocalPos.Y) <= SearchExtents.Y &&
@@ -130,7 +112,8 @@ bool UCubeBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke
 
 bool UCubeBrushShape::IsWithinInterior(const FVector& WorldPos, const FBrushStroke& Stroke) const
 {
-    FVector Center = Stroke.BrushPosition + Stroke.BrushOffset;
+    // 1. Transform into brush-local space
+    const FVector Center = Stroke.BrushPosition + Stroke.BrushOffset;
     FVector LocalPos = WorldPos - Center;
 
     if (!Stroke.BrushRotation.IsNearlyZero())
@@ -138,16 +121,18 @@ bool UCubeBrushShape::IsWithinInterior(const FVector& WorldPos, const FBrushStro
         LocalPos = Stroke.BrushRotation.UnrotateVector(LocalPos);
     }
 
-    // True half-extents (no falloff, no padding)
-    FVector HalfExtents = Stroke.bUseAdvancedCubeBrush
-        ? FVector(Stroke.AdvancedCubeHalfExtentX,
-                  Stroke.AdvancedCubeHalfExtentY,
-                  Stroke.AdvancedCubeHalfExtentZ)
+    // 2. True half-extents (must match SDF exactly)
+    const FVector HalfExtents = Stroke.bUseAdvancedCubeBrush
+        ? FVector(
+            Stroke.AdvancedCubeHalfExtentX,
+            Stroke.AdvancedCubeHalfExtentY,
+            Stroke.AdvancedCubeHalfExtentZ)
         : FVector(Stroke.BrushRadius);
 
-    return FMath::Abs(LocalPos.X) <= HalfExtents.X &&
-           FMath::Abs(LocalPos.Y) <= HalfExtents.Y &&
-           FMath::Abs(LocalPos.Z) <= HalfExtents.Z;
+    // 3. Interior check: inside means all axes within half-extents
+    return  FMath::Abs(LocalPos.X) <= HalfExtents.X &&
+            FMath::Abs(LocalPos.Y) <= HalfExtents.Y &&
+            FMath::Abs(LocalPos.Z) <= HalfExtents.Z;
 }
 
 
@@ -161,16 +146,19 @@ void UCubeBrushShape::GetPreviewData(
 {
     OutCenter = Stroke.BrushPosition + Stroke.BrushOffset;
 
+    // These are HALF-extents — must match SDF and interior check
     OutExtents = Stroke.bUseAdvancedCubeBrush
-        ? FVector(Stroke.AdvancedCubeHalfExtentX,
-                  Stroke.AdvancedCubeHalfExtentY,
-                  Stroke.AdvancedCubeHalfExtentZ)
+        ? FVector(
+            Stroke.AdvancedCubeHalfExtentX,
+            Stroke.AdvancedCubeHalfExtentY,
+            Stroke.AdvancedCubeHalfExtentZ)
         : FVector(Stroke.BrushRadius);
 
     OutRotation = Stroke.BrushRotation.Quaternion();
     OutFalloff  = Stroke.BrushFalloff;
     OutBrushType = EVoxelBrushType::Cube;
 }
+
 
 
 

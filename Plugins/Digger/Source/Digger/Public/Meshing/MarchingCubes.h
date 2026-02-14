@@ -9,8 +9,8 @@
 class ADiggerManager;
 class UVoxelChunk;
 
-// Mesh Ready Delegate
-DECLARE_DELEGATE(FOnMeshReady);
+// Mesh Ready Delegate: notifies which chunk + section finished
+// DECLARE_DELEGATE_TwoParams(FOnMeshReady, FIntVector /*ChunkCoord*/, int32 /*SectionIndex*/);
 
 UCLASS()
 class DIGGER_API UMarchingCubes : public UObject
@@ -132,12 +132,12 @@ public:
 	FVector ApplyLandscapeTransition(const FVector& VertexWS) const;
 
 	// Game Thread callback to apply mesh data to the component
-	void ReconstructMeshSection(
-		int32 SectionIndex, 
-		const TArray<FVector>& OutOutVertices, 
-		const TArray<int32>& OutTriangles, 
-		const TArray<FVector>& Normals
-	) const;
+	// void ReconstructMeshSection(
+	// 	int32 SectionIndex, 
+	// 	const TArray<FVector>& OutOutVertices, 
+	// 	const TArray<int32>& OutTriangles, 
+	// 	const TArray<FVector>& Normals
+	// ) const;
 
 	// --- ISLAND GENERATION ---
 	
@@ -191,6 +191,11 @@ private:
 	void ValidateAndResizeBuffers(FIntVector& Size, TArray<FVector>& Vertices, TArray<int32>& Triangles);
 
 public:
+	void SetOwningChunk(UVoxelChunk* InChunk)
+	{
+		MyVoxelChunk = InChunk;
+	}
+
 	// Settings
 	UPROPERTY(EditAnywhere, Category="Landscape Transition")
 	float TransitionHeight = 20.0f;
@@ -199,11 +204,11 @@ public:
 	float TransitionSharpness = 2.0f;
 
 	// Delegate
-	FOnMeshReady OnMeshReady;
+	// FOnMeshReady OnMeshReady;
 
 	// Reference to the associated voxel chunk
 	UPROPERTY()
-	const UVoxelChunk* MyVoxelChunk;
+	UVoxelChunk* MyVoxelChunk;
 
 private:
 	UPROPERTY()

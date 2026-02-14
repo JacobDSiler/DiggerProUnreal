@@ -43,7 +43,7 @@ UVoxelChunk::UVoxelChunk()
 	  SparseVoxelGrid(CreateDefaultSubobject<USparseVoxelGrid>(TEXT("SparseVoxelGrid")))
 {
 	MarchingCubesGenerator = CreateDefaultSubobject<UMarchingCubes>(TEXT("MarchingCubesGenerator"));
-
+	MarchingCubesGenerator -> SetOwningChunk(this);
 }
 
 void UVoxelChunk::Tick(float DeltaTime)
@@ -130,6 +130,9 @@ void UVoxelChunk::UpdateMeshFromData(const TArray<FVector>& Vertices, const TArr
         EmptyTangents,  // Tangents
         true            // bCreateCollision (Enable Physics)
     );
+
+	// Mesh is now live on the ProceduralMeshComponent → update holes for this chunk
+	OnMeshReady(ChunkCoordinates, SectionIndex);
 
     // 4. Configure Collision (Physics)
     if (Vertices.Num() > 0)
@@ -594,18 +597,20 @@ void UVoxelChunk::RefreshSectionMesh()
 
 void UVoxelChunk::OnMeshReady(FIntVector Coord, int32 SectionIdx)
 {
-    UE_LOG(LogTemp, Warning,
-        TEXT("OnMeshReady CALLED for chunk %s (incoming=%s, section=%d)"),
-        *ChunkCoordinates.ToString(),
-        *Coord.ToString(),
-        SectionIdx);
+	if (DiggerDebug::Holes())
+	    UE_LOG(LogTemp, Warning,
+	        TEXT("OnMeshReady CALLED for chunk %s (incoming=%s, section=%d)"),
+	        *ChunkCoordinates.ToString(),
+	        *Coord.ToString(),
+	        SectionIdx);
 
     if (Coord != ChunkCoordinates)
     {
-        UE_LOG(LogTemp, Warning,
-            TEXT("OnMeshReady IGNORED: Coord does not match this chunk (%s != %s)"),
-            *Coord.ToString(),
-            *ChunkCoordinates.ToString());
+    	if (DiggerDebug::Holes())
+	        UE_LOG(LogTemp, Warning,
+	            TEXT("OnMeshReady IGNORED: Coord does not match this chunk (%s != %s)"),
+	            *Coord.ToString(),
+	            *ChunkCoordinates.ToString());
         return;
     }
 
@@ -618,37 +623,40 @@ void UVoxelChunk::OnMeshReady(FIntVector Coord, int32 SectionIdx)
             TEXT("OnMeshReady FAILED: HoleShapeLibrary is NULL"));
         return;
     }
-
-    UE_LOG(LogTemp, Warning,
-        TEXT("OnMeshReady: Processing %d registered holes for chunk %s"),
-        SpawnedHoleInstances.Num(),
-        *ChunkCoordinates.ToString());
+	if (DiggerDebug::Holes())
+	    UE_LOG(LogTemp, Warning,
+	        TEXT("OnMeshReady: Processing %d registered holes for chunk %s"),
+	        SpawnedHoleInstances.Num(),
+	        *ChunkCoordinates.ToString());
 
     for (const TWeakObjectPtr<ADynamicHole>& HolePtr : SpawnedHoleInstances)
     {
         ADynamicHole* Hole = HolePtr.Get();
         if (!Hole)
         {
-            UE_LOG(LogTemp, Error,
-                TEXT("OnMeshReady: Found invalid hole pointer (GC'd)"));
+        	if (DiggerDebug::Holes())
+	            UE_LOG(LogTemp, Error,
+	                TEXT("OnMeshReady: Found invalid hole pointer (GC'd)"));
             continue;
         }
 
         UStaticMeshComponent* MeshComp = Hole->GetHoleMeshComponent();
         if (!MeshComp)
         {
-            UE_LOG(LogTemp, Error,
-                TEXT("OnMeshReady: Hole %s has NO HoleMeshComponent"),
-                *Hole->GetName());
+        	if (DiggerDebug::Holes())
+	            UE_LOG(LogTemp, Error,
+	                TEXT("OnMeshReady: Hole %s has NO HoleMeshComponent"),
+	                *Hole->GetName());
             continue;
         }
 
         if (MeshComp->GetStaticMesh() != nullptr)
         {
-            UE_LOG(LogTemp, Warning,
-                TEXT("OnMeshReady: Hole %s already has mesh %s, skipping"),
-                *Hole->GetName(),
-                *MeshComp->GetStaticMesh()->GetName());
+	        if (DiggerDebug::Holes())
+	            UE_LOG(LogTemp, Warning,
+	                TEXT("OnMeshReady: Hole %s already has mesh %s, skipping"),
+	                *Hole->GetName(),
+	                *MeshComp->GetStaticMesh()->GetName());
             continue;
         }
 
@@ -657,17 +665,18 @@ void UVoxelChunk::OnMeshReady(FIntVector Coord, int32 SectionIdx)
 
         if (!HoleMesh)
         {
-            UE_LOG(LogTemp, Error,
-                TEXT("OnMeshReady: Hole %s: No mesh for shape %s"),
-                *Hole->GetName(),
-                *UEnum::GetValueAsString(ShapeType));
+        	if (DiggerDebug::Holes())
+	            UE_LOG(LogTemp, Error,
+	                TEXT("OnMeshReady: Hole %s: No mesh for shape %s"),
+	                *Hole->GetName(),
+	                *UEnum::GetValueAsString(ShapeType));
             continue;
         }
-
-        UE_LOG(LogTemp, Warning,
-            TEXT("OnMeshReady: Assigning mesh %s to hole %s"),
-            *HoleMesh->GetName(),
-            *Hole->GetName());
+    	if (DiggerDebug::Holes())
+	        UE_LOG(LogTemp, Warning,
+	            TEXT("OnMeshReady: Assigning mesh %s to hole %s"),
+	            *HoleMesh->GetName(),
+	            *Hole->GetName());
 
         MeshComp->SetStaticMesh(HoleMesh);
 
@@ -676,28 +685,24 @@ void UVoxelChunk::OnMeshReady(FIntVector Coord, int32 SectionIdx)
             const int32 SlotCount = HoleMesh->GetStaticMaterials().Num();
             for (int32 i = 0; i < SlotCount; i++)
                 MeshComp->SetMaterial(i, Hole->WriterMaterial);
-
-            UE_LOG(LogTemp, Warning,
-                TEXT("OnMeshReady: Applied WriterMaterial to hole %s (%d slots)"),
-                *Hole->GetName(), SlotCount);
+        	if (DiggerDebug::Holes())
+	            UE_LOG(LogTemp, Warning,
+	                TEXT("OnMeshReady: Applied WriterMaterial to hole %s (%d slots)"),
+	                *Hole->GetName(), SlotCount);
         }
         else
         {
-            UE_LOG(LogTemp, Warning,
-                TEXT("OnMeshReady: Hole %s has no WriterMaterial"),
-                *Hole->GetName());
+        	if (DiggerDebug::Holes())
+	            UE_LOG(LogTemp, Warning,
+	                TEXT("OnMeshReady: Hole %s has no WriterMaterial"),
+	                *Hole->GetName());
         }
     }
-
-    UE_LOG(LogTemp, Warning,
-        TEXT("OnMeshReady FINISHED for chunk %s"),
-        *ChunkCoordinates.ToString());
+	if (DiggerDebug::Holes())
+	    UE_LOG(LogTemp, Warning,
+	        TEXT("OnMeshReady FINISHED for chunk %s"),
+	        *ChunkCoordinates.ToString());
 }
-
-
-
-
-
 
 
 void UVoxelChunk::GenerateMeshSyncronous()
@@ -747,17 +752,7 @@ void UVoxelChunk::GenerateMeshSyncronous()
         }
         return;
     }
-
-    // Clear any previous binding to avoid multiple bindings
-    MarchingCubesGenerator->OnMeshReady.Unbind();
-    
-    // Bind the completion callback
-    MarchingCubesGenerator->OnMeshReady.BindLambda([this]()
-    {
-    	if (DiggerDebug::Mesh())
-        UE_LOG(LogTemp, Warning, TEXT("Marching cubes mesh generation completed"));
-        this->OnMarchingMeshComplete();
-    });
+	
 
 	if (DiggerDebug::Mesh())
     UE_LOG(LogTemp, Warning, TEXT("Starting marching cubes generation"));
@@ -767,80 +762,77 @@ void UVoxelChunk::GenerateMeshSyncronous()
 
 bool UVoxelChunk::SaveChunkData(const FString& FilePath)
 {
-    // --- STEP 1: CLEANUP & SYNC ---
-    SpawnedHoleInstances.RemoveAll([](const TWeakObjectPtr<ADynamicHole>& HolePtr)
-    {
-	    return !HolePtr.IsValid();
-    });
+	// --- STEP 1: CLEANUP & SYNC ---
+	SpawnedHoleInstances.RemoveAll([](const TWeakObjectPtr<ADynamicHole>& HolePtr)
+	{
+		return !HolePtr.IsValid();
+	});
 
-
-    // Wipe old data to rebuild from current world state
-    HoleDataArray.Empty();
+	HoleDataArray.Empty();
 
 	for (const TWeakObjectPtr<ADynamicHole>& HolePtr : SpawnedHoleInstances)
 	{
-		if (!HolePtr.IsValid())
-			continue;
+		if (!HolePtr.IsValid()) continue;
 
-		AActor* Actor = HolePtr.Get();
+		ADynamicHole* Actor = HolePtr.Get();
+		if (!Actor) continue;
 
-        FSpawnedHoleData NewData;
-        NewData.Location = Actor->GetActorLocation();
-        NewData.Rotation = Actor->GetActorRotation();
-        NewData.Scale = Actor->GetActorScale3D();
+		FSpawnedHoleData NewData;
+		NewData.Location = Actor->GetActorLocation();
+		NewData.Rotation = Actor->GetActorRotation();
+		NewData.Scale = Actor->GetActorScale3D();
+		NewData.Shape.ShapeType = Actor->HoleShapeType;
 
-        // Try to get specific shape data
-        if (ADynamicHole* DynamicHole = Cast<ADynamicHole>(Actor))
-        {
-            // Success: Save the correct shape
-            NewData.Shape.ShapeType = DynamicHole->HoleShapeType;
-        }
-        else
-        {
-            // Fallback: It's a valid actor but not our C++ class yet.
-            // Save it as a Sphere (Default) so we don't lose the hole entirely.
-            // Also log a warning so you know to reparent the BP.
-            NewData.Shape.ShapeType = EHoleShapeType::Sphere;
-            UE_LOG(LogTemp, Warning, TEXT("SaveChunkData: Hole actor '%s' is not ADynamicHole! Saved as default Sphere."), *Actor->GetName());
-        }
+		HoleDataArray.Add(NewData);
+	}
 
-        HoleDataArray.Add(NewData);
-    }
+	// --- STEP 2: SERIALIZE ---
+	FBufferArchive ToBinary;
 
-    // --- STEP 2: SERIALIZE ---
-    FBufferArchive ToBinary;
+	// --- CRITICAL FIX START ---
+	// 1. Tell the archive we are saving to disk (Persistent)
+	ToBinary.SetIsPersistent(true);
 
-    // A. Voxels
-    if (!SparseVoxelGrid || !SparseVoxelGrid->SerializeToArchive(ToBinary))
-    {
-        return false;
-    }
+	// 2. Set the main Engine Version
+	ToBinary.SetEngineVer(FEngineVersion::Current());
 
-    // B. Holes
-    int32 HoleCount = HoleDataArray.Num();
-    ToBinary << HoleCount;
-    for (FSpawnedHoleData& Hole : HoleDataArray)
-    {
-        ToBinary << Hole;
-    }
+	// 3. COPY GLOBAL CUSTOM VERSIONS (Fixes the Crash)
+	// This populates the archive with the version info required by FVector/FTransform/etc.
+	ToBinary.SetCustomVersions(FCustomVersionContainer::GetRegistered());
+	// --- CRITICAL FIX END ---
 
-    // C. Lights (Always save count, even if 0)
-    int32 LightCount = SavedLights.Num();
-    ToBinary << LightCount;
-    for (FSavedLightData& Light : SavedLights)
-    {
-        ToBinary << Light;
-    }
+	// A. Voxels
+	if (!SparseVoxelGrid || !SparseVoxelGrid->SerializeToArchive(ToBinary))
+	{
+		return false;
+	}
 
-    // --- STEP 3: WRITE ---
-    if (FFileHelper::SaveArrayToFile(ToBinary, *FilePath))
-    {
-        SavedLights.Empty(); // Clear temp light data
-        ToBinary.FlushCache();
-        return true;
-    }
+	// B. Holes
+	int32 HoleCount = HoleDataArray.Num();
+	ToBinary << HoleCount;
+	for (FSpawnedHoleData& Hole : HoleDataArray)
+	{
+		ToBinary << Hole;
+	}
 
-    return false;
+	// C. Lights
+	int32 LightCount = SavedLights.Num();
+	ToBinary << LightCount;
+	for (FSavedLightData& Light : SavedLights)
+	{
+		ToBinary << Light;
+	}
+
+	// --- STEP 3: WRITE ---
+	if (FFileHelper::SaveArrayToFile(ToBinary, *FilePath))
+	{
+		SavedLights.Empty();
+		ToBinary.FlushCache();
+		ToBinary.Empty();
+		return true;
+	}
+
+	return false;
 }
 
 bool UVoxelChunk::LoadChunkData(const FString& FilePath)
@@ -849,72 +841,106 @@ bool UVoxelChunk::LoadChunkData(const FString& FilePath)
 
 bool UVoxelChunk::LoadChunkData(const FString& FilePath, bool bOverwrite)
 {
+    // --- ENSURE MANAGER + HOLE LIBRARY + HOLE BP ARE READY ---
+    if (!DiggerManager)
+    {
+        DiggerManager = ADiggerManager::FindDiggerManager(World);
+    }
+
+    if (DiggerManager)
+    {
+        DiggerManager->EnsureHoleShapeLibrary();
+        HoleShapeLibrary = DiggerManager->GetHoleShapeLibrary();
+
+        DiggerManager->EnsureDefaultHoleBP();
+        HoleBP = DiggerManager->DynamicHoleClass;
+    }
+
     if (!FPaths::FileExists(FilePath))
     {
-        // Silent fail or log verbose only
         return false;
     }
 
     TArray<uint8> BinaryArray;
-    if (!FFileHelper::LoadFileToArray(BinaryArray, *FilePath)) return false;
+    if (!FFileHelper::LoadFileToArray(BinaryArray, *FilePath))
+    {
+        return false;
+    }
 
-    FMemoryReader FromBinary(BinaryArray, true);
-    FromBinary.Seek(0);
+	// --- CREATE READER ---
+	FMemoryReader FromBinary(BinaryArray, true);
+	FromBinary.Seek(0);
+
+	// --- ADD THESE LINES TO MATCH SAVER ---
+	FromBinary.SetIsPersistent(true);
+	FromBinary.SetEngineVer(FEngineVersion::Current());
+	FromBinary.SetCustomVersions(FCustomVersionContainer::GetRegistered()); 
+	// --------------------------------------
+
+	// ... Continue with serialization
 
     // --- 1. Load Voxels ---
     USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
-    if (!TempGrid->SerializeFromArchive(FromBinary)) return false;
+    // Ensure serialization inside this function doesn't crash on version checks
+    if (!TempGrid->SerializeFromArchive(FromBinary))
+    {
+        return false;
+    }
 
     if (bOverwrite && SparseVoxelGrid)
     {
+        // Full replace
         SparseVoxelGrid->VoxelData = TempGrid->VoxelData;
-        
-        // IMPORTANT: If we are overwriting, we MUST kill the old actors first
-        ClearSpawnedHoles(); 
+        ClearSpawnedHoles();
         HoleDataArray.Empty();
     }
     else if (SparseVoxelGrid)
     {
+        // Additive merge
         for (const auto& Pair : TempGrid->VoxelData)
         {
             SparseVoxelGrid->VoxelData.Add(Pair.Key, Pair.Value);
         }
     }
 
+    // --- 1b. Legacy files Check ---
+    if (FromBinary.AtEnd())
+    {
+        MarkDirty();
+        return true;
+    }
+
     // --- 2. Load Holes ---
     int32 HoleCount = 0;
     FromBinary << HoleCount;
 
-    if (DiggerDebug::IO())
-    {
-        UE_LOG(LogTemp, Log, TEXT("LoadChunkData: Found %d holes in file"), HoleCount);
-    }
-
     for (int32 i = 0; i < HoleCount; ++i)
     {
-        FSpawnedHoleData Hole;
-        FromBinary << Hole;
-        
-        HoleDataArray.Add(Hole);
+        if (FromBinary.AtEnd()) break;
 
-        // --- THE FIX: ALWAYS SPAWN ---
-        // Previously, this was inside 'if (bOverwrite)'.
-        // But if we successfully loaded a hole from the file, we implicitly want to see it!
+        FSpawnedHoleData Hole;
+        // If FSpawnedHoleData contains FVectors/Rotators, the fix above allows this to work
+        FromBinary << Hole;
+
+        HoleDataArray.Add(Hole);
         SpawnHoleFromData(Hole);
     }
 
     // --- 3. Load Lights ---
-    // Handle EOF for legacy files
-    if (FromBinary.AtEnd()) 
+    if (FromBinary.AtEnd())
     {
-        return true; 
+        MarkDirty();
+        return true;
     }
 
     int32 LightCount = 0;
     FromBinary << LightCount;
 
     UWorld* CurrentWorld = GetWorld();
-    if (!CurrentWorld && DiggerManager) CurrentWorld = DiggerManager->GetWorld();
+    if (!CurrentWorld && DiggerManager)
+    {
+        CurrentWorld = DiggerManager->GetWorld();
+    }
 
     for (int32 i = 0; i < LightCount; ++i)
     {
@@ -923,9 +949,6 @@ bool UVoxelChunk::LoadChunkData(const FString& FilePath, bool bOverwrite)
         FSavedLightData LightData;
         FromBinary << LightData;
 
-        // Same logic for lights: If we loaded it, spawn it.
-        // (Assuming we haven't already spawned it in a non-overwrite scenario, 
-        //  but duplicate lights are better than NO lights for now).
         if (CurrentWorld)
         {
             AActor* NewLight = LightData.SpawnLightActor(CurrentWorld);
@@ -936,8 +959,10 @@ bool UVoxelChunk::LoadChunkData(const FString& FilePath, bool bOverwrite)
         }
     }
 
+    MarkDirty();
     return true;
 }
+
 
 
 void UVoxelChunk::ClearSpawnedHoles()
@@ -1014,15 +1039,36 @@ void UVoxelChunk::RegenerateHolesFromData()
 void UVoxelChunk::AddHoleToChunk(ADynamicHole* Hole)
 {
 	if (!Hole)
+	{
+		if (DiggerDebug::Holes())
+			UE_LOG(LogTemp, Error,
+				TEXT("AddHoleToChunk: FAILED — Hole pointer is NULL for chunk %s"),
+				*ChunkCoordinates.ToString());
 		return;
+	}
 
 	SpawnedHoleInstances.AddUnique(Hole);
-	if (DiggerDebug::Holes() || DiggerDebug::Chunks())
+	if (DiggerDebug::Holes())
 		UE_LOG(LogTemp, Warning,
-			TEXT("AddHoleToChunk: Registered hole %s to chunk %s"),
+			TEXT("AddHoleToChunk: Registered hole %s to chunk %s (Total holes: %d)"),
 			*Hole->GetName(),
-			*ChunkCoordinates.ToString());
+			*ChunkCoordinates.ToString(),
+			SpawnedHoleInstances.Num());
+
+	// --- CRITICAL: ensure hole gets mesh assignment ---
+	
+		// Update the Hole Mesh for the dynamic Hole so it knows what shape to set when the hole is ready to be enabled.
+		Hole->UpdateHoleMesh();
+
+	// Otherwise, hole will be updated inside OnMarchingMeshComplete()
+	if (DiggerDebug::Holes())
+		UE_LOG(LogTemp, Warning,
+			TEXT("AddHoleToChunk: Hole %s will receive mesh assignment when OnMarchingMeshComplete fires"),
+			*Hole->GetName());
+	// 🔥 CRITICAL FIX: ensure mesh generation happens
+	MarkDirty();
 }
+
 
 void UVoxelChunk::RemoveHoleFromChunk(ADynamicHole* Hole)
 {
@@ -1369,16 +1415,11 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
     const int32 ChunkDim = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions; 
     
-    // PADDING: Critical for seamless normals across chunks.
-    // We allow writing to -2..+N+2
+    // PADDING: Critical for seamless normals (-2..N+2)
     const int32 GhostPad = 2; 
 
-    // 4. BOUNDS CALCULATION (Restored Historical Logic)
-    // We ask the brush shape for its exact world-space bounds.
-    // This handles rotation (Cube) and elongation (Capsule) correctly.
+    // 4. Bounds Calculation
     FVector BrushWorldBounds = CalculateBrushBounds(Stroke); 
-    
-    // Convert World Bounds to Local Index Range
     FVector LocalMin = (Stroke.BrushPosition - BrushWorldBounds) - ChunkOrigin;
     FVector LocalMax = (Stroke.BrushPosition + BrushWorldBounds) - ChunkOrigin;
 
@@ -1390,9 +1431,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     int32 BrushMinZ = FMath::FloorToInt(LocalMin.Z / LocalVoxelSize);
     int32 BrushMaxZ = FMath::CeilToInt(LocalMax.Z / LocalVoxelSize);
 
-    // 5. CLAMP TO CHUNK + PADDING
-    // We strictly limit the loop to the Chunk (+ Ghosts).
-    // This prevents writing into infinity.
+    // 5. Clamp to Chunk + Padding
     int32 StartX = FMath::Max(BrushMinX, -GhostPad);
     int32 EndX   = FMath::Min(BrushMaxX, ChunkDim + GhostPad);
     int32 StartY = FMath::Max(BrushMinY, -GhostPad);
@@ -1400,26 +1439,22 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     int32 StartZ = FMath::Max(BrushMinZ, -GhostPad);
     int32 EndZ   = FMath::Min(BrushMaxZ, ChunkDim + GhostPad);
 
-    // Early out if no overlap
     if (StartX >= EndX || StartY >= EndY || StartZ >= EndZ) return;
 
     bool bModified = false;
-    
-    // Counters for report
     int32 VoxelsDug = 0;
     int32 VoxelsAdded = 0;
 
-    // 6. ITERATION (Single Threaded for Safety)
-    // TMap (SparseGrid) is NOT thread-safe for writes. ParallelFor caused the "Straight Wall" bug.
+    // 6. Iteration
     for (int32 X = StartX; X < EndX; ++X)
     {
         for (int32 Y = StartY; Y < EndY; ++Y)
         {
-            // Optimization: Check landscape height for the whole column once
+            // Calculate Landscape Height for this column
             FVector ColumnPos = ChunkOrigin + FVector(X * LocalVoxelSize, Y * LocalVoxelSize, 0);
             float TerrainHeight = DiggerManager->GetLandscapeHeightAt(ColumnPos);
             
-            // Skip if Bedrock / Invalid
+            // Skip Bedrock
             if (TerrainHeight <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f)) continue;
 
             for (int32 Z = StartZ; Z < EndZ; ++Z)
@@ -1427,45 +1462,66 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
                 FIntVector LocalCoord(X, Y, Z);
                 FVector VoxelWorldPos = ChunkOrigin + (FVector(LocalCoord) * LocalVoxelSize);
 
-                // --- SHAPE FILTER (Restored) ---
-                // This ensures a Cube brush doesn't act like a sphere.
-                // It clips the corners of the bounding box.
+                // --- SHAPE CHECK ---
                 if (!BrushShape->IsWithinBounds(VoxelWorldPos, Stroke)) continue;
 
-                // --- SDF CALCULATION ---
-                // This uses the gradient-friendly logic we added to the brush classes
+                // --- BRUSH SDF ---
                 float BrushSDF = BrushShape->CalculateSDF(VoxelWorldPos, Stroke, TerrainHeight);
-
-                // Optimization: Ignore negligible changes
                 if (FMath::IsNearlyZero(BrushSDF, 0.001f)) continue;
 
-                // --- APPLY TO GRID ---
-                // Get current value (or implicit 0.0f)
-                float CurrentSDF = SparseVoxelGrid->GetVoxel(X, Y, Z);
+                // --- BASELINE CALCULATION ---
+                // Calculate precise distance to landscape surface for seamless blending
+                float DistToSurface = VoxelWorldPos.Z - TerrainHeight;
+                float BaselineSDF = DistToSurface / LocalVoxelSize;
+
+                // --- RETRIEVE CURRENT ---
+                float CurrentSDF;
+                
+                // FIX: Use HasVoxelAt() instead of Contains()
+                bool bHasValue = SparseVoxelGrid->HasVoxelAt(X, Y, Z);
+                
+                if (bHasValue)
+                {
+                    CurrentSDF = SparseVoxelGrid->GetVoxel(X, Y, Z);
+                }
+                else
+                {
+                    CurrentSDF = BaselineSDF;
+                }
+
+                // --- ARTIFACT PREVENTION (Floating Bits) ---
+                // If Digging Air into Air, skip.
+                if (Stroke.bDig && !bHasValue && BaselineSDF > 0.5f)
+                {
+                    continue; 
+                }
+
+                // --- APPLY OPERATION ---
                 float NewSDF = CurrentSDF;
 
                 if (Stroke.bDig)
                 {
-                    // Digging: Add Air (Positive)
+                    // Add Air
                     NewSDF = CurrentSDF + FMath::Abs(BrushSDF);
-                    NewSDF = FMath::Min(NewSDF, 5.0f); // Clamp Air
+                    NewSDF = FMath::Min(NewSDF, 5.0f); 
                     VoxelsDug++;
                 }
                 else
                 {
-                    // Adding: Subtract to make Solid (Negative)
+                    // Add Solid
                     NewSDF = CurrentSDF - FMath::Abs(BrushSDF);
-                    NewSDF = FMath::Max(NewSDF, -5.0f); // Clamp Solid
+                    NewSDF = FMath::Max(NewSDF, -5.0f);
                     VoxelsAdded++;
                 }
 
+                // --- WRITE BACK ---
                 SparseVoxelGrid->SetVoxel(X, Y, Z, NewSDF, Stroke.bDig);
                 bModified = true;
             }
         }
     }
 
-    // 7. BROADCAST REPORT
+    // 7. Report
     if (bModified && DiggerManager)
     {
         FVoxelModificationReport Report;
@@ -1477,6 +1533,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
         DiggerManager->OnVoxelsModified.Broadcast(Report);
     }
 }
+
 
 void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels, bool bHiddenSeam)
 {

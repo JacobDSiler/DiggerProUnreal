@@ -16,27 +16,47 @@ float USmoothBrushShape::CalculateSDF_Implementation(
 	if (Distance > Stroke.BrushRadius + Stroke.BrushFalloff)
 		return 0.f;
 
-	float t = FMath::Clamp(Distance / Stroke.BrushRadius, 0.f, 1.f);
-	float Falloff = 1.f - (t * t * (3.f - 2.f * t));
+	// Normalized distance
+	const float t = Distance / Stroke.BrushRadius;
 
-	// Deterministic sample offset
-	const int32 Offset = 32; // integer, fixed
+	// ⭐ Gaussian falloff (ZBrush-like)
+	const float Falloff = FMath::Exp(-FMath::Square(t * 2.5f));
 
-	float C = TerrainHeight;
-	float N = FVoxelConversion::GetTerrainHeight(WorldPos + FVector( Offset, 0, 0));
-	float S = FVoxelConversion::GetTerrainHeight(WorldPos + FVector(-Offset, 0, 0));
-	float E = FVoxelConversion::GetTerrainHeight(WorldPos + FVector(0,  Offset, 0));
-	float W = FVoxelConversion::GetTerrainHeight(WorldPos + FVector(0, -Offset, 0));
+	// ⭐ Strength (no pressure yet)
+	float Strength = Stroke.BrushStrength;
 
-	float Avg = (C + N + S + E + W) * 0.2f;
+	// ⭐ Time ramp (fake pressure)
+	Strength *= FMath::Clamp(Stroke.ElapsedTime * 0.5f, 0.f, 1.f);
 
-	float Delta = (Avg - C) * Stroke.BrushStrength * Falloff;
+	// ⭐ 9-point kernel (ZBrush-like)
+	const int32 Offset = 32;
+
+	float Sum = 0.f;
+	int Count = 0;
+
+	for (int dx = -1; dx <= 1; dx++)
+	{
+		for (int dy = -1; dy <= 1; dy++)
+		{
+			FVector SamplePos = WorldPos + FVector(dx * Offset, dy * Offset, 0);
+			Sum += FVoxelConversion::GetTerrainHeight(SamplePos);
+			Count++;
+		}
+	}
+
+	const float Avg = Sum / Count;
+	const float C = TerrainHeight;
+
+	float Delta = (Avg - C) * Strength * Falloff;
 
 	if (Stroke.bDig)
 		Delta = -Delta;
 
 	return Delta;
 }
+
+
+
 
 
 bool USmoothBrushShape::IsWithinBounds(const FVector& WorldPos, const FBrushStroke& Stroke) const

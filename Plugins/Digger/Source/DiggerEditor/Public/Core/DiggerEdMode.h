@@ -41,6 +41,25 @@ struct FBrushHUDMessage
     bool IsAlive() const { return Alpha > 0.f; }
 };
 
+struct FBrushHUDPanel
+{
+    FString ModeText;
+
+    float Radius   = 0.f;
+    float Strength = 0.f;
+    float Falloff  = 0.f;
+    float Force    = 0.f;
+
+    EDiggerPushMode PushMode = EDiggerPushMode::Ray;
+
+    float TimeRemaining = 0.f;
+    float Alpha = 1.f;
+
+    bool bVisible = false;
+};
+
+
+
 
 struct FBrushHUDState
 {
@@ -196,8 +215,11 @@ private:
     
 
     // --- Brush Hud Message system ---
-    FBrushHUDState BrushHUD;
-    void ShowBrushHUDMessage(const FString& Msg, const FLinearColor& Color = FLinearColor::White);
+    FBrushHUDPanel BrushHUD;
+    void UpdateBrushHUDPanel();
+
+    //FBrushHUDState BrushHUD;
+    //void ShowBrushHUDMessage(const FString& Msg, const FLinearColor& Color = FLinearColor::White);
     void HandleModifierBlocked(bool bBlocked);
 
 

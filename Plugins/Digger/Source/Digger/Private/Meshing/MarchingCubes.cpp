@@ -33,8 +33,8 @@ UMarchingCubes::UMarchingCubes()
 
 UMarchingCubes::UMarchingCubes(const FObjectInitializer& ObjectInitializer, const UVoxelChunk* VoxelChunk)
 	: UObject(ObjectInitializer)
-	, MyVoxelChunk(VoxelChunk), DiggerManager(nullptr), bHeightCacheInitialized(false), CachedVoxelSize(0)
-	, CachedChunkSize(0)
+	  , MyVoxelChunk(nullptr), DiggerManager(nullptr), bHeightCacheInitialized(false), CachedVoxelSize(0)
+	  , CachedChunkSize(0)
 {
 }
 
@@ -165,19 +165,21 @@ void UMarchingCubes::GenerateMeshFromGridSyncronous(
 )
 {
 	if (!InVoxelGrid) return;
-	int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
+
+	const int32 N = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions;
 	TArray<float> Heights = CaptureHeightMap(Origin, VoxelSize, N);
 
 	GenerateMeshFromGrid(
-		InVoxelGrid->VoxelData,
-		Origin, 
-		VoxelSize, 
-		Heights, 
-		OutVertices, 
-		OutTriangles, 
+		InVoxelGrid->VoxelData, // still stored in global voxel coords
+		Origin,
+		VoxelSize,
+		Heights,
+		OutVertices,
+		OutTriangles,
 		OutNormals
 	);
 }
+
 
 void UMarchingCubes::GenerateMeshFromGrid(
 	USparseVoxelGrid* InVoxelGrid,
@@ -224,12 +226,6 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
     TArray<FVector>& OutNormals
 )
 {
-    // ============================================================
-    // LOCAL TEST FLAG — toggle hardened density pipeline
-    // ============================================================
-    const bool bUseHardenedDensity = true;
-    // ============================================================
-
     OutVertices.Reset();
     OutTriangles.Reset();
     OutNormals.Reset();
@@ -247,13 +243,13 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
     const int32 StrideY = GridDim;
     const int32 StrideZ = GridDim * GridDim;
 
-    // Precompute heightmap info
+    // Heightmap info
     const int32 HMapWidth   = ChunkSize + 1;
     const bool  bHasHeights = (HeightValues.Num() == (HMapWidth * HMapWidth));
     const float GlobalFloorZ = Origin.Z - ShellRadiusWorld - (VoxelSize * 4.0f);
     const float InvalidH     = UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f;
 
-    // Preallocate density grid
+    // Dense SDF grid
     TArray<float> DensityGrid;
     DensityGrid.SetNumUninitialized(TotalGridSize);
 
@@ -263,303 +259,96 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
     };
 
     // ============================================================
-    // STEP 1 — DENSITY GENERATION (optimized)
+    // STEP 1 — BASELINE LANDSCAPE SDF + VOXEL OVERLAY (FAST PATH)
     // ============================================================
 
-    if (bUseHardenedDensity)
+    for (int32 Z = -Pad; Z < ChunkSize + Pad; ++Z)
     {
-        // ---------------------------------------------
-        // 1A. Baseline fill (SIMD‑friendly, branch‑reduced)
-        // ---------------------------------------------
-        for (int32 Z = -Pad; Z < ChunkSize + Pad; ++Z)
+        const float WorldZ = Origin.Z + Z * VoxelSize;
+        const bool  bBelowFloor = (WorldZ < GlobalFloorZ);
+        const int32 ZOffset = (Z + Pad) * StrideZ;
+
+        for (int32 Y = -Pad; Y < ChunkSize + Pad; ++Y)
         {
-            const float WorldZ = Origin.Z + Z * VoxelSize;
-            const bool bBelowFloor = (WorldZ < GlobalFloorZ);
-            const int32 ZOffset = (Z + Pad) * StrideZ;
+            const int32 YOffset = (Y + Pad) * StrideY;
+            const int32 RowBase = ZOffset + YOffset;
 
-            for (int32 Y = -Pad; Y < ChunkSize + Pad; ++Y)
+            for (int32 X = -Pad; X < ChunkSize + Pad; ++X)
             {
-                const int32 YOffset = (Y + Pad) * StrideY;
-                const int32 RowBase = ZOffset + YOffset;
+                const int32 GridIndex = RowBase + (X + Pad);
 
-                for (int32 X = -Pad; X < ChunkSize + Pad; ++X)
+                // Hard floor
+                if (bBelowFloor)
                 {
-                    const int32 GridIndex = RowBase + (X + Pad);
-
-                    // Fast path: below global floor
-                    if (bBelowFloor)
-                    {
-                        DensityGrid[GridIndex] = -2.0f;
-                        continue;
-                    }
-
-                    float SDF = 2.0f;
-
-                    if (bHasHeights)
-                    {
-                        // Clamp once
-                        const int32 cX = FMath::Clamp(X, 0, ChunkSize);
-                        const int32 cY = FMath::Clamp(Y, 0, ChunkSize);
-
-                        float H = HeightValues[cY * HMapWidth + cX];
-
-                        // --- SEAM EXTRAPOLATION (branch‑collapsed) ---
-                        if (X < 0)
-                        {
-                            const float Hn = HeightValues[cY * HMapWidth + (cX + 1)];
-                            H += (H - Hn) * float(-X);
-                        }
-                        else if (X > ChunkSize)
-                        {
-                            const float Hp = HeightValues[cY * HMapWidth + (cX - 1)];
-                            H += (H - Hp) * float(X - ChunkSize);
-                        }
-
-                        if (Y < 0)
-                        {
-                            const float H0 = HeightValues[0 * HMapWidth + cX];
-                            const float H1 = HeightValues[1 * HMapWidth + cX];
-                            H += (H0 - H1) * float(-Y);
-                        }
-                        else if (Y > ChunkSize)
-                        {
-                            const float Hn  = HeightValues[ChunkSize * HMapWidth + cX];
-                            const float Hn1 = HeightValues[(ChunkSize - 1) * HMapWidth + cX];
-                            H += (Hn - Hn1) * float(Y - ChunkSize);
-                        }
-                        // --- END EXTRAPOLATION ---
-
-                    	// Prevent extrapolation overshoot (stabilizes chunk borders)
-                    	const float MaxSlopeDelta = 200.0f; // tweakable, safe default
-                    	H = FMath::Clamp(H, H - MaxSlopeDelta, H + MaxSlopeDelta);
-
-
-                        if (H > InvalidH)
-                        {
-                            const float Dist        = WorldZ - H;
-                            const float LocalFloorZ = H - ShellRadiusWorld - 2.0f * VoxelSize;
-
-                            SDF = (WorldZ < LocalFloorZ)
-                                ? -2.0f
-                                : (Dist + ClipBias) / VoxelSize;
-                        }
-                    }
-
-                    DensityGrid[GridIndex] = SDF;
+                    DensityGrid[GridIndex] = -2.0f;
+                    continue;
                 }
-            }
-        }
 
-        // Snapshot baseline BEFORE voxel edits
-        TArray<float> LandscapeGrid = DensityGrid;
+                float SDF = 2.0f;
 
-        // ---------------------------------------------
-        // 1B. Voxel overlay (tight loop)
-        // ---------------------------------------------
-        for (const auto& Pair : VoxelData)
-        {
-            const FIntVector& P = Pair.Key;
-
-            if (P.X >= -Pad && P.X < ChunkSize + Pad &&
-                P.Y >= -Pad && P.Y < ChunkSize + Pad &&
-                P.Z >= -Pad && P.Z < ChunkSize + Pad)
-            {
-                DensityGrid[GetGridIdx(P.X, P.Y, P.Z)] = Pair.Value.SDFValue;
-            }
-        }
-
-    	// ---------------------------------------------
-    	// 1B.5 SDF Stabilization Pass (cheap watertight fix)
-    	// ---------------------------------------------
-	    {
-        	const float Iso = Config.IsoLevel;
-
-        	for (int32 Z = 1; Z < ChunkSize - 1; ++Z)
-        	{
-        		const int32 ZOffset = (Z + Pad) * StrideZ;
-
-        		for (int32 Y = 1; Y < ChunkSize - 1; ++Y)
-        		{
-        			const int32 YOffset = (Y + Pad) * StrideY;
-        			const int32 RowBase = ZOffset + YOffset;
-
-        			for (int32 X = 1; X < ChunkSize - 1; ++X)
-        			{
-        				const int32 Idx = RowBase + (X + Pad);
-        				const float V = DensityGrid[Idx];
-
-        				// Only fix isolated sign flips
-        				const bool bPos = (V > Iso);
-
-        				int32 SameSignCount = 0;
-        				int32 OppSignCount  = 0;
-
-        				// 6-neighborhood
-        				const float N[6] = {
-        					DensityGrid[Idx - 1],
-							DensityGrid[Idx + 1],
-							DensityGrid[Idx - StrideY],
-							DensityGrid[Idx + StrideY],
-							DensityGrid[Idx - StrideZ],
-							DensityGrid[Idx + StrideZ]
-						};
-
-        				for (int i = 0; i < 6; ++i)
-        				{
-        					if ((N[i] > Iso) == bPos)
-        						SameSignCount++;
-        					else
-        						OppSignCount++;
-        				}
-
-        				// If this voxel is a tiny isolated bubble, collapse it
-        				if (OppSignCount >= 5)
-        				{
-        					// Pull toward the majority sign
-        					DensityGrid[Idx] = (bPos ? Iso - 0.05f : Iso + 0.05f);
-        				}
-        			}
-        		}
-        	}
-	    }
-
-    	// ---------------------------------------------
-    	// 1B.6 Micro Smoothing Pass (detail-preserving)
-    	// ---------------------------------------------
-	    {
-        	const float SelfWeight = 0.6f;
-        	const float NeighborWeight = 0.4f / 6.0f;
-
-        	for (int32 Z = 1; Z < ChunkSize - 1; ++Z)
-        	{
-        		const int32 ZOffset = (Z + Pad) * StrideZ;
-
-        		for (int32 Y = 1; Y < ChunkSize - 1; ++Y)
-        		{
-        			const int32 YOffset = (Y + Pad) * StrideY;
-        			const int32 RowBase = ZOffset + YOffset;
-
-        			for (int32 X = 1; X < ChunkSize - 1; ++X)
-        			{
-        				const int32 Idx = RowBase + (X + Pad);
-
-        				const float V = DensityGrid[Idx];
-
-        				const float Smoothed =
-							SelfWeight * V +
-							NeighborWeight * (
-								DensityGrid[Idx - 1] +
-								DensityGrid[Idx + 1] +
-								DensityGrid[Idx - StrideY] +
-								DensityGrid[Idx + StrideY] +
-								DensityGrid[Idx - StrideZ] +
-								DensityGrid[Idx + StrideZ]
-							);
-
-        				DensityGrid[Idx] = Smoothed;
-        			}
-        		}
-        	}
-	    }
-
-    	
-        // ---------------------------------------------
-        // 1C. Minimal poke‑through fix (cache‑friendly)
-        // ---------------------------------------------
-        const float MaxPoke  = 0.35f;
-        const float MaxDepth = -0.75f;
-
-        for (int32 Z = 0; Z < ChunkSize; ++Z)
-        {
-            const int32 ZOffset = (Z + Pad) * StrideZ;
-
-            for (int32 Y = 0; Y < ChunkSize; ++Y)
-            {
-                const int32 YOffset = (Y + Pad) * StrideY;
-                const int32 RowBase = ZOffset + YOffset;
-
-                for (int32 X = 0; X < ChunkSize; ++X)
+                if (bHasHeights)
                 {
-                    const int32 Idx = RowBase + (X + Pad);
+                    const int32 cX = FMath::Clamp(X, 0, ChunkSize);
+                    const int32 cY = FMath::Clamp(Y, 0, ChunkSize);
 
-                    const float L = LandscapeGrid[Idx];
-                    const float V = DensityGrid[Idx];
+                    float H = HeightValues[cY * HMapWidth + cX];
 
-                    // Branch‑tightened condition
-                    if (L < 0.0f && L > MaxDepth && V > 0.0f && V < MaxPoke)
+                    // Seam extrapolation
+                    if (X < 0)
                     {
-                        DensityGrid[Idx] = FMath::Min(-0.05f, L * 0.5f);
+                        const float Hn = HeightValues[cY * HMapWidth + (cX + 1)];
+                        H += (H - Hn) * float(-X);
+                    }
+                    else if (X > ChunkSize)
+                    {
+                        const float Hp = HeightValues[cY * HMapWidth + (cX - 1)];
+                        H += (H - Hp) * float(X - ChunkSize);
+                    }
+
+                    if (Y < 0)
+                    {
+                        const float H0 = HeightValues[0 * HMapWidth + cX];
+                        const float H1 = HeightValues[1 * HMapWidth + cX];
+                        H += (H0 - H1) * float(-Y);
+                    }
+                    else if (Y > ChunkSize)
+                    {
+                        const float Hn  = HeightValues[ChunkSize * HMapWidth + cX];
+                        const float Hn1 = HeightValues[(ChunkSize - 1) * HMapWidth + cX];
+                        H += (Hn - Hn1) * float(Y - ChunkSize);
+                    }
+
+                    if (H > InvalidH)
+                    {
+                        const float Dist        = WorldZ - H;
+                        const float LocalFloorZ = H - ShellRadiusWorld - 2.0f * VoxelSize;
+
+                        SDF = (WorldZ < LocalFloorZ)
+                            ? -2.0f
+                            : (Dist + ClipBias) / VoxelSize;
                     }
                 }
+
+                DensityGrid[GridIndex] = SDF;
             }
         }
     }
-    else
+
+    // Voxel overlay (edits)
+    for (const auto& Pair : VoxelData)
     {
-	    // ORIGINAL PATH (unchanged)
-    	for (int32 Z = -Pad; Z < ChunkSize + Pad; ++Z)
-    	{
-    		float WorldZ = Origin.Z + (Z * VoxelSize);
-    		bool bBelowFloor = (WorldZ < GlobalFloorZ);
-    		int32 ZOffset = (Z + Pad) * GridDim * GridDim;
+        const FIntVector& P = Pair.Key;
 
-    		for (int32 Y = -Pad; Y < ChunkSize + Pad; ++Y)
-    		{
-    			int32 YOffset = (Y + Pad) * GridDim;
-
-    			for (int32 X = -Pad; X < ChunkSize + Pad; ++X)
-    			{
-    				int32 GridIndex = ZOffset + YOffset + (X + Pad);
-    				if (bBelowFloor) { DensityGrid[GridIndex] = -2.0f; continue; }
-
-    				float SDF = 2.0f;
-    				if (bHasHeights)
-    				{
-    					int32 cX = FMath::Clamp(X, 0, ChunkSize);
-    					int32 cY = FMath::Clamp(Y, 0, ChunkSize);
-
-    					float H = HeightValues[cY * HMapWidth + cX];
-
-    					if (X < 0)
-    					{
-    						float H_Next = HeightValues[cY * HMapWidth + (cX + 1)];
-    						H += (H - H_Next) * (float)(-X);
-    					}
-    					else if (X > ChunkSize)
-    					{
-    						float H_Prev = HeightValues[cY * HMapWidth + (cX - 1)];
-    						H += (H - H_Prev) * (float)(X - ChunkSize);
-    					}
-
-    					if (Y < 0)
-    					{
-    						float H_Y0 = HeightValues[0 * HMapWidth + cX];
-    						float H_Y1 = HeightValues[1 * HMapWidth + cX];
-    						H += (H_Y0 - H_Y1) * (float)(-Y);
-    					}
-    					else if (Y > ChunkSize)
-    					{
-    						float H_YN   = HeightValues[ChunkSize * HMapWidth + cX];
-    						float H_YN_1 = HeightValues[(ChunkSize - 1) * HMapWidth + cX];
-    						H += (H_YN - H_YN_1) * (float)(Y - ChunkSize);
-    					}
-
-    					if (H > InvalidH)
-    					{
-    						float Dist = WorldZ - H;
-    						float LocalFloorZ = H - ShellRadiusWorld - 2.0f * VoxelSize;
-    						if (WorldZ < LocalFloorZ) SDF = -2.0f;
-    						else SDF = (Dist + ClipBias) / VoxelSize;
-    					}
-    				}
-    				DensityGrid[GridIndex] = SDF;
-    			}
-    		}
-    	}
+        if (P.X >= -Pad && P.X < ChunkSize + Pad &&
+            P.Y >= -Pad && P.Y < ChunkSize + Pad &&
+            P.Z >= -Pad && P.Z < ChunkSize + Pad)
+        {
+            DensityGrid[GetGridIdx(P.X, P.Y, P.Z)] = Pair.Value.SDFValue;
+        }
     }
 
     // ============================================================
-    // STEP 2 — NORMAL GRID (unchanged but optimized loops)
+    // STEP 2 — NORMAL GRID (same as before)
     // ============================================================
 
     TArray<FVector> NormalGrid;
@@ -580,7 +369,7 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
                 {
                     const int32 Idx = RowBase + (X + Pad);
 
-                    const float nx = DensityGrid[Idx + 1] - DensityGrid[Idx - 1];
+                    const float nx = DensityGrid[Idx + 1]       - DensityGrid[Idx - 1];
                     const float ny = DensityGrid[Idx + StrideY] - DensityGrid[Idx - StrideY];
                     const float nz = DensityGrid[Idx + StrideZ] - DensityGrid[Idx - StrideZ];
 
@@ -593,7 +382,7 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
     }
 
     // ============================================================
-    // STEP 3 — MARCHING CUBES (cache‑optimized)
+    // STEP 3 — MARCHING CUBES (unchanged core, cache‑aware)
     // ============================================================
 
     TMap<FIntVector, int32> VertexCache;
@@ -710,7 +499,7 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
     }
 
     // ============================================================
-    // STEP 4 — SURFACE GEOMETRY SHADING (unchanged)
+    // STEP 4 — SURFACE GEOMETRY SHADING
     // ============================================================
 
     if (ShadingMode == EDiggerShadingMode::SurfaceGeometry)
@@ -925,38 +714,39 @@ FVector UMarchingCubes::ApplyLandscapeTransition(const FVector& VertexWS) const
 // MESH RECONSTRUCTION
 // ----------------------------------------------------------------------------------
 
-void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutVertices, const TArray<int32>& OutTriangles, const TArray<FVector>& Normals) const 
-{
-	if (!DiggerManager || !DiggerManager->ProceduralMesh) return;
-	if (SectionIndex < 0) return;
-	if (OutVertices.Num() == 0) return;
-
-	TArray<FVector2D> UVs;
-	TArray<FColor> Colors;
-	TArray<FProcMeshTangent> Tangents;
-
-	DiggerManager->ProceduralMesh->CreateMeshSection(
-		SectionIndex,
-		OutVertices,
-		OutTriangles,
-		Normals,
-		UVs,
-		Colors,
-		Tangents,
-		true
-	);
-
-	DiggerManager->ProceduralMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-	if (DiggerManager->GetTerrainMaterial())
-	{
-		DiggerManager->ProceduralMesh->SetMaterial(SectionIndex, DiggerManager->GetTerrainMaterial());
-	}
-
-	if (OnMeshReady.IsBound())
-	{
-		OnMeshReady.Execute();
-	}
-}
+// void UMarchingCubes::ReconstructMeshSection(int32 SectionIndex, const TArray<FVector>& OutVertices, const TArray<int32>& OutTriangles, const TArray<FVector>& Normals) const 
+// {
+// 	if (!DiggerManager || !DiggerManager->ProceduralMesh) return;
+// 	if (SectionIndex < 0) return;
+// 	if (OutVertices.Num() == 0) return;
+//
+// 	TArray<FVector2D> UVs;
+// 	TArray<FColor> Colors;
+// 	TArray<FProcMeshTangent> Tangents;
+//
+// 	DiggerManager->ProceduralMesh->CreateMeshSection(
+// 		SectionIndex,
+// 		OutVertices,
+// 		OutTriangles,
+// 		Normals,
+// 		UVs,
+// 		Colors,
+// 		Tangents,
+// 		true
+// 	);
+//
+// 	DiggerManager->ProceduralMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+// 	if (DiggerManager->GetTerrainMaterial())
+// 	{
+// 		DiggerManager->ProceduralMesh->SetMaterial(SectionIndex, DiggerManager->GetTerrainMaterial());
+// 	}
+//
+// 	// 🔔 NOW notify the chunk with proper data 
+// 	if (OnMeshReady.IsBound()) 
+// 	{ 
+// 		const FIntVector ChunkCoord = (MyVoxelChunk ? MyVoxelChunk->GetChunkCoordinates() : FIntVector::ZeroValue); OnMeshReady.Execute(ChunkCoord, SectionIndex); 
+// 	}
+// }
 
 void UMarchingCubes::GenerateMeshForIsland(USparseVoxelGrid* IslandGrid, const FVector& Origin, float VoxelSize, int32 IslandId)
 {

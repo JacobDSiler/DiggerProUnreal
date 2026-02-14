@@ -3545,7 +3545,8 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
         EnsureDefaultHoleBP();
         if (!DynamicHoleClass)
         {
-            UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: DynamicHoleClass is NULL!"));
+            if (DiggerDebug::Holes())
+                UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: DynamicHoleClass is NULL!"));
             return;
         }
     }
@@ -3565,7 +3566,8 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
         }
         else
         {
-            UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: Failed to create ActiveBrush at Runtime!"));
+            if (DiggerDebug::Holes())
+                UE_LOG(LogTemp, Error, TEXT("HandleHoleSpawn: Failed to create ActiveBrush at Runtime!"));
             return;
         }
 #endif
@@ -3622,8 +3624,9 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 
     if (!bFoundLandscape)
     {
-        UE_LOG(LogTemp, Warning,
-            TEXT("HandleHoleSpawn: No landscape detected near brush center. Skipping hole spawn."));
+        if (DiggerDebug::Holes())
+            UE_LOG(LogTemp, Warning,
+                TEXT("HandleHoleSpawn: No landscape detected near brush center. Skipping hole spawn."));
         return;
     }
 
@@ -3663,9 +3666,10 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 
     if (!Chunk)
     {
-        UE_LOG(LogTemp, Error,
-            TEXT("HandleHoleSpawn: No chunk found near %s"),
-            *SpawnLocation.ToString());
+        if (DiggerDebug::Holes())
+            UE_LOG(LogTemp, Error,
+                TEXT("HandleHoleSpawn: No chunk found near %s"),
+                *SpawnLocation.ToString());
         return;
     }
 
@@ -3681,10 +3685,11 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 
     Chunk->SpawnHoleFromData(Data);
 
-    UE_LOG(LogTemp, Log,
-        TEXT("HandleHoleSpawn: Spawned hole at %s (Chunk %s) [Brush-Centered, Preview-Consistent]"),
-        *SpawnLocation.ToString(),
-        *Chunk->GetChunkCoordinates().ToString());
+    if (DiggerDebug::Holes())
+        UE_LOG(LogTemp, Log,
+            TEXT("HandleHoleSpawn: Spawned hole at %s (Chunk %s) [Brush-Centered, Preview-Consistent]"),
+            *SpawnLocation.ToString(),
+            *Chunk->GetChunkCoordinates().ToString());
 }
 
 

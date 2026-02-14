@@ -471,13 +471,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushParameterSection()
         ]
         + SVerticalBox::Slot().AutoHeight()
         [
-            MakeLabeledSliderRow(
-                FText::FromString("Force"),
-                [this]() { return BrushForce; },
-                [this](float V) { BrushForce = V; },
-                0.f, 1.f,
-                {0.f, 0.5f, 1.f}
-            )
+            MakeLabeledSliderRow(FText::FromString("Force"), [this](){return BrushForce;}, [this](float V){BrushForce=V;}, 0.f, 1.f, {0.1f, 0.5f, 1.f})
         ]
         + SVerticalBox::Slot().AutoHeight().Padding(4)
         [

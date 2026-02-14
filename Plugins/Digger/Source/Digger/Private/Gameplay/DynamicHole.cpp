@@ -23,7 +23,7 @@ ADynamicHole::ADynamicHole()
 	RootComponent = HoleMeshComponent;
 
 	// Default hole shape (metadata only — mesh assigned later)
-	HoleShape = FHoleShape(EHoleShapeType::Sphere);
+	//HoleShape = FHoleShape(EHoleShapeType::Sphere);
 
 	// ---------------------------------------------------------
 	// 2. COLLISION: NON‑BLOCKING BUT STILL IDENTIFIABLE
@@ -75,9 +75,9 @@ bool ADynamicHole::ContainsPoint(const FVector& WorldPos) const
 		bResult = BrushShapeInstance->IsWithinInterior(WorldPos, CachedStroke);
 		if (DiggerDebug::Holes())
 		{
-		UE_LOG(LogTemp, Warning,
-			TEXT("ContainsPoint: Hole=%s, Point=%s, Result=%d"),
-			*GetName(), *WorldPos.ToString(), bResult ? 1 : 0);
+		// UE_LOG(LogTemp, Warning,
+		// 	TEXT("ContainsPoint: Hole=%s, Point=%s, Result=%d"),
+		// 	*GetName(), *WorldPos.ToString(), bResult ? 1 : 0);
 		}
 		
 		return bResult;
@@ -177,24 +177,41 @@ void ADynamicHole::OnConstruction(const FTransform& Xform)
     }
 #endif // WITH_EDITOR
 
-    // 📍 Track hole movement and update chunk registration
-    FVector HoleLocation = GetActorLocation();
-    CurrentChunkCoords = FVoxelConversion::WorldToChunk(HoleLocation);
 
-    if (OwningChunk && PreviousChunkCoords != CurrentChunkCoords)
-    {
-        // Hole has moved — update chunk registration
-        OwningChunk->RemoveHoleFromChunk(this);
-
-        OwningChunk = FindOwningChunk(CurrentChunkCoords);
-        if (OwningChunk)
-        {
-            OwningChunk->AddHoleToChunk(this);
-        }
-
-        PreviousChunkCoords = CurrentChunkCoords;
-    }
+	// Construction should NOT reassign chunks
+	CurrentChunkCoords = FVoxelConversion::WorldToChunk(GetActorLocation());
+	PreviousChunkCoords = CurrentChunkCoords;
 }
+
+#if WITH_EDITOR
+void ADynamicHole::PostEditMove(bool bFinished)
+{
+	Super::PostEditMove(bFinished);
+
+	if (!bFinished)
+		return; // Only reassign when the user releases the mouse
+
+	// Determine new chunk
+	FIntVector NewCoords = FVoxelConversion::WorldToChunk(GetActorLocation());
+
+	if (NewCoords != CurrentChunkCoords)
+	{
+		if (OwningChunk)
+		{
+			OwningChunk->RemoveHoleFromChunk(this);
+		}
+
+		UVoxelChunk* NewChunk = FindOwningChunk(NewCoords);
+		if (NewChunk)
+		{
+			NewChunk->AddHoleToChunk(this);
+			OwningChunk = NewChunk;
+		}
+
+		CurrentChunkCoords = NewCoords;
+	}
+}
+#endif
 
 
 void ADynamicHole::SetOwningChunk(UVoxelChunk* NewChunk)
@@ -315,6 +332,7 @@ void ADynamicHole::UpdateHoleMesh()
 		return;
 
 	SetMeshForShape(HoleShape.ShapeType);
+	// Do Not Assign Mesh Here. We assign it in UVoxelChunk::OnMeshReady!
 
 	// Create brush shape instance for this hole type
 	BrushShapeInstance = DiggerManager->HoleShapeLibrary->CreateBrushShape(HoleShape.ShapeType);

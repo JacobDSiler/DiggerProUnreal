@@ -22,6 +22,9 @@ ABrushPreviewActor::ABrushPreviewActor()
     SetActorEnableCollision(false);
     SetReplicates(false);
 
+    // ---------------------------------------------------------
+    // Root mesh
+    // ---------------------------------------------------------
     PreviewMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("PreviewMesh"));
     RootComponent = PreviewMesh;
 
@@ -34,38 +37,45 @@ ABrushPreviewActor::ABrushPreviewActor()
     PreviewMesh->SetHiddenInGame(true);
     PreviewMesh->SetVisibility(true, true);
 
+    // ---------------------------------------------------------
+    // Mode indicator billboard
+    // ---------------------------------------------------------
     ModeIndicator = CreateDefaultSubobject<UBillboardComponent>(TEXT("ModeIndicator"));
     ModeIndicator->SetupAttachment(RootComponent);
-    ModeIndicator->SetHiddenInGame(true);
-    ModeIndicator->SetVisibility(false);
-    ModeIndicator->SetRelativeLocation(FVector(0, 0, 120));
+
+    ModeIndicator->SetHiddenInGame(true);   // always hidden in PIE
+    ModeIndicator->SetVisibility(true);    // sculpt mode is set to visible by default
     ModeIndicator->SetRelativeScale3D(FVector(10.0f));
-    ModeIndicator->bIsScreenSizeScaled = true; // optional but recommended
-    ModeIndicator->SetHiddenInGame(true);
-    ModeIndicator->SetVisibility(false);
-    ModeIndicator->SetRelativeLocation(FVector(0, 0, 50));
-    ModeIndicator->SetRelativeScale3D(FVector(10.0f));
-    ModeIndicator->bIsScreenSizeScaled = true; // optional but recommended
+    ModeIndicator->bIsScreenSizeScaled = true;
+    ModeIndicator->SetWorldRotation(FRotator(0.f, 0.f, 0.f));
 
 
-    // ---------------------------------------------------------------------
-    // Correct plugin content paths for icons
-    // ---------------------------------------------------------------------
+    // ---------------------------------------------------------
+    // Load icons from settings
+    // ---------------------------------------------------------
     const UDiggerEditorSettings* Settings = UDiggerEditorSettings::Get();
 
     if (Settings)
     {
-        SculptSprite  = Settings->SculptIcon.LoadSynchronous();
-        RotateSprite  = Settings->RotateIcon.LoadSynchronous();
-        OffsetSprite  = Settings->OffsetIcon.LoadSynchronous();
+        SculptSprite = Settings->SculptIcon.LoadSynchronous();
+        RotateSprite = Settings->RotateIcon.LoadSynchronous();
+        OffsetSprite = Settings->OffsetIcon.LoadSynchronous();
     }
-    
 
     // Debug logs
     if (!SculptSprite) UE_LOG(LogTemp, Error, TEXT("Failed to load SculptSprite"));
     if (!RotateSprite) UE_LOG(LogTemp, Error, TEXT("Failed to load RotateSprite"));
     if (!OffsetSprite) UE_LOG(LogTemp, Error, TEXT("Failed to load OffsetSprite"));
+
+    // ---------------------------------------------------------
+    // Set default sculpt sprite *after* loading
+    // ---------------------------------------------------------
+    if (SculptSprite)
+    {
+        ModeIndicator->SetSprite(SculptSprite);
+    }
 }
+
 
 
 
@@ -202,6 +212,13 @@ void ABrushPreviewActor::UpdatePreview(
         SafeR.Z / MeshUnitRadius);
 
     PreviewMesh->SetWorldScale3D(Scale);
+    
+    if (ModeIndicator)
+    {
+        // Keep the icon upright
+        ModeIndicator->SetWorldRotation(FRotator(0.f, 0.f, 0.f));
+    }
+
 
     // ---------------------------------------------------------
     // 5. Update material parameters
@@ -220,6 +237,24 @@ void ABrushPreviewActor::UpdatePreview(
                 Scale.Z > 0.f ? 1.f / Scale.Z : 0.f,
                 0.f));
     }
+
+    // ---------------------------------------------------------------------
+    // Position the mode indicator just above the brush bounds in world space
+    // ---------------------------------------------------------------------
+    if (ModeIndicator)
+    {
+        // SafeR.Z is the world-space radius of the brush
+        const float BrushHeight = SafeR.Z;
+
+        // Offset the icon above the brush
+        const FVector IconPos = FinalCenter + FVector(0, 0, BrushHeight + 100.f);
+
+        ModeIndicator->SetWorldLocation(IconPos);
+
+        // Keep the icon upright
+        ModeIndicator->SetWorldRotation(FRotator(0.f, 0.f, 0.f));
+    }
+    
 }
 
 

@@ -165,6 +165,15 @@ struct FBrushStroke
     UPROPERTY(Transient)
     UVoxelBrushShape* BrushShape;
 
+    // SmoothBrush defaults
+    float Pressure = 1.f;      // 0..1
+    float ElapsedTime = 0.f;   // seconds since stroke began
+
+    bool bUseFivePointKernel = true;
+    bool bUseNinePointKernel = false;
+    bool bUseTwentyFivePointKernel = false;
+
+
 
     // In FBrushStroke constructor
     FBrushStroke()

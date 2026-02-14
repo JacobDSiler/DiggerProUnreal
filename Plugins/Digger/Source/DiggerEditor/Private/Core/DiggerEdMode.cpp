@@ -87,10 +87,14 @@ static constexpr float STRENGTH_MIN = 0.f;
 static constexpr float STRENGTH_MAX = 1.f;
 static constexpr float FALLOFF_MIN = 0.f;
 static constexpr float FALLOFF_MAX = 1.f;
+static constexpr float FORCE_MIN = 0.f;
+static constexpr float FORCE_MAX = 1.f;
 
 static constexpr float BASE_RADIUS_STEP   = 8.f;
 static constexpr float BASE_STRENGTH_STEP = 0.02f;
 static constexpr float BASE_FALLOFF_STEP  = 0.02f;
+static constexpr float BASE_FORCE_STEP  = 0.02f;
+
 
 static constexpr float ACCEL_GAIN   = 0.35f;
 static constexpr float SPEED_CLAMP  = 30.f;
@@ -99,6 +103,7 @@ static constexpr float SPEED_CLAMP  = 30.f;
 static constexpr float RADIUS_SNAP_STEP   = 0.f;   // set to voxel size if desired
 static constexpr float FALLOFF_SNAP_STEP  = 0.f;   // e.g. 0.05f
 static constexpr float STRENGTH_SNAP_STEP = 0.f;   // e.g. 0.05f
+static constexpr float FORCE_SNAP_STEP = 0.f;   // e.g. 0.05f
 
 // Local epsilon to avoid macro collisions
 static constexpr float LOCAL_KINDA_SMALL_NUMBER = 1.e-4f;
@@ -471,26 +476,44 @@ bool FDiggerEdMode::CapturedMouseMove(
 // BRUSH HUD MESSAGES
 // -----------------------------------------------------------------------------------
 
-void FDiggerEdMode::ShowBrushHUDMessage(const FString& Msg, const FLinearColor& Color)
+// void FDiggerEdMode::ShowBrushHUDMessage(const FString& Msg, const FLinearColor& Color)
+// {
+//     FBrushHUDMessage NewMsg;
+//     NewMsg.Text = Msg;
+//     NewMsg.Color = Color;
+//     NewMsg.TimeRemaining = 1.2f;
+//     NewMsg.Alpha = 1.f;
+//     NewMsg.YOffset = 20.f; // slide-in start
+//
+//     BrushHUD.Messages.Insert(NewMsg, 0); // newest at top
+// }
+
+
+void FDiggerEdMode::UpdateBrushHUDPanel()
 {
-    FBrushHUDMessage NewMsg;
-    NewMsg.Text = Msg;
-    NewMsg.Color = Color;
-    NewMsg.TimeRemaining = 1.2f;
-    NewMsg.Alpha = 1.f;
-    NewMsg.YOffset = 20.f; // slide-in start
+    BrushHUD.ModeText =
+        (CurrentMode == EDiggerMainMode::Rotate) ? TEXT("Rotation Mode") :
+        (CurrentMode == EDiggerMainMode::Offset) ? TEXT("Offset Mode") :
+        TEXT("Sculpt Mode");
 
-    BrushHUD.Messages.Insert(NewMsg, 0); // newest at top
+    BrushHUD.Radius   = BrushCache.Radius;
+    BrushHUD.Strength = BrushCache.Strength;
+    BrushHUD.Falloff  = BrushCache.Falloff;
+    BrushHUD.Force    = BrushCache.Force;
+    BrushHUD.PushMode = BrushCache.PushMode;
+
+    BrushHUD.TimeRemaining = 1.5f;
+    BrushHUD.Alpha = 1.f;
+    BrushHUD.bVisible = true;
 }
-
 
 
 void FDiggerEdMode::HandleModifierBlocked(bool bBlocked)
 {
     if (bBlocked)
-        ShowBrushHUDMessage(TEXT("Painting paused (modifier held)"));
+        UpdateBrushHUDPanel();
     else
-        ShowBrushHUDMessage(TEXT("Painting active"));
+        UpdateBrushHUDPanel();
 }
 
 
@@ -1556,13 +1579,17 @@ bool FDiggerEdMode::InputKey(
         {
             CurrentMode = EDiggerMainMode::Rotate;
             CurrentAxis = EDiggerAxisMode::None;
-            ShowBrushHUDMessage(TEXT("Rotation Mode"), FLinearColor(0.3f, 0.8f, 1.0f));
+            UpdateBrushHUDPanel();
+
+//            ShowBrushHUDMessage(TEXT("Rotation Mode"), FLinearColor(0.3f, 0.8f, 1.0f));
         }
         else
         {
             CurrentMode = EDiggerMainMode::Sculpt;
             CurrentAxis = EDiggerAxisMode::None;
-            ShowBrushHUDMessage(TEXT("Sculpt Mode"), FLinearColor(0.6f, 1.0f, 0.6f));
+            UpdateBrushHUDPanel();
+
+            //          ShowBrushHUDMessage(TEXT("Sculpt Mode"), FLinearColor(0.6f, 1.0f, 0.6f));
         }
 
         UpdatePreviewModeIndicator();
@@ -1580,13 +1607,17 @@ bool FDiggerEdMode::InputKey(
         {
             CurrentMode = EDiggerMainMode::Offset;
             CurrentAxis = EDiggerAxisMode::None;
-            ShowBrushHUDMessage(TEXT("Offset Mode"), FLinearColor(1.0f, 0.6f, 0.2f));
+            UpdateBrushHUDPanel();
+
+//            ShowBrushHUDMessage(TEXT("Offset Mode"), FLinearColor(1.0f, 0.6f, 0.2f));
         }
         else
         {
             CurrentMode = EDiggerMainMode::Sculpt;
             CurrentAxis = EDiggerAxisMode::None;
-            ShowBrushHUDMessage(TEXT("Sculpt Mode"), FLinearColor(0.6f, 1.0f, 0.6f));
+            UpdateBrushHUDPanel();
+
+//            ShowBrushHUDMessage(TEXT("Sculpt Mode"), FLinearColor(0.6f, 1.0f, 0.6f));
         }
 
         UpdatePreviewModeIndicator();
@@ -1613,12 +1644,14 @@ bool FDiggerEdMode::InputKey(
 
             const bool bRot = (CurrentMode == EDiggerMainMode::Rotate);
 
-            ShowBrushHUDMessage(
-                FString::Printf(TEXT("%s Axis: %s"),
-                    bRot ? TEXT("Rotate") : TEXT("Offset"),
-                    AxisName),
-                bRot ? FLinearColor(0.3f, 0.8f, 1.0f)
-                     : FLinearColor(1.0f, 0.6f, 0.2f));
+            UpdateBrushHUDPanel();
+
+            // ShowBrushHUDMessage(
+            //     FString::Printf(TEXT("%s Axis: %s"),
+            //         bRot ? TEXT("Rotate") : TEXT("Offset"),
+            //         AxisName),
+            //     bRot ? FLinearColor(0.3f, 0.8f, 1.0f)
+            //          : FLinearColor(1.0f, 0.6f, 0.2f));
 
             UpdatePreviewModeIndicator();
             return true;
@@ -1643,10 +1676,11 @@ bool FDiggerEdMode::InputKey(
     if (Key == EKeys::P && bPressed)
     {
         bPaintingEnabled = !bPaintingEnabled;
+        UpdateBrushHUDPanel();
 
-        ShowBrushHUDMessage(
-            bPaintingEnabled ? TEXT("Paint Mode: ON") : TEXT("Paint Mode: OFF"),
-            bPaintingEnabled ? FLinearColor(0.6f, 1.0f, 0.6f) : FLinearColor(1.0f, 0.4f, 0.4f));
+        // ShowBrushHUDMessage(
+        //     bPaintingEnabled ? TEXT("Paint Mode: ON") : TEXT("Paint Mode: OFF"),
+        //     bPaintingEnabled ? FLinearColor(0.6f, 1.0f, 0.6f) : FLinearColor(1.0f, 0.4f, 0.4f));
 
         return true;
     }
@@ -1682,7 +1716,9 @@ bool FDiggerEdMode::InputKey(
                     DiggerToolkit->SetBrushRotation(NewRot);
                 }
 
-                ShowBrushHUDMessage(TEXT("Sampled Surface Normal"), FLinearColor(0.8f, 0.8f, 1.0f));
+                UpdateBrushHUDPanel();
+
+              //  ShowBrushHUDMessage(TEXT("Sampled Surface Normal"), FLinearColor(0.8f, 0.8f, 1.0f));
                 return true;
             }
 
@@ -1843,10 +1879,11 @@ bool FDiggerEdMode::InputAxis(
             (CurrentAxis == EDiggerAxisMode::X) ? Rot.Pitch :
             (CurrentAxis == EDiggerAxisMode::Y) ? Rot.Yaw   :
                                                   Rot.Roll;
+        UpdateBrushHUDPanel();
 
-        ShowBrushHUDMessage(
-            FString::Printf(TEXT("Rotate %s: %.1f"), AxisLabel, AxisValue),
-            FLinearColor(0.3f, 0.8f, 1.0f));
+        // ShowBrushHUDMessage(
+        //     FString::Printf(TEXT("Rotate %s: %.1f"), AxisLabel, AxisValue),
+        //     FLinearColor(0.3f, 0.8f, 1.0f));
 
         return true;
     }
@@ -1878,10 +1915,11 @@ bool FDiggerEdMode::InputAxis(
             (CurrentAxis == EDiggerAxisMode::X) ? Off.X :
             (CurrentAxis == EDiggerAxisMode::Y) ? Off.Y :
                                                   Off.Z;
+        UpdateBrushHUDPanel();
 
-        ShowBrushHUDMessage(
-            FString::Printf(TEXT("Offset %s: %.1f"), AxisLabel, AxisValue),
-            FLinearColor(1.0f, 0.6f, 0.2f));
+        // ShowBrushHUDMessage(
+        //     FString::Printf(TEXT("Offset %s: %.1f"), AxisLabel, AxisValue),
+        //     FLinearColor(1.0f, 0.6f, 0.2f));
 
         return true;
     }
@@ -1894,11 +1932,13 @@ bool FDiggerEdMode::InputAxis(
         const bool bRadiusMode   =  bShift && !bCtrl && !bAlt;
         const bool bStrengthMode =  bCtrl  && !bShift && !bAlt;
         const bool bFalloffMode  =  bAlt   && !bShift && !bCtrl;
+        const bool bForceMode  =  bCtrl &&  bAlt   && !bShift;
 
         const float BaseStep =
             bRadiusMode   ? BASE_RADIUS_STEP   :
             bStrengthMode ? BASE_STRENGTH_STEP :
             bFalloffMode  ? BASE_FALLOFF_STEP  :
+            bForceMode  ? BASE_FORCE_STEP  :
                             BASE_RADIUS_STEP;
 
         const bool bFine   = false;
@@ -1913,8 +1953,9 @@ bool FDiggerEdMode::InputAxis(
             Radius = FMath::Clamp(Radius + Step, RADIUS_MIN, RADIUS_MAX);
             Radius = SnapIf(Radius, RADIUS_SNAP_STEP);
             IAToolkit->SetBrushRadius(Radius);
+            UpdateBrushHUDPanel();
 
-            ShowBrushHUDMessage(FString::Printf(TEXT("Radius: %.0f"), Radius));
+            //ShowBrushHUDMessage(FString::Printf(TEXT("Radius: %.0f"), Radius));
         }
         else if (bStrengthMode)
         {
@@ -1923,7 +1964,20 @@ bool FDiggerEdMode::InputAxis(
             Strength = SnapIf(Strength, STRENGTH_SNAP_STEP);
             IAToolkit->SetBrushStrength(Strength);
 
-            ShowBrushHUDMessage(FString::Printf(TEXT("Strength: %.2f"), Strength));
+            UpdateBrushHUDPanel();
+
+            //ShowBrushHUDMessage(FString::Printf(TEXT("Strength: %.2f"), Strength));
+        }
+        else if (bForceMode)
+        {
+            float Force = IAToolkit->GetBrushForce();
+            Force = FMath::Clamp(Force + Step, FORCE_MIN, FORCE_MAX);
+            Force = SnapIf(Force, FORCE_SNAP_STEP);
+            IAToolkit->SetBrushForce(Force);
+
+            UpdateBrushHUDPanel();
+
+            //ShowBrushHUDMessage(FString::Printf(TEXT("Strength: %.2f"), Strength));
         }
         else if (bFalloffMode)
         {
@@ -1932,7 +1986,8 @@ bool FDiggerEdMode::InputAxis(
             Falloff = SnapIf(Falloff, FALLOFF_SNAP_STEP);
             IAToolkit->SetBrushFalloff(Falloff);
 
-            ShowBrushHUDMessage(FString::Printf(TEXT("Falloff: %.2f"), Falloff));
+            UpdateBrushHUDPanel();
+            //ShowBrushHUDMessage(FString::Printf(TEXT("Falloff: %.2f"), Falloff));
         }
 
         return true;
@@ -2027,48 +2082,32 @@ void FDiggerEdMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
             (CurrentMode == EDiggerMainMode::Rotate) ||
             (CurrentMode == EDiggerMainMode::Offset);
 
-        if (bModeNeedsFocus)
-        {
+        //if (bModeNeedsFocus)
+       // {
             ViewportClient->Viewport->SetUserFocus(true);
             ViewportClient->Viewport->CaptureMouse(true);
-        }
+        //}
     }
 
     
     // ---------------------------------------------------------------------
     // 1. BRUSH HUD TICK (UNCHANGED)
     // ---------------------------------------------------------------------
-    for (int32 i = BrushHUD.Messages.Num() - 1; i >= 0; --i)
+    if (BrushHUD.bVisible)
     {
-        FBrushHUDMessage& M = BrushHUD.Messages[i];
+        BrushHUD.TimeRemaining -= DeltaTime;
 
-        // Slide-in animation
-        if (M.YOffset > 0.f)
+        if (BrushHUD.TimeRemaining <= 0.f)
         {
-            M.YOffset -= M.SlideSpeed * DeltaTime;
-            if (M.YOffset < 0.f)
-                M.YOffset = 0.f;
-        }
+            BrushHUD.Alpha -= DeltaTime * 2.f;
 
-        // Lifetime countdown
-        if (M.TimeRemaining > 0.f)
-        {
-            M.TimeRemaining -= DeltaTime;
-            if (M.TimeRemaining < 0.f)
-                M.TimeRemaining = 0.f;
-        }
-        else
-        {
-            // Fade out
-            M.Alpha -= DeltaTime * 2.f;
-            M.Alpha = FMath::Clamp(M.Alpha, 0.f, 1.f);
-        }
-
-        if (!M.IsAlive())
-        {
-            BrushHUD.Messages.RemoveAt(i);
+            if (BrushHUD.Alpha <= 0.f)
+            {
+                BrushHUD.bVisible = false;
+            }
         }
     }
+    
 
     // ---------------------------------------------------------------------
     // 2. PREVIEW UPDATE (UNCHANGED)
@@ -2151,7 +2190,8 @@ void FDiggerEdMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
         R += ScrollVelocity * DeltaTime;
         R = FMath::Clamp(R, RADIUS_MIN, RADIUS_MAX);
         TickToolkit->SetBrushRadius(R);
-        ShowBrushHUDMessage(FString::Printf(TEXT("Radius: %.0f"), R));
+        UpdateBrushHUDPanel();
+
     }
     else if (bCtrl && !bShift && !bAlt)
     {
@@ -2159,7 +2199,7 @@ void FDiggerEdMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
         S += ScrollVelocity * DeltaTime * 0.01f;
         S = FMath::Clamp(S, STRENGTH_MIN, STRENGTH_MAX);
         TickToolkit->SetBrushStrength(S);
-        ShowBrushHUDMessage(FString::Printf(TEXT("Strength: %.2f"), S));
+        UpdateBrushHUDPanel();
     }
     else if (bAlt && !bShift && !bCtrl)
     {
@@ -2167,7 +2207,7 @@ void FDiggerEdMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
         F += ScrollVelocity * DeltaTime * 0.01f;
         F = FMath::Clamp(F, FALLOFF_MIN, FALLOFF_MAX);
         TickToolkit->SetBrushFalloff(F);
-        ShowBrushHUDMessage(FString::Printf(TEXT("Falloff: %.2f"), F));
+        UpdateBrushHUDPanel();
     }
     UpdatePreviewModeIndicator();
 }
@@ -2226,28 +2266,31 @@ void FDiggerEdMode::Render(const FSceneView* View, FViewport* Viewport, FPrimiti
     }
 
     // --- Brush HUD Render ---
-    const float LineSpacing = 22.f;
-
-    for (int32 i = 0; i < BrushHUD.Messages.Num(); ++i)
+    if (BrushHUD.bVisible && BrushHUD.Alpha > 0.f)
     {
-        const FBrushHUDMessage& M = BrushHUD.Messages[i];
-        if (!M.IsAlive())
-            continue;
+        float Y = Anchor.Y;
 
-        float Y = Anchor.Y + i * LineSpacing + M.YOffset;
+        auto DrawLine = [&](const FString& Text)
+        {
+            FCanvasTextItem Item(
+                FVector2D(Anchor.X, Y),
+                FText::FromString(Text),
+                GEngine->GetSmallFont(),
+                FLinearColor(1,1,1,BrushHUD.Alpha)
+            );
+            Item.EnableShadow(FLinearColor::Black);
+            Canvas->DrawItem(Item);
+            Y += 18.f;
+        };
 
-        FLinearColor C = M.Color;
-        C.A = M.Alpha;
-
-        FCanvasTextItem Item(
-            FVector2D(Anchor.X, Y),
-            FText::FromString(M.Text),
-            GEngine->GetSmallFont(),
-            C
-        );
-
-        Item.EnableShadow(FLinearColor::Black);
-        Canvas->DrawItem(Item);
+        DrawLine(BrushHUD.ModeText);
+        DrawLine(FString::Printf(TEXT("Radius: %.1f"), BrushHUD.Radius));
+        DrawLine(FString::Printf(TEXT("Strength: %.2f"), BrushHUD.Strength));
+        DrawLine(FString::Printf(TEXT("Falloff: %.2f"), BrushHUD.Falloff));
+        DrawLine(FString::Printf(TEXT("Force: %.2f (%s)"),
+            BrushHUD.Force,
+            *StaticEnum<EDiggerPushMode>()->GetNameStringByValue((int64)BrushHUD.PushMode)
+        ));
     }
 }
 

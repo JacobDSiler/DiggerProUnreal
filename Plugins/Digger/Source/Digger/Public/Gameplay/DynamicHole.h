@@ -128,6 +128,9 @@ private:
 	// Update the mesh from the HoleShape library
 	void SetMeshForShape(EHoleShapeType ShapeType);
 	virtual void OnConstruction(const FTransform& Transform) override;
+#if WITH_EDITOR
+	virtual void PostEditMove(bool bFinished) override;
+#endif
 	UVoxelChunk* FindOwningChunk(const FIntVector& ChunkCoords) const;
 
 
