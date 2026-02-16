@@ -523,6 +523,29 @@ void FDiggerEdMode::HandleModifierBlocked(bool bBlocked)
 // -----------------------------------------------------------------------------------
 
 // Brush Helpers
+
+// Helper to push scalar settings to the manager (prevents stale state in Sweep mode)
+void FDiggerEdMode::SyncBrushSettingsToManager(ADiggerManager* Digger, const FBrushCache& Settings)
+{
+    if (!Digger) return;
+
+    Digger->EditorBrushRadius           = Settings.Radius;
+    Digger->EditorBrushDig              = Settings.bFinalBrushDig;
+    Digger->EditorBrushIsFilled         = Settings.bIsFilled;
+    Digger->EditorBrushAngle            = Settings.Angle;
+    Digger->EditorBrushType             = Settings.BrushType;
+    Digger->EditorBrushLightType        = Settings.LightType;
+    Digger->EditorBrushHiddenSeam       = Settings.bHiddenSeam;
+    Digger->EditorbUseAdvancedCubeBrush = Settings.bUseAdvancedCube;
+    Digger->EditorCubeHalfExtentX       = Settings.CubeHalfExtentX;
+    Digger->EditorCubeHalfExtentY       = Settings.CubeHalfExtentY;
+    Digger->EditorCubeHalfExtentZ       = Settings.CubeHalfExtentZ;
+    Digger->EditorBrushRotation         = Settings.Rotation;
+    
+    // WYSIWYG: We assume the position passed to drawing functions is FINAL.
+    Digger->EditorBrushOffset           = FVector::ZeroVector; 
+}
+
 // Helper to detect if a new hole is redundant (overlapping an existing one)
 // This prevents "Skirt Peeling" when digging deeper inside an existing cave.
 static bool IsHoleRedundant(UWorld* World, const FVector& NewHolePos, float NewHoleRadius)
@@ -653,7 +676,9 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
         FHitResult PauseHit;
         if (GetMouseWorldHit(InViewportClient, PauseHitLoc, PauseHit))
         {
-            LastStrokeHitLocation = PauseHitLoc;
+            // [FIX] Critical: Update LastStroke to the VISUAL location, not the raw mouse location.
+            // This prevents a stroke line appearing between the cursor and the offset brush when you release Alt.
+            LastStrokeHitLocation = GetVisualLocation(PauseHitLoc, BrushCache);
         }
 
         bMouseButtonDown          = false;
@@ -676,10 +701,8 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
     if (!GetMouseWorldHit(InViewportClient, MouseHitLocation, Hit))
         return;
 
-    // Use preview center as canonical brush position
-    const FVector HitLocation = BrushCache.CachedBrushPreviewCenter.IsNearlyZero()
-        ? MouseHitLocation
-        : BrushCache.CachedBrushPreviewCenter;
+    // [FIX] Calculate Visual Target (WYSIWYG)
+    const FVector HitLocation = GetVisualLocation(MouseHitLocation, BrushCache);
 
     // ---------------------------------------------------------
     // ⭐ FIRST SAMPLE — ALWAYS APPLY
@@ -695,14 +718,13 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
     }
 
     // ---------------------------------------------------------
-    // ⭐ GLOBAL JUMP FILTER — protects ALL brush types
+    // ⭐ GLOBAL JUMP FILTER
     // ---------------------------------------------------------
     const float DistanceSquared = FVector::DistSquared(HitLocation, LastStrokeHitLocation);
     const float JumpDistSq = FMath::Square(BrushCache.Radius);
 
     if (DistanceSquared > JumpDistSq)
     {
-        // Skip entire tick — no voxels, no holes, no interpolation
         LastStrokeHitLocation = HitLocation;
         return;
     }
@@ -716,8 +738,6 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
     // Snapshot settings
     FBrushCache CurrentSettings = BrushCache;
 
-    const bool bIsLandscapeHit = Hit.GetActor() && Hit.GetActor()->IsA(ALandscapeProxy::StaticClass());
-
     // ---------------------------------------------------------
     // 3. Sphere / Capsule swept strokes
     // ---------------------------------------------------------
@@ -726,17 +746,27 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
     {
         if (Digger->ActiveBrush)
         {
+            // [FIX] Ensure Digger Manager has up-to-date scalar values before sweeping.
+            // This fixes the "weird add/sub marks" regression.
+            SyncBrushSettingsToManager(Digger, CurrentSettings);
+            
+            // Explicitly force position to Start of stroke for consistent state, 
+            // though the SweptStroke struct drives the actual voxel operation.
+            Digger->EditorBrushPosition = LastStrokeHitLocation;
+
             FBrushStroke SweptStroke;
             SweptStroke.bDig          = CurrentSettings.bFinalBrushDig;
             SweptStroke.BrushStrength = CurrentSettings.Strength;
             SweptStroke.BrushFalloff  = CurrentSettings.Falloff;
             SweptStroke.BrushType     = EVoxelBrushType::Capsule;
             SweptStroke.LightType     = CurrentSettings.LightType;
+            SweptStroke.BrushForce    = CurrentSettings.Force; // Ensure force is passed if used
+            SweptStroke.PushMode      = CurrentSettings.PushMode;
 
             Digger->ActiveBrush->SetupSweptStroke(
                 SweptStroke,
-                LastStrokeHitLocation,
-                HitLocation,
+                LastStrokeHitLocation, // From Visual
+                HitLocation,           // To Visual
                 CurrentSettings.Radius
             );
 
@@ -767,7 +797,7 @@ void FDiggerEdMode::ApplyContinuousBrush(FEditorViewportClient* InViewportClient
             StepHit.ImpactPoint = Pos;
 
             FBrushCache StepSettings = CurrentSettings;
-            StepSettings.CachedBrushPreviewCenter = Pos;
+            StepSettings.CachedBrushPreviewCenter = Pos; // Force cache to match interp pos
 
             ApplyBrushWithSettings(Digger, Pos, StepHit, StepSettings);
         }
@@ -787,47 +817,14 @@ void FDiggerEdMode::ApplyBrushWithSettings(
 {
     if (!Digger) return;
 
-    Digger->Modify(); // Undo support
+    Digger->Modify(); 
 
-    // ---------------------------------------------------------------------
-    // 1. Push scalar settings to Manager
-    // ---------------------------------------------------------------------
-    Digger->EditorBrushRadius           = Settings.Radius;
-    Digger->EditorBrushDig              = Settings.bFinalBrushDig;
-    Digger->EditorBrushIsFilled         = Settings.bIsFilled;
-    Digger->EditorBrushAngle            = Settings.Angle;
-    Digger->EditorBrushType             = Settings.BrushType;
-    Digger->EditorBrushLightType        = Settings.LightType;
-    Digger->EditorBrushHiddenSeam       = Settings.bHiddenSeam;
-    Digger->EditorbUseAdvancedCubeBrush = Settings.bUseAdvancedCube;
-    Digger->EditorCubeHalfExtentX       = Settings.CubeHalfExtentX;
-    Digger->EditorCubeHalfExtentY       = Settings.CubeHalfExtentY;
-    Digger->EditorCubeHalfExtentZ       = Settings.CubeHalfExtentZ;
+    // [FIX] Use the helper to sync all properties
+    SyncBrushSettingsToManager(Digger, Settings);
 
-    // ---------------------------------------------------------------------
-    // 2. Offset handling (local, not world)
-    // ---------------------------------------------------------------------
-    FVector OffsetXY(Settings.Offset.X, Settings.Offset.Y, 0.f);
-    const float ZDistance = Settings.Offset.Z;
-    FVector FinalOffset   = OffsetXY;
-
-    if (!Settings.Rotation.IsNearlyZero())
-        FinalOffset += Hit.ImpactNormal * ZDistance;
-    else
-        FinalOffset.Z = ZDistance;
-
-    // ---------------------------------------------------------------------
-    // 3. WYSIWYG brush position
-    // ---------------------------------------------------------------------
-    const FVector BrushPos = Settings.CachedBrushPreviewCenter;
-
-    Digger->EditorBrushPosition = BrushPos;
-    Digger->EditorBrushOffset   = FinalOffset;
-    Digger->EditorBrushRotation = Settings.Rotation;
-
-    if (Preview.IsValid())
-        Digger->EditorBrushRotation = Preview->GetActorRotation();
-
+    // [FIX] Explicitly set position to the Visual Center and Offset to Zero
+    Digger->EditorBrushPosition = HitLocation;
+    
     // ---------------------------------------------------------------------
     // 4. Apply voxel sculpting
     // ---------------------------------------------------------------------
@@ -840,64 +837,31 @@ void FDiggerEdMode::ApplyBrushWithSettings(
     if (Settings.bFinalBrushDig)
     {
         UWorld* World = Digger->GetWorld();
-        if (!World)
-            return;
+        if (!World) return;
 
-        // -------------------------------------------------------------
-        // 5.a Cooldown: limit hole spawn rate
-        // -------------------------------------------------------------
         static float LastHoleSpawnTime = -1000.f;
-        const float HoleSpawnInterval  = 0.10f; // 100ms
-
         const float Now = World->GetTimeSeconds();
-        if (Now - LastHoleSpawnTime < HoleSpawnInterval)
-            return;
+        if (Now - LastHoleSpawnTime < 0.10f) return;
 
-        // -------------------------------------------------------------
-        // 5.b Inside existing hole? (use real shape logic)
-        // -------------------------------------------------------------
+        // Use HitLocation (Visual Center) for overlap checks
         for (TActorIterator<ADynamicHole> It(World); It; ++It)
         {
             ADynamicHole* Hole = *It;
-            if (!IsValid(Hole)) continue;
-
-            if (Hole->ContainsPoint(BrushPos))
-            {
-                // Already inside a hole → do NOT spawn another
-                return;
-            }
+            if (IsValid(Hole) && Hole->ContainsPoint(HitLocation)) return;
         }
 
-        // -------------------------------------------------------------
-        // 5.c Landscape height + 60% burial rule
-        // -------------------------------------------------------------
-        TOptional<float> TerrainHeight = Digger->GetLandscapeHeightAt_Internal(BrushPos);
-        if (!TerrainHeight.IsSet())
-            return; // Not over landscape → no hole BPs
+        TOptional<float> TerrainHeight = Digger->GetLandscapeHeightAt_Internal(HitLocation);
+        if (!TerrainHeight.IsSet()) return; 
 
         const float Height = TerrainHeight.GetValue();
+        const float Depth = Height - (HitLocation.Z + Settings.Radius);
+        
+        if (Depth > (Settings.Radius * 0.6f)) return;
 
-        // How far the TOP of the brush sphere is below the landscape
-        const float Depth = Height - (BrushPos.Z + Settings.Radius);
-        const float MaxAllowedDepth = Settings.Radius * 0.6f;
+        if (!ShouldSpawnHole(Digger, HitLocation, Settings.Radius)) return;
 
-        if (Depth > MaxAllowedDepth)
-        {
-            // Too deep → suppress hole spawn
-            return;
-        }
-
-        // -------------------------------------------------------------
-        // 5.d Final redundancy / surface gate
-        // -------------------------------------------------------------
-        if (!ShouldSpawnHole(Digger, BrushPos, Settings.Radius))
-            return;
-
-        // -------------------------------------------------------------
-        // 6. Spawn hole
-        // -------------------------------------------------------------
         FBrushStroke HoleStroke;
-        HoleStroke.BrushPosition = BrushPos;
+        HoleStroke.BrushPosition = HitLocation;
         HoleStroke.BrushRadius   = Settings.Radius;
         HoleStroke.BrushType     = Settings.BrushType;
         HoleStroke.bDig          = true;
@@ -905,7 +869,7 @@ void FDiggerEdMode::ApplyBrushWithSettings(
         Digger->HandleHoleSpawn(HoleStroke);
         LastHoleSpawnTime = Now;
     }
-#endif // WITH_EDITOR
+#endif
 }
 
 
@@ -1520,7 +1484,8 @@ bool FDiggerEdMode::InputKey(
     if (Event == IE_Repeat)
     {
         if (Key == EKeys::R || Key == EKeys::O ||
-            Key == EKeys::X || Key == EKeys::Y || Key == EKeys::Z)
+            Key == EKeys::X || Key == EKeys::Y || Key == EKeys::Z || 
+            Key == EKeys::C) // Added C here so holding it doesn't flicker reset
         {
             return true;
         }
@@ -1555,13 +1520,9 @@ bool FDiggerEdMode::InputKey(
     {
         if (bShouldConsumeScroll)
         {
-            // We let InputAxis(MouseWheelAxis) handle the actual parameter changes.
-            // Here we just prevent the editor camera from zooming.
             InterruptContinuousSculpting();
-            return true; // consume scroll key → no zoom
+            return true; 
         }
-
-        // Not consuming: let the editor zoom normally.
         return FEdMode::InputKey(ViewportClient, Viewport, Key, Event);
     }
 
@@ -1579,19 +1540,14 @@ bool FDiggerEdMode::InputKey(
         {
             CurrentMode = EDiggerMainMode::Rotate;
             CurrentAxis = EDiggerAxisMode::None;
-            UpdateBrushHUDPanel();
-
-//            ShowBrushHUDMessage(TEXT("Rotation Mode"), FLinearColor(0.3f, 0.8f, 1.0f));
         }
         else
         {
             CurrentMode = EDiggerMainMode::Sculpt;
             CurrentAxis = EDiggerAxisMode::None;
-            UpdateBrushHUDPanel();
-
-            //          ShowBrushHUDMessage(TEXT("Sculpt Mode"), FLinearColor(0.6f, 1.0f, 0.6f));
         }
 
+        UpdateBrushHUDPanel();
         UpdatePreviewModeIndicator();
         return true;
     }
@@ -1607,19 +1563,14 @@ bool FDiggerEdMode::InputKey(
         {
             CurrentMode = EDiggerMainMode::Offset;
             CurrentAxis = EDiggerAxisMode::None;
-            UpdateBrushHUDPanel();
-
-//            ShowBrushHUDMessage(TEXT("Offset Mode"), FLinearColor(1.0f, 0.6f, 0.2f));
         }
         else
         {
             CurrentMode = EDiggerMainMode::Sculpt;
             CurrentAxis = EDiggerAxisMode::None;
-            UpdateBrushHUDPanel();
-
-//            ShowBrushHUDMessage(TEXT("Sculpt Mode"), FLinearColor(0.6f, 1.0f, 0.6f));
         }
 
+        UpdateBrushHUDPanel();
         UpdatePreviewModeIndicator();
         return true;
     }
@@ -1638,22 +1589,72 @@ bool FDiggerEdMode::InputKey(
             if (Key == EKeys::Y) CurrentAxis = EDiggerAxisMode::Y;
             if (Key == EKeys::Z) CurrentAxis = EDiggerAxisMode::Z;
 
-            const TCHAR* AxisName =
-                (Key == EKeys::X) ? TEXT("X") :
-                (Key == EKeys::Y) ? TEXT("Y") : TEXT("Z");
-
-            const bool bRot = (CurrentMode == EDiggerMainMode::Rotate);
-
             UpdateBrushHUDPanel();
-
-            // ShowBrushHUDMessage(
-            //     FString::Printf(TEXT("%s Axis: %s"),
-            //         bRot ? TEXT("Rotate") : TEXT("Offset"),
-            //         AxisName),
-            //     bRot ? FLinearColor(0.3f, 0.8f, 1.0f)
-            //          : FLinearColor(1.0f, 0.6f, 0.2f));
-
             UpdatePreviewModeIndicator();
+            return true;
+        }
+    }
+
+    // ---------------------------------------------------------
+    // 4.5. RESET TRANSFORM (C) — SINGLE OR DOUBLE TAP
+    // ---------------------------------------------------------
+    if (Key == EKeys::C && bPressed)
+    {
+        // Only valid in Rotation or Offset modes
+        if (CurrentMode == EDiggerMainMode::Rotate || CurrentMode == EDiggerMainMode::Offset)
+        {
+            InterruptContinuousSculpting();
+
+            // Detect Double Tap manually
+            const double CurrentTime = FPlatformTime::Seconds();
+            const bool bIsDoubleTap  = (CurrentTime - LastCPressTime) < 0.30f; // 300ms threshold
+            LastCPressTime           = CurrentTime;
+
+            TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit();
+            if (DiggerToolkit.IsValid())
+            {
+                // Logic:
+                // 1. Double Tap -> Reset ALL axes.
+                // 2. Single Tap (No Axis Selected) -> Reset ALL axes.
+                // 3. Single Tap (Axis Selected) -> Reset ONLY that axis.
+                
+                const bool bResetAll = bIsDoubleTap || (CurrentAxis == EDiggerAxisMode::None);
+
+                if (CurrentMode == EDiggerMainMode::Rotate)
+                {
+                    FRotator Rot = DiggerToolkit->GetBrushRotation();
+                    
+                    if (bResetAll)
+                    {
+                        Rot = FRotator::ZeroRotator;
+                    }
+                    else
+                    {
+                        if (CurrentAxis == EDiggerAxisMode::X) Rot.Pitch = 0.0f;
+                        if (CurrentAxis == EDiggerAxisMode::Y) Rot.Yaw   = 0.0f;
+                        if (CurrentAxis == EDiggerAxisMode::Z) Rot.Roll  = 0.0f;
+                    }
+                    DiggerToolkit->SetBrushRotation(Rot);
+                }
+                else if (CurrentMode == EDiggerMainMode::Offset)
+                {
+                    FVector Off = DiggerToolkit->GetBrushOffset();
+
+                    if (bResetAll)
+                    {
+                        Off = FVector::ZeroVector;
+                    }
+                    else
+                    {
+                        if (CurrentAxis == EDiggerAxisMode::X) Off.X = 0.0f;
+                        if (CurrentAxis == EDiggerAxisMode::Y) Off.Y = 0.0f;
+                        if (CurrentAxis == EDiggerAxisMode::Z) Off.Z = 0.0f;
+                    }
+                    DiggerToolkit->SetBrushOffset(Off);
+                }
+
+                UpdateBrushHUDPanel();
+            }
             return true;
         }
     }
@@ -1677,20 +1678,24 @@ bool FDiggerEdMode::InputKey(
     {
         bPaintingEnabled = !bPaintingEnabled;
         UpdateBrushHUDPanel();
-
-        // ShowBrushHUDMessage(
-        //     bPaintingEnabled ? TEXT("Paint Mode: ON") : TEXT("Paint Mode: OFF"),
-        //     bPaintingEnabled ? FLinearColor(0.6f, 1.0f, 0.6f) : FLinearColor(1.0f, 0.4f, 0.4f));
-
         return true;
     }
 
     // ---------------------------------------------------------
-    // 7. PAINTING LOGIC (LMB / RMB) — unchanged from your version
+    // 7. PAINTING LOGIC (LMB / RMB)
     // ---------------------------------------------------------
     if (bPaintingEnabled &&
         (Key == EKeys::LeftMouseButton || Key == EKeys::RightMouseButton))
     {
+        // Navigation Pass-Through
+        const bool bShiftDown = Viewport->KeyState(EKeys::LeftShift) || Viewport->KeyState(EKeys::RightShift);
+        const bool bAltDown   = Viewport->KeyState(EKeys::LeftAlt)   || Viewport->KeyState(EKeys::RightAlt);
+
+        if (bShiftDown || bAltDown)
+        {
+            return false;
+        }
+
         if (bPressed)
         {
             FVector HitLocation;
@@ -1705,7 +1710,6 @@ bool FDiggerEdMode::InputKey(
                 Viewport->KeyState(EKeys::LeftControl) ||
                 Viewport->KeyState(EKeys::RightControl);
 
-            // CTRL + CLICK = SAMPLE NORMAL, DO NOT PAINT
             if (bCtrlDown)
             {
                 if (TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit())
@@ -1717,8 +1721,6 @@ bool FDiggerEdMode::InputKey(
                 }
 
                 UpdateBrushHUDPanel();
-
-              //  ShowBrushHUDMessage(TEXT("Sampled Surface Normal"), FLinearColor(0.8f, 0.8f, 1.0f));
                 return true;
             }
 
@@ -1760,7 +1762,6 @@ bool FDiggerEdMode::InputKey(
     // ---------------------------------------------------------
     return FEdMode::InputKey(ViewportClient, Viewport, Key, Event);
 }
-
 
 
 
@@ -2326,15 +2327,32 @@ bool FDiggerEdMode::UsesToolkits() const
     return true;
 }
 
+// Helper to calculate the final "Visual" location (where the ghost is)
+FVector FDiggerEdMode::GetVisualLocation(const FVector& RawHitLocation, const FBrushCache& Settings) const
+{
+    // If the preview cache is valid (and not 0,0,0 while mouse is elsewhere), use it.
+    if (!Settings.CachedBrushPreviewCenter.IsNearlyZero())
+    {
+        return Settings.CachedBrushPreviewCenter;
+    }
+
+    // Fallback: Manually apply rotation and offset to the raw hit
+    FVector FinalOffset = Settings.Offset;
+    if (!Settings.Rotation.IsNearlyZero())
+    {
+        FinalOffset = Settings.Rotation.RotateVector(Settings.Offset);
+    }
+    return RawHitLocation + FinalOffset;
+}
+
+
 bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click)
 {
-    // While painting mode is on, swallow clicks so the editor doesn't open menus or select actors.
     if (bPaintingEnabled)
     {
         return true;
     }
 
-    // Single‑click brush application when NOT in painting mode
     DeselectAllSceneActors();
 
     FVector HitLocation;
@@ -2347,19 +2365,19 @@ bool FDiggerEdMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPro
     if (ADiggerManager* Digger = FindDiggerManager())
     {
         const bool bRightClick = (Click.GetKey() == EKeys::RightMouseButton);
-
         UpdateBrushSettingsFromUI(Hit, bRightClick);
 
-        // Debug brush: place once and bail
         if (BrushCache.BrushType == EVoxelBrushType::Debug)
         {
             Digger->DebugBrushPlacement(HitLocation);
             return true;
         }
 
-        LastStrokeHitLocation = HitLocation;
+        // [FIX] Use Visual Location helper
+        FVector VisualLocation = GetVisualLocation(HitLocation, BrushCache);
+        LastStrokeHitLocation  = VisualLocation;
 
-        ApplyBrushWithSettings(Digger, HitLocation, Hit, BrushCache);
+        ApplyBrushWithSettings(Digger, VisualLocation, Hit, BrushCache);
         return true;
     }
 

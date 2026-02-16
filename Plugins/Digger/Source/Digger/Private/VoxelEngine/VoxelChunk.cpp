@@ -698,6 +698,14 @@ void UVoxelChunk::OnMeshReady(FIntVector Coord, int32 SectionIdx)
 	                *Hole->GetName());
         }
     }
+
+	// Refresh the viewport to prevent the landscape surface leaving black ghosts on the surface where new holes are.
+	if (GEditor)
+	{
+		GEditor->RedrawLevelEditingViewports();
+	}
+
+	
 	if (DiggerDebug::Holes())
 	    UE_LOG(LogTemp, Warning,
 	        TEXT("OnMeshReady FINISHED for chunk %s"),
@@ -790,15 +798,11 @@ bool UVoxelChunk::SaveChunkData(const FString& FilePath)
 	FBufferArchive ToBinary;
 
 	// --- CRITICAL FIX START ---
-	// 1. Tell the archive we are saving to disk (Persistent)
 	ToBinary.SetIsPersistent(true);
-
-	// 2. Set the main Engine Version
 	ToBinary.SetEngineVer(FEngineVersion::Current());
 
-	// 3. COPY GLOBAL CUSTOM VERSIONS (Fixes the Crash)
-	// This populates the archive with the version info required by FVector/FTransform/etc.
-	ToBinary.SetCustomVersions(FCustomVersionContainer::GetRegistered());
+	// REPLACE GetRegistered() WITH GetAll():
+	ToBinary.SetCustomVersions(FCurrentCustomVersions::GetAll());
 	// --- CRITICAL FIX END ---
 
 	// A. Voxels
@@ -871,13 +875,15 @@ bool UVoxelChunk::LoadChunkData(const FString& FilePath, bool bOverwrite)
 	FMemoryReader FromBinary(BinaryArray, true);
 	FromBinary.Seek(0);
 
-	// --- ADD THESE LINES TO MATCH SAVER ---
+	// --- CRITICAL FIX START ---
 	FromBinary.SetIsPersistent(true);
 	FromBinary.SetEngineVer(FEngineVersion::Current());
-	FromBinary.SetCustomVersions(FCustomVersionContainer::GetRegistered()); 
-	// --------------------------------------
 
-	// ... Continue with serialization
+	// REPLACE GetRegistered() WITH GetAll():
+	FromBinary.SetCustomVersions(FCurrentCustomVersions::GetAll());
+	// --- CRITICAL FIX END ---
+
+	// ... (Continue deserializing) ...
 
     // --- 1. Load Voxels ---
     USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
@@ -1398,46 +1404,166 @@ void UVoxelChunk::MulticastApplyBrushStroke_Implementation(const FBrushStroke& S
 }
 
 
+void UVoxelChunk::HandleSmoothBrush(
+    const FBrushStroke& Stroke,
+    const float LocalVoxelSize,
+    const FVector ChunkOrigin,
+    bool& bModified,
+    int32 X,
+    int32 Y,
+    int32 Z,
+    FVector VoxelWorldPos,
+    float CurrentSDF)
+{
+    const float SurfaceThreshold = 3.0f;
+
+    if (FMath::Abs(CurrentSDF) > SurfaceThreshold)
+        return;
+
+    float Sum = 0.f;
+    int32 Count = 0;
+
+    const int Offsets[6][3] =
+    {
+        { 1, 0, 0 }, { -1, 0, 0 },
+        { 0, 1, 0 }, {  0,-1, 0 },
+        { 0, 0, 1 }, {  0, 0,-1 }
+    };
+
+    for (int i = 0; i < 6; i++)
+    {
+        int32 NX = X + Offsets[i][0];
+        int32 NY = Y + Offsets[i][1];
+        int32 NZ = Z + Offsets[i][2];
+
+        float NeighborSDF;
+
+        if (SparseVoxelGrid->HasVoxelAt(NX, NY, NZ))
+        {
+            NeighborSDF = SparseVoxelGrid->GetVoxel(NX, NY, NZ);
+            Count++;
+        }
+        else
+        {
+            FVector NeighborWorldPos =
+                ChunkOrigin + FVector(NX, NY, NZ) * LocalVoxelSize;
+
+            float NeighborTerrainHeight =
+                DiggerManager->GetLandscapeHeightAt(NeighborWorldPos);
+
+            bool bIsAir = NeighborWorldPos.Z > NeighborTerrainHeight;
+
+            NeighborSDF = bIsAir ? 5.0f : -5.0f;
+        }
+
+        Sum += NeighborSDF;
+    }
+
+    if (Count == 0)
+        return;
+
+    float Avg = Sum / 6.0f;
+
+    // --------------------------------------------------
+    // Compute Landscape Baseline SDF for THIS voxel
+    // --------------------------------------------------
+    float TerrainHeight =
+        DiggerManager->GetLandscapeHeightAt(VoxelWorldPos);
+
+    float DistToSurface =
+        VoxelWorldPos.Z - TerrainHeight;
+
+    float BaselineSDF =
+        DistToSurface / LocalVoxelSize;
+
+    // --------------------------------------------------
+    // Blend neighbor smoothing with terrain attraction
+    // --------------------------------------------------
+    const float LandscapeInfluence = 0.35f; // tweakable
+
+    float Target =
+        FMath::Lerp(Avg, BaselineSDF, LandscapeInfluence);
+
+    // --------------------------------------------------
+    // Brush falloff
+    // --------------------------------------------------
+    float Distance =
+        (VoxelWorldPos - Stroke.BrushPosition).Size();
+
+    float t = Distance / Stroke.BrushRadius;
+
+    float Falloff =
+        FMath::Exp(-FMath::Square(t * 2.5f));
+
+    // --------------------------------------------------
+    // Surface weighting (strong near zero-crossing)
+    // --------------------------------------------------
+    float SurfaceWeight =
+        1.0f - FMath::Clamp(FMath::Abs(CurrentSDF) / SurfaceThreshold, 0.f, 1.f);
+
+    SurfaceWeight = FMath::Square(SurfaceWeight);
+
+    // --------------------------------------------------
+    // Final melt-style smoothing
+    // --------------------------------------------------
+    float SmoothFactor =
+        Stroke.BrushStrength *
+        Falloff *
+        SurfaceWeight *
+        8.f;
+
+    float NewSDF =
+        FMath::Lerp(CurrentSDF, Target, SmoothFactor);
+
+    SparseVoxelGrid->SetVoxel(X, Y, Z, NewSDF, false);
+
+    bModified = true;
+}
+
+// Add this helper to your class or as a static local function
+float UVoxelChunk::GetSDFSafe(int32 X, int32 Y, int32 Z, float LocalVoxelSize, const FVector& ChunkOrigin) const
+{
+	// 1. If it exists in the grid, return the explicit modification
+	if (SparseVoxelGrid->HasVoxelAt(X, Y, Z))
+	{
+		return SparseVoxelGrid->GetVoxel(X, Y, Z);
+	}
+
+	// 2. If it doesn't exist, calculate the implicit Landscape Baseline
+	// This prevents "Air" artifacts when smoothing near the ground.
+	FVector WorldPos = ChunkOrigin + FVector(X, Y, Z) * LocalVoxelSize;
+	float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
+    
+	// SDF is Distance Z - Height
+	float DistToSurface = WorldPos.Z - TerrainHeight;
+    
+	// Normalize by voxel size to keep in SDF space
+	return DistToSurface / LocalVoxelSize;
+}
 
 void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 {
-    // 1. Mark Dirty for Undo system
-    Modify();
+    Modify(); // Mark dirty for undo
 
-    // 2. Validation
     UVoxelBrushShape* BrushShape = (DiggerManager) ? DiggerManager->GetBrushShapeForType(Stroke.BrushType) : nullptr;
     if (!DiggerManager || !BrushShape || !SparseVoxelGrid) return;
 
-    // 3. Setup Metrics
     const float LocalVoxelSize = FVoxelConversion::LocalVoxelSize;
-    if (LocalVoxelSize <= SMALL_NUMBER) return;
-
     const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
     const int32 ChunkDim = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions; 
-    
-    // PADDING: Critical for seamless normals (-2..N+2)
     const int32 GhostPad = 2; 
 
-    // 4. Bounds Calculation
+    // --- BOUNDS CALCULATION ---
     FVector BrushWorldBounds = CalculateBrushBounds(Stroke); 
     FVector LocalMin = (Stroke.BrushPosition - BrushWorldBounds) - ChunkOrigin;
     FVector LocalMax = (Stroke.BrushPosition + BrushWorldBounds) - ChunkOrigin;
 
-    // Convert to Indices
-    int32 BrushMinX = FMath::FloorToInt(LocalMin.X / LocalVoxelSize);
-    int32 BrushMaxX = FMath::CeilToInt(LocalMax.X / LocalVoxelSize);
-    int32 BrushMinY = FMath::FloorToInt(LocalMin.Y / LocalVoxelSize);
-    int32 BrushMaxY = FMath::CeilToInt(LocalMax.Y / LocalVoxelSize);
-    int32 BrushMinZ = FMath::FloorToInt(LocalMin.Z / LocalVoxelSize);
-    int32 BrushMaxZ = FMath::CeilToInt(LocalMax.Z / LocalVoxelSize);
-
-    // 5. Clamp to Chunk + Padding
-    int32 StartX = FMath::Max(BrushMinX, -GhostPad);
-    int32 EndX   = FMath::Min(BrushMaxX, ChunkDim + GhostPad);
-    int32 StartY = FMath::Max(BrushMinY, -GhostPad);
-    int32 EndY   = FMath::Min(BrushMaxY, ChunkDim + GhostPad);
-    int32 StartZ = FMath::Max(BrushMinZ, -GhostPad);
-    int32 EndZ   = FMath::Min(BrushMaxZ, ChunkDim + GhostPad);
+    int32 StartX = FMath::Max(FMath::FloorToInt(LocalMin.X / LocalVoxelSize), -GhostPad);
+    int32 EndX   = FMath::Min(FMath::CeilToInt(LocalMax.X / LocalVoxelSize), ChunkDim + GhostPad);
+    int32 StartY = FMath::Max(FMath::FloorToInt(LocalMin.Y / LocalVoxelSize), -GhostPad);
+    int32 EndY   = FMath::Min(FMath::CeilToInt(LocalMax.Y / LocalVoxelSize), ChunkDim + GhostPad);
+    int32 StartZ = FMath::Max(FMath::FloorToInt(LocalMin.Z / LocalVoxelSize), -GhostPad);
+    int32 EndZ   = FMath::Min(FMath::CeilToInt(LocalMax.Z / LocalVoxelSize), ChunkDim + GhostPad);
 
     if (StartX >= EndX || StartY >= EndY || StartZ >= EndZ) return;
 
@@ -1445,16 +1571,21 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     int32 VoxelsDug = 0;
     int32 VoxelsAdded = 0;
 
-    // 6. Iteration
+    // --- BUFFER FOR SMOOTH BRUSH (Determinism) ---
+    // Key: Index hash or FIntVector, Value: New SDF
+    TMap<FIntVector, float> SmoothBuffer; 
+    
+    // -----------------------------------------------------------------------
+    // LOOP 1: CALCULATE (Do not write to Grid yet)
+    // -----------------------------------------------------------------------
     for (int32 X = StartX; X < EndX; ++X)
     {
         for (int32 Y = StartY; Y < EndY; ++Y)
         {
-            // Calculate Landscape Height for this column
             FVector ColumnPos = ChunkOrigin + FVector(X * LocalVoxelSize, Y * LocalVoxelSize, 0);
             float TerrainHeight = DiggerManager->GetLandscapeHeightAt(ColumnPos);
             
-            // Skip Bedrock
+            // Optimization: Skip way below landscape
             if (TerrainHeight <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f)) continue;
 
             for (int32 Z = StartZ; Z < EndZ; ++Z)
@@ -1462,66 +1593,106 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
                 FIntVector LocalCoord(X, Y, Z);
                 FVector VoxelWorldPos = ChunkOrigin + (FVector(LocalCoord) * LocalVoxelSize);
 
-                // --- SHAPE CHECK ---
                 if (!BrushShape->IsWithinBounds(VoxelWorldPos, Stroke)) continue;
 
-                // --- BRUSH SDF ---
-                float BrushSDF = BrushShape->CalculateSDF(VoxelWorldPos, Stroke, TerrainHeight);
-                if (FMath::IsNearlyZero(BrushSDF, 0.001f)) continue;
-
-                // --- BASELINE CALCULATION ---
-                // Calculate precise distance to landscape surface for seamless blending
+                // --- BASELINE ---
                 float DistToSurface = VoxelWorldPos.Z - TerrainHeight;
                 float BaselineSDF = DistToSurface / LocalVoxelSize;
 
-                // --- RETRIEVE CURRENT ---
+                // --- CURRENT VALUE ---
                 float CurrentSDF;
-                
-                // FIX: Use HasVoxelAt() instead of Contains()
                 bool bHasValue = SparseVoxelGrid->HasVoxelAt(X, Y, Z);
-                
-                if (bHasValue)
-                {
-                    CurrentSDF = SparseVoxelGrid->GetVoxel(X, Y, Z);
-                }
-                else
-                {
-                    CurrentSDF = BaselineSDF;
-                }
+                CurrentSDF = bHasValue ? SparseVoxelGrid->GetVoxel(X, Y, Z) : BaselineSDF;
 
-                // --- ARTIFACT PREVENTION (Floating Bits) ---
-                // If Digging Air into Air, skip.
-                if (Stroke.bDig && !bHasValue && BaselineSDF > 0.5f)
+                // ==========================================================
+                // PATH A: SMOOTH BRUSH LOGIC
+                // ==========================================================
+                if (Stroke.BrushType == EVoxelBrushType::Smooth)
                 {
-                    continue; 
+                    // 1. Calculate Falloff
+                    float Distance = FVector::Dist(VoxelWorldPos, Stroke.BrushPosition);
+                    if (Distance > Stroke.BrushRadius) continue;
+
+                    float Alpha = 1.0f - (Distance / Stroke.BrushRadius);
+                    Alpha = FMath::Pow(Alpha, Stroke.BrushFalloff); // Non-linear falloff
+                    float Strength = Alpha * Stroke.BrushStrength; // e.g. 0.0 to 1.0
+
+                    if (Strength <= SMALL_NUMBER) continue;
+
+                    // 2. Gather Neighbors (Using Safe Lookup)
+                    float Sum = 0.f;
+                    const int Offsets[6][3] = { {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1} };
+                    
+                    for (int i = 0; i < 6; i++)
+                    {
+                        Sum += GetSDFSafe(X + Offsets[i][0], Y + Offsets[i][1], Z + Offsets[i][2], LocalVoxelSize, ChunkOrigin);
+                    }
+
+                    // 3. Compute Averages
+                    float NeighborAvg = Sum / 6.0f;
+                    
+                    // Blend neighbor average with current for stability
+                    float LaplacianSmoothed = FMath::Lerp(CurrentSDF, NeighborAvg, 0.5f);
+
+                    // 4. Landscape Attraction (The "Hybrid" part)
+                    // If we are very far from explicit voxels, pull towards landscape
+                    // to prevent destroying the terrain shape entirely.
+                    float LandscapeInfluence = 0.2f; // Configurable
+                    float TargetSDF = FMath::Lerp(LaplacianSmoothed, BaselineSDF, LandscapeInfluence);
+
+                    // 5. Final Blend based on Brush Strength
+                    float FinalSDF = FMath::Lerp(CurrentSDF, TargetSDF, Strength);
+
+                    // Store in buffer - DO NOT WRITE YET
+                    SmoothBuffer.Add(LocalCoord, FinalSDF);
                 }
-
-                // --- APPLY OPERATION ---
-                float NewSDF = CurrentSDF;
-
-                if (Stroke.bDig)
+                // ==========================================================
+                // PATH B: STANDARD DIG/ADD LOGIC
+                // ==========================================================
+                else 
                 {
-                    // Add Air
-                    NewSDF = CurrentSDF + FMath::Abs(BrushSDF);
-                    NewSDF = FMath::Min(NewSDF, 5.0f); 
-                    VoxelsDug++;
-                }
-                else
-                {
-                    // Add Solid
-                    NewSDF = CurrentSDF - FMath::Abs(BrushSDF);
-                    NewSDF = FMath::Max(NewSDF, -5.0f);
-                    VoxelsAdded++;
-                }
+                    float BrushSDF = BrushShape->CalculateSDF(VoxelWorldPos, Stroke, TerrainHeight);
+                    if (FMath::IsNearlyZero(BrushSDF, 0.001f)) continue;
 
-                // --- WRITE BACK ---
-                SparseVoxelGrid->SetVoxel(X, Y, Z, NewSDF, Stroke.bDig);
-                bModified = true;
+                    // Skip "Air on Air" to prevent bloating data
+                    if (Stroke.bDig && !bHasValue && BaselineSDF > 0.5f) continue;
+
+                    float NewSDF = CurrentSDF;
+                    if (Stroke.bDig)
+                    {
+                        NewSDF = CurrentSDF + FMath::Abs(BrushSDF);
+                        NewSDF = FMath::Min(NewSDF, 5.0f);
+                        VoxelsDug++;
+                    }
+                    else
+                    {
+                        NewSDF = CurrentSDF - FMath::Abs(BrushSDF);
+                        NewSDF = FMath::Max(NewSDF, -5.0f);
+                        VoxelsAdded++;
+                    }
+
+                    SparseVoxelGrid->SetVoxel(X, Y, Z, NewSDF, Stroke.bDig);
+                    bModified = true;
+                }
             }
         }
     }
 
-    // 7. Report
+    // -----------------------------------------------------------------------
+    // LOOP 2: APPLY SMOOTH BUFFER
+    // -----------------------------------------------------------------------
+    if (Stroke.BrushType == EVoxelBrushType::Smooth && SmoothBuffer.Num() > 0)
+    {
+        for (const auto& Pair : SmoothBuffer)
+        {
+            // Only write if significant change to save bandwidth
+            // Or if you want to ensure the grid instantiates:
+            SparseVoxelGrid->SetVoxel(Pair.Key.X, Pair.Key.Y, Pair.Key.Z, Pair.Value, false);
+        }
+        bModified = true;
+    }
+
+    // --- REPORT ---
     if (bModified && DiggerManager)
     {
         FVoxelModificationReport Report;

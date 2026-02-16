@@ -5,55 +5,73 @@
 #include "Math/UnrealMathUtility.h"
 
 float USmoothBrushShape::CalculateSDF_Implementation(
-	const FVector& WorldPos,
-	const FBrushStroke& Stroke,
-	float TerrainHeight
+    const FVector& WorldPos,
+    const FBrushStroke& Stroke,
+    float TerrainHeight
 ) const
 {
-	const FVector LocalPos = WorldPos - Stroke.BrushPosition;
-	const float Distance = LocalPos.Size();
+    const FVector LocalPos = WorldPos - Stroke.BrushPosition;
+    const float Distance = LocalPos.Size();
 
-	if (Distance > Stroke.BrushRadius + Stroke.BrushFalloff)
-		return 0.f;
+    if (Distance > Stroke.BrushRadius + Stroke.BrushFalloff)
+        return 0.f;
 
-	// Normalized distance
-	const float t = Distance / Stroke.BrushRadius;
+    // ---------------------------------------------------------
+    // ⭐ ZBrush-style Gaussian falloff with user falloff applied
+    // ---------------------------------------------------------
+    const float t = Distance / Stroke.BrushRadius;
 
-	// ⭐ Gaussian falloff (ZBrush-like)
-	const float Falloff = FMath::Exp(-FMath::Square(t * 2.5f));
+    // User falloff multiplier (0..1)
+    const float UserFalloff = FMath::Clamp(
+        Stroke.BrushFalloff / Stroke.BrushRadius,
+        0.f, 1.f
+    );
 
-	// ⭐ Strength (no pressure yet)
-	float Strength = Stroke.BrushStrength;
+    // Gaussian falloff (ZBrush-like)
+    const float Falloff = FMath::Exp(-FMath::Square(t * 2.5f)) * UserFalloff;
 
-	// ⭐ Time ramp (fake pressure)
-	Strength *= FMath::Clamp(Stroke.ElapsedTime * 0.5f, 0.f, 1.f);
+    // ---------------------------------------------------------
+    // ⭐ Strength (no pressure yet)
+    // ---------------------------------------------------------
+    float Strength = Stroke.BrushStrength;
 
-	// ⭐ 9-point kernel (ZBrush-like)
-	const int32 Offset = 32;
+    // Fake time ramp (until you add real stroke timing)
+    Strength *= 1.0f;
 
-	float Sum = 0.f;
-	int Count = 0;
+    // ---------------------------------------------------------
+    // ⭐ 9-point smoothing kernel (ZBrush-like)
+    // ---------------------------------------------------------
+    const int32 Offset = 32;
 
-	for (int dx = -1; dx <= 1; dx++)
-	{
-		for (int dy = -1; dy <= 1; dy++)
-		{
-			FVector SamplePos = WorldPos + FVector(dx * Offset, dy * Offset, 0);
-			Sum += FVoxelConversion::GetTerrainHeight(SamplePos);
-			Count++;
-		}
-	}
+    float Sum = 0.f;
+    int Count = 0;
 
-	const float Avg = Sum / Count;
-	const float C = TerrainHeight;
+    for (int dx = -1; dx <= 1; dx++)
+    {
+        for (int dy = -1; dy <= 1; dy++)
+        {
+            FVector SamplePos = WorldPos + FVector(dx * Offset, dy * Offset, 0);
+            Sum += FVoxelConversion::GetTerrainHeight(SamplePos);
+            Count++;
+        }
+    }
 
-	float Delta = (Avg - C) * Strength * Falloff;
+    const float Avg = Sum / Count;
+    const float C = TerrainHeight;
 
-	if (Stroke.bDig)
-		Delta = -Delta;
+    // ---------------------------------------------------------
+    // ⭐ ZBrush-style boosted smoothing delta
+    // ---------------------------------------------------------
+    const float ZBrushSmoothBoost = 4.0f; // tweakable
 
-	return Delta;
+    float Delta = (Avg - C) * Strength * Falloff * ZBrushSmoothBoost;
+
+    if (Stroke.bDig)
+        Delta = -Delta;
+
+    return Delta;
 }
+
 
 
 

@@ -160,6 +160,7 @@ public:
     virtual bool HandleClick(FEditorViewportClient* InViewportClient, HHitProxy* HitProxy, const FViewportClick& Click) override;
 
     virtual bool UsesToolkits() const override;
+    FVector GetVisualLocation(const FVector& RawHitLocation, const FBrushCache& Settings) const;
     virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
 
     // --- Custom Methods ---
@@ -221,6 +222,7 @@ private:
     //FBrushHUDState BrushHUD;
     //void ShowBrushHUDMessage(const FString& Msg, const FLinearColor& Color = FLinearColor::White);
     void HandleModifierBlocked(bool bBlocked);
+    void SyncBrushSettingsToManager(ADiggerManager* Digger, const FBrushCache& Settings);
 
 
     // --- Brush Pressure Sensitivity ---
@@ -236,6 +238,8 @@ private:
     bool bOffsetModeLatched   = false;
     bool bIsSamplingNormal = false;
     bool bHasLastStrokeSample = false;
+    // In FDiggerEdMode.h under protected or private:
+    double LastCPressTime = 0.0;
 
 
     // --- Scroll Velocity Variables ---
