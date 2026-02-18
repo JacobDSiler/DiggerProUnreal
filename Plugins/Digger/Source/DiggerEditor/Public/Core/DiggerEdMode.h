@@ -13,9 +13,15 @@
 #include "CanvasItem.h"
 #include "CanvasTypes.h"
 #include "Engine/Canvas.h"
+#include "Framework/Application/IInputProcessor.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Widgets/Input/SEditableText.h"
+#include "Widgets/Input/SSpinBox.h"
 
 #include "ScopedTransaction.h" 
+#include "Framework/Application/IInputProcessor.h"
 
+class FDiggerEdMode;
 class UPointLightComponent;
 class ABrushPreviewActor;
 class ADiggerManager;
@@ -45,18 +51,25 @@ struct FBrushHUDPanel
 {
     FString ModeText;
 
-    float Radius   = 0.f;
+    // Sculpt
+    float Radius = 0.f;
     float Strength = 0.f;
-    float Falloff  = 0.f;
-    float Force    = 0.f;
+    float Falloff = 0.f;
+    float Force = 0.f;
+    EDiggerPushMode  PushMode = EDiggerPushMode::Ray; // default
 
-    EDiggerPushMode PushMode = EDiggerPushMode::Ray;
+    // Offset Mode
+    FVector Offset = FVector::ZeroVector;
 
+    // Rotation Mode
+    FRotator Rotation = FRotator::ZeroRotator;
+
+    // Display
     float TimeRemaining = 0.f;
     float Alpha = 1.f;
-
-    bool bVisible = false;
+    bool  bVisible = false;
 };
+
 
 
 
@@ -69,6 +82,7 @@ struct FBrushHUDState
 
     bool bPaintingPaused = false;   // ⭐ NEW
 };
+
 
 
 class DIGGEREDITOR_API FDiggerEdMode final : public FEdMode
@@ -135,12 +149,8 @@ public:
         EDiggerPushMode PushMode = EDiggerPushMode::Ray;
     };
     
-    // Preview Light
-    TWeakObjectPtr<AActor> PreviewLightActor;
-    
-    UPointLightComponent* PreviewLightComponent = nullptr;
-    
-    
+
+
     // --- FEdMode Interface ---
     virtual void Enter() override;
     virtual void Exit() override;
@@ -170,7 +180,28 @@ private:
     
     // Handles for delegates
     FDelegateHandle OnLevelActorAddedHandle;
+
+    // Digger Input Processor
+    TSharedPtr<class IInputProcessor> DiggerInputProcessor;
+    
 public:
+
+    struct FScopedBrushBusy
+    {
+        FDiggerEdMode* Mode;
+
+        FScopedBrushBusy(FDiggerEdMode* InMode)
+            : Mode(InMode)
+        {
+            if (Mode) Mode->bIsBrushBusy = true;
+        }
+
+        ~FScopedBrushBusy()
+        {
+            if (Mode) Mode->bIsBrushBusy = false;
+        }
+    };
+
     
     // Legacy/Helper methods
     void SetPaintMode(bool bEnabled) { bPaintingEnabled = bEnabled; }
@@ -195,6 +226,59 @@ public:
     static FOnDiggerModeChanged OnDiggerModeChanged;
     static bool bIsDiggerModeCurrentlyActive;
 
+public:
+
+    void SetCurrentMode(EDiggerMainMode NewMode)
+    {
+        CurrentMode = NewMode;
+        UpdateBrushHUDPanel();
+        OnDiggerModeChanged.Broadcast(true);
+    }
+
+    void CycleAxisMode()
+    {
+        // Simple example: cycle through X → Y → Z → None
+        switch (CurrentAxis)
+        {
+        case EDiggerAxisMode::None: CurrentAxis = EDiggerAxisMode::X; break;
+        case EDiggerAxisMode::X:    CurrentAxis = EDiggerAxisMode::Y; break;
+        case EDiggerAxisMode::Y:    CurrentAxis = EDiggerAxisMode::Z; break;
+        case EDiggerAxisMode::Z:    CurrentAxis = EDiggerAxisMode::None; break;
+        }
+
+        UpdateBrushHUDPanel();
+    }
+
+    // Make this public so InputProcessor can call it
+    void TriggerModifierState(bool bBlocked)
+    {
+        HandleModifierBlocked(bBlocked);
+    }
+
+    // Rotation and Offset mode clearing helpers.
+    void ResetActiveAxis()
+    {
+        switch (CurrentAxis)
+        {
+        case EDiggerAxisMode::X: BrushCache.Offset.X = 0; BrushCache.Rotation.Pitch = 0; break;
+        case EDiggerAxisMode::Y: BrushCache.Offset.Y = 0; BrushCache.Rotation.Yaw = 0; break;
+        case EDiggerAxisMode::Z: BrushCache.Offset.Z = 0; BrushCache.Rotation.Roll = 0; break;
+        default: break;
+        }
+
+        UpdateBrushHUDPanel();
+    }
+    
+    void ResetAllAxes()
+    {
+        BrushCache.Offset = FVector::ZeroVector;
+        BrushCache.Rotation = FRotator::ZeroRotator;
+        UpdateBrushHUDPanel();
+    }
+
+    double LastCPressTime = 0.0;
+
+
 private:
     // Helper to update BrushCache
     void UpdateBrushSettingsFromUI(const FHitResult& TraceHit, bool bRightClick);
@@ -212,16 +296,35 @@ private:
 
     // --- Brush UX Mode State ---
     EDiggerMainMode CurrentMode = EDiggerMainMode::Sculpt;
+
+public:
+    [[nodiscard]] EDiggerMainMode GetCurrentMode() const
+    {
+        return CurrentMode;
+    }
+
+    [[nodiscard]] EDiggerAxisMode GetCurrentAxis() const
+    {
+        return CurrentAxis;
+    }
+
+    void SetCurrentAxis(EDiggerAxisMode InCurrentAxis)
+    {
+        this->CurrentAxis = InCurrentAxis;
+    }
+
+private:
     EDiggerAxisMode CurrentAxis = EDiggerAxisMode::None;
     
 
     // --- Brush Hud Message system ---
     FBrushHUDPanel BrushHUD;
+public:
     void UpdateBrushHUDPanel();
 
-    //FBrushHUDState BrushHUD;
-    //void ShowBrushHUDMessage(const FString& Msg, const FLinearColor& Color = FLinearColor::White);
     void HandleModifierBlocked(bool bBlocked);
+    
+private:
     void SyncBrushSettingsToManager(ADiggerManager* Digger, const FBrushCache& Settings);
 
 
@@ -238,9 +341,11 @@ private:
     bool bOffsetModeLatched   = false;
     bool bIsSamplingNormal = false;
     bool bHasLastStrokeSample = false;
-    // In FDiggerEdMode.h under protected or private:
-    double LastCPressTime = 0.0;
 
+    // Loading Indication
+    float LoadingSpriteRotation = 0.f;
+    bool bIsBrushBusy = false;
+    
 
     // --- Scroll Velocity Variables ---
     float ScrollVelocity = 0.0f;
@@ -253,8 +358,9 @@ private:
     FVector LastStrokePreviewCenter = FVector::ZeroVector;
     FVector2D LastPaintLocation = FVector2D::ZeroVector;
     float ContinuousApplicationInterval = 5.0f;
-
+public:
     FBrushCache BrushCache;
+private:
     FContinuousClickSettings ContinuousSettings;
 
     // Preview Actor Reference

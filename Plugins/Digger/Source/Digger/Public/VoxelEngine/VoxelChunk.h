@@ -80,7 +80,8 @@ public:
     void HandleSmoothBrush(const FBrushStroke& Stroke, float LocalVoxelSize, FVector ChunkOrigin, bool& bModified,
                            int32 X,
                            int32 Y, int32 Z, FVector VoxelWorldPos, float CurrentSDF);
-    float GetSDFSafe(int32 X, int32 Y, int32 Z, float LocalVoxelSize, const FVector& ChunkOrigin) const;
+    
+    float GetSDFSafe(const FIntVector& Pos, float LocalVoxelSize, const FVector& ChunkOrigin) const;
     // Brush application
     UFUNCTION(BlueprintCallable, Category = "Voxel")
     void ApplyBrushStroke(const FBrushStroke& Stroke);

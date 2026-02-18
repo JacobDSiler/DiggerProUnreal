@@ -31,6 +31,8 @@ UDiggerEditorSettings::UDiggerEditorSettings()
 	ConeBrushMesh       = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Cone.DH_Cone")));
 	TorusBrushMesh      = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Torus.DH_Torus")));
 
+	bSmoothBrushLandscapeAware = false;
+	
 	// UI/Holes
 	bShowDynamicHolesFolder = false; // default visible
 

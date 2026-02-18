@@ -15,11 +15,13 @@
 #include "Async/Async.h"
 #include "Async/ParallelFor.h"
 //#include "VoxelBrushHelpers.h" // or wherever you put SetDigShellVoxels
+#include "Landscape.h"
 #include "Utils/FastDebugRenderer.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/FileHelper.h"
 #include "Misc/OutputDeviceNull.h"
 #include "Serialization/BufferArchive.h"
+#include "SceneInterface.h"
 
 struct FSpawnedHoleData;
 
@@ -82,85 +84,59 @@ void UVoxelChunk::ReportVoxelModification(const FVoxelModificationReport& Report
 	}
 }
 
+// VoxelChunk.cpp — UpdateMeshFromData()
+// REMOVE the early OnMeshReady call at line 137:
+//     OnMeshReady(ChunkCoordinates, SectionIndex);   ← DELETE THIS LINE
+
 void UVoxelChunk::UpdateMeshFromData(const TArray<FVector>& Vertices, const TArray<int32>& Triangles, const TArray<FVector>& Normals)
 {
-    // 1. Thread Safety: This MUST run on the Game Thread because it touches a UObject Component
-    if (!IsInGameThread())
-    {
-        // If we are somehow still on a background thread, dispatch back to Game Thread
-        AsyncTask(ENamedThreads::GameThread, [this, Vertices, Triangles, Normals]()
-        {
-            UpdateMeshFromData(Vertices, Triangles, Normals);
-        });
-        return;
-    }
+	if (!IsInGameThread())
+	{
+		AsyncTask(ENamedThreads::GameThread, [this, Vertices, Triangles, Normals]()
+		{
+			UpdateMeshFromData(Vertices, Triangles, Normals);
+		});
+		return;
+	}
 
-    // 2. Component Validation
-    if (!ProceduralMeshComponent)
-    {
-        // Try to recover from DiggerManager if local pointer is lost
-        if (DiggerManager && DiggerManager->ProceduralMesh)
-        {
-            ProceduralMeshComponent = DiggerManager->ProceduralMesh;
-        }
-        else
-        {
-            if (DiggerDebug::Mesh())
-            {
-                UE_LOG(LogTemp, Error, TEXT("UpdateMeshFromData: No ProceduralMeshComponent found for Chunk %s"), *ChunkCoordinates.ToString());
-            }
-            return;
-        }
-    }
+	if (!ProceduralMeshComponent)
+	{
+		if (DiggerManager && DiggerManager->ProceduralMesh)
+			ProceduralMeshComponent = DiggerManager->ProceduralMesh;
+		else
+			return;
+	}
 
-    // 3. Apply Geometry
-    // We assume Triplanar mapping in the material, so we pass empty UVs/Colors for performance.
-    TArray<FVector2D> EmptyUVs;
-    TArray<FColor> EmptyColors;
-    TArray<FProcMeshTangent> EmptyTangents;
+	TArray<FVector2D> EmptyUVs;
+	TArray<FColor> EmptyColors;
+	TArray<FProcMeshTangent> EmptyTangents;
 
-    // Critical: CreateMeshSection automatically clears the old section if it exists
-    ProceduralMeshComponent->CreateMeshSection(
-        SectionIndex,
-        Vertices,
-        Triangles,
-        Normals,
-        EmptyUVs,       // UV0
-        EmptyColors,    // Vertex Colors
-        EmptyTangents,  // Tangents
-        true            // bCreateCollision (Enable Physics)
-    );
+	ProceduralMeshComponent->CreateMeshSection(
+		SectionIndex, Vertices, Triangles, Normals,
+		EmptyUVs, EmptyColors, EmptyTangents, true
+	);
 
-	// Mesh is now live on the ProceduralMeshComponent → update holes for this chunk
+	// ✅ Collision first
+	if (Vertices.Num() > 0)
+	{
+		ProceduralMeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		ProceduralMeshComponent->SetCollisionObjectType(ECC_WorldDynamic);
+		ProceduralMeshComponent->SetCollisionResponseToAllChannels(ECR_Block);
+		ProceduralMeshComponent->bUseComplexAsSimpleCollision = true;
+	}
+
+	// ✅ Material second (this triggers RVT writer update)
+	if (DiggerManager)
+	{
+		UMaterialInterface* Mat = DiggerManager->GetTerrainMaterial();
+		if (Mat)
+			ProceduralMeshComponent->SetMaterial(SectionIndex, Mat);
+	}
+
+	// ✅ NOW fire OnMeshReady — RVT is committed, material is live
 	OnMeshReady(ChunkCoordinates, SectionIndex);
-
-    // 4. Configure Collision (Physics)
-    if (Vertices.Num() > 0)
-    {
-        ProceduralMeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-        // Important for "Falling through holes":
-        ProceduralMeshComponent->SetCollisionObjectType(ECC_WorldDynamic); 
-        ProceduralMeshComponent->SetCollisionResponseToAllChannels(ECR_Block);
-        // Ensure complex collision is used so the character walks on the exact mesh shape
-        ProceduralMeshComponent->bUseComplexAsSimpleCollision = true;
-    }
-
-    // 5. Apply Material
-    if (DiggerManager)
-    {
-        UMaterialInterface* Mat = DiggerManager->GetTerrainMaterial();
-        if (Mat)
-        {
-            ProceduralMeshComponent->SetMaterial(SectionIndex, Mat);
-        }
-    }
-
-    if (DiggerDebug::Mesh())
-    {
-        UE_LOG(LogTemp, Log, TEXT("Updated Mesh for Chunk %s: %d Verts, %d Tris"), 
-            *ChunkCoordinates.ToString(), Vertices.Num(), Triangles.Num() / 3);
-    }
 }
+
 
 void UVoxelChunk::InitializeChunk(const FIntVector& InChunkCoordinates, ADiggerManager* InDiggerManager)
 {
@@ -292,23 +268,17 @@ void UVoxelChunk::RestoreAllHoles()
 
 void UVoxelChunk::OnMarchingMeshComplete() const
 {
+	// OnMeshReady (called from UpdateMeshFromData) handles all hole mesh
+	// assignment and VSM invalidation. Nothing to do here unless you need
+	// a post-async hook for something else.
 	if (DiggerDebug::Mesh() || DiggerDebug::Holes())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Mesh Generation Complete for Chunk %s. Updating Hole Meshes."), *ChunkCoordinates.ToString());
+		UE_LOG(LogTemp, Log, TEXT("OnMarchingMeshComplete: Chunk %s fully committed."),
+			*ChunkCoordinates.ToString());
 	}
-
-	// --- FIX START: ACTUALLY UPDATE THE HOLES ---
-	// Iterate over all tracked holes for this chunk and update them.
-	for (const TWeakObjectPtr<ADynamicHole>& HolePtr : SpawnedHoleInstances)
-	{
-		if (ADynamicHole* Hole = HolePtr.Get())
-		{
-			Hole->UpdateHoleMesh();
-		}
-	}
-
-	// --- FIX END ---
 }
+
+
 
 static void SetHoleListedInOutliner(AActor* Actor, bool bListed)
 {
@@ -535,6 +505,12 @@ void UVoxelChunk::DebugPrintVoxelData() const
 void UVoxelChunk::MarkDirty()
 {
 	bIsDirty = true; // Set the dirty flag
+	if (DiggerManager)
+	{ DiggerManager->RegisterDirtyChunk(ChunkCoordinates); }
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("DiggerManager Not Set properly to register a dirty chunk!"));
+	}
 }
 
 void UVoxelChunk::UpdateIfDirty()
@@ -597,87 +573,34 @@ void UVoxelChunk::RefreshSectionMesh()
 
 void UVoxelChunk::OnMeshReady(FIntVector Coord, int32 SectionIdx)
 {
-	if (DiggerDebug::Holes())
-	    UE_LOG(LogTemp, Warning,
-	        TEXT("OnMeshReady CALLED for chunk %s (incoming=%s, section=%d)"),
-	        *ChunkCoordinates.ToString(),
-	        *Coord.ToString(),
-	        SectionIdx);
-
     if (Coord != ChunkCoordinates)
-    {
-    	if (DiggerDebug::Holes())
-	        UE_LOG(LogTemp, Warning,
-	            TEXT("OnMeshReady IGNORED: Coord does not match this chunk (%s != %s)"),
-	            *Coord.ToString(),
-	            *ChunkCoordinates.ToString());
         return;
-    }
 
     if (!HoleShapeLibrary && DiggerManager)
         HoleShapeLibrary = DiggerManager->GetHoleShapeLibrary();
 
     if (!HoleShapeLibrary)
     {
-        UE_LOG(LogTemp, Error,
-            TEXT("OnMeshReady FAILED: HoleShapeLibrary is NULL"));
+        UE_LOG(LogTemp, Error, TEXT("OnMeshReady FAILED: HoleShapeLibrary is NULL"));
         return;
     }
-	if (DiggerDebug::Holes())
-	    UE_LOG(LogTemp, Warning,
-	        TEXT("OnMeshReady: Processing %d registered holes for chunk %s"),
-	        SpawnedHoleInstances.Num(),
-	        *ChunkCoordinates.ToString());
 
     for (const TWeakObjectPtr<ADynamicHole>& HolePtr : SpawnedHoleInstances)
     {
         ADynamicHole* Hole = HolePtr.Get();
-        if (!Hole)
-        {
-        	if (DiggerDebug::Holes())
-	            UE_LOG(LogTemp, Error,
-	                TEXT("OnMeshReady: Found invalid hole pointer (GC'd)"));
-            continue;
-        }
+        if (!Hole) continue;
 
         UStaticMeshComponent* MeshComp = Hole->GetHoleMeshComponent();
-        if (!MeshComp)
-        {
-        	if (DiggerDebug::Holes())
-	            UE_LOG(LogTemp, Error,
-	                TEXT("OnMeshReady: Hole %s has NO HoleMeshComponent"),
-	                *Hole->GetName());
-            continue;
-        }
-
-        if (MeshComp->GetStaticMesh() != nullptr)
-        {
-	        if (DiggerDebug::Holes())
-	            UE_LOG(LogTemp, Warning,
-	                TEXT("OnMeshReady: Hole %s already has mesh %s, skipping"),
-	                *Hole->GetName(),
-	                *MeshComp->GetStaticMesh()->GetName());
-            continue;
-        }
+        if (!MeshComp) continue;
 
         EHoleShapeType ShapeType = Hole->HoleShape.ShapeType;
         UStaticMesh* HoleMesh = HoleShapeLibrary->GetMeshForShape(ShapeType);
+        if (!HoleMesh) continue;
 
-        if (!HoleMesh)
-        {
-        	if (DiggerDebug::Holes())
-	            UE_LOG(LogTemp, Error,
-	                TEXT("OnMeshReady: Hole %s: No mesh for shape %s"),
-	                *Hole->GetName(),
-	                *UEnum::GetValueAsString(ShapeType));
-            continue;
-        }
-    	if (DiggerDebug::Holes())
-	        UE_LOG(LogTemp, Warning,
-	            TEXT("OnMeshReady: Assigning mesh %s to hole %s"),
-	            *HoleMesh->GetName(),
-	            *Hole->GetName());
-
+        // ✅ Always (re)assign — remove the early-out that skips existing meshes.
+        // On subsequent digs the hole already has a mesh, but we still need to
+        // reach the VSM invalidation below. The SetStaticMesh call is a no-op
+        // if the mesh is already correct, so this is safe.
         MeshComp->SetStaticMesh(HoleMesh);
 
         if (Hole->WriterMaterial)
@@ -685,31 +608,33 @@ void UVoxelChunk::OnMeshReady(FIntVector Coord, int32 SectionIdx)
             const int32 SlotCount = HoleMesh->GetStaticMaterials().Num();
             for (int32 i = 0; i < SlotCount; i++)
                 MeshComp->SetMaterial(i, Hole->WriterMaterial);
-        	if (DiggerDebug::Holes())
-	            UE_LOG(LogTemp, Warning,
-	                TEXT("OnMeshReady: Applied WriterMaterial to hole %s (%d slots)"),
-	                *Hole->GetName(), SlotCount);
-        }
-        else
-        {
-        	if (DiggerDebug::Holes())
-	            UE_LOG(LogTemp, Warning,
-	                TEXT("OnMeshReady: Hole %s has no WriterMaterial"),
-	                *Hole->GetName());
         }
     }
 
-	// Refresh the viewport to prevent the landscape surface leaving black ghosts on the surface where new holes are.
-	if (GEditor)
-	{
-		GEditor->RedrawLevelEditingViewports();
-	}
+    if (DiggerManager)
+        DiggerManager->NotifyChunkMeshComplete(ChunkCoordinates);
 
-	
-	if (DiggerDebug::Holes())
-	    UE_LOG(LogTemp, Warning,
-	        TEXT("OnMeshReady FINISHED for chunk %s"),
-	        *ChunkCoordinates.ToString());
+    // ✅ VSM cache invalidation + viewport redraw.
+    // This must happen AFTER material/mesh are committed so the RVT writer
+    // has already updated the opacity mask before we force a shadow re-render.
+#if WITH_EDITOR
+    if (GEditor)
+    {
+        // Invalidate landscape shadow contribution for this chunk's region.
+        // MarkComponentsRenderStateDirty() flushes the VSM cached pages
+        // that were built before the opacity hole was written into the RVT.
+        for (TActorIterator<ALandscape> It(DiggerManager->GetWorld()); It; ++It)
+        {
+            if (ALandscape* Landscape = *It)
+            {
+                Landscape->MarkComponentsRenderStateDirty();
+                break;
+            }
+        }
+
+        GEditor->RedrawLevelEditingViewports();
+    }
+#endif
 }
 
 
@@ -845,123 +770,118 @@ bool UVoxelChunk::LoadChunkData(const FString& FilePath)
 
 bool UVoxelChunk::LoadChunkData(const FString& FilePath, bool bOverwrite)
 {
-    // --- ENSURE MANAGER + HOLE LIBRARY + HOLE BP ARE READY ---
-    if (!DiggerManager)
-    {
-        DiggerManager = ADiggerManager::FindDiggerManager(World);
-    }
-
-    if (DiggerManager)
-    {
+    // ... (Keep your existing DiggerManager/HoleLibrary checks) ...
+    if (!DiggerManager) DiggerManager = ADiggerManager::FindDiggerManager(World);
+    if (DiggerManager) {
         DiggerManager->EnsureHoleShapeLibrary();
         HoleShapeLibrary = DiggerManager->GetHoleShapeLibrary();
-
         DiggerManager->EnsureDefaultHoleBP();
         HoleBP = DiggerManager->DynamicHoleClass;
     }
 
-    if (!FPaths::FileExists(FilePath))
-    {
-        return false;
-    }
+    if (!FPaths::FileExists(FilePath)) return false;
 
     TArray<uint8> BinaryArray;
-    if (!FFileHelper::LoadFileToArray(BinaryArray, *FilePath))
-    {
-        return false;
-    }
+    if (!FFileHelper::LoadFileToArray(BinaryArray, *FilePath)) return false;
 
-	// --- CREATE READER ---
-	FMemoryReader FromBinary(BinaryArray, true);
-	FromBinary.Seek(0);
+    FMemoryReader FromBinary(BinaryArray, true);
+    FromBinary.Seek(0);
 
-	// --- CRITICAL FIX START ---
-	FromBinary.SetIsPersistent(true);
-	FromBinary.SetEngineVer(FEngineVersion::Current());
-
-	// REPLACE GetRegistered() WITH GetAll():
-	FromBinary.SetCustomVersions(FCurrentCustomVersions::GetAll());
-	// --- CRITICAL FIX END ---
-
-	// ... (Continue deserializing) ...
+    // --- CRITICAL FIX: VERSIONING ---
+    FromBinary.SetIsPersistent(true);
+    FromBinary.SetEngineVer(FEngineVersion::Current());
+    FromBinary.SetCustomVersions(FCurrentCustomVersions::GetAll());
 
     // --- 1. Load Voxels ---
     USparseVoxelGrid* TempGrid = NewObject<USparseVoxelGrid>();
-    // Ensure serialization inside this function doesn't crash on version checks
-    if (!TempGrid->SerializeFromArchive(FromBinary))
-    {
-        return false;
-    }
+    if (!TempGrid->SerializeFromArchive(FromBinary)) return false;
 
-    if (bOverwrite && SparseVoxelGrid)
-    {
-        // Full replace
+    if (bOverwrite && SparseVoxelGrid) {
         SparseVoxelGrid->VoxelData = TempGrid->VoxelData;
         ClearSpawnedHoles();
         HoleDataArray.Empty();
-    }
-    else if (SparseVoxelGrid)
-    {
-        // Additive merge
-        for (const auto& Pair : TempGrid->VoxelData)
-        {
+    } else if (SparseVoxelGrid) {
+        for (const auto& Pair : TempGrid->VoxelData) {
             SparseVoxelGrid->VoxelData.Add(Pair.Key, Pair.Value);
         }
     }
 
-    // --- 1b. Legacy files Check ---
-    if (FromBinary.AtEnd())
-    {
-        MarkDirty();
-        return true;
-    }
+    if (FromBinary.AtEnd()) { MarkDirty(); return true; }
 
-    // --- 2. Load Holes ---
+    // --- 2. Load Holes (LEGACY VS NEW CHECK) ---
+    
+    int32 CheckValue = 0;
+    FromBinary << CheckValue; // Read the first int after Voxels
+
     int32 HoleCount = 0;
-    FromBinary << HoleCount;
+    bool bIsLegacy = true;
+
+    // Check for Magic Header
+    const int32 MagicHeader = -0x444947;
+    
+    if (CheckValue == MagicHeader)
+    {
+        // IT IS A NEW FILE
+        bIsLegacy = false;
+        int32 FileVersion = 0;
+        FromBinary << FileVersion; // Read Version
+        FromBinary << HoleCount;   // Read Actual Count
+    }
+    else
+    {
+        // IT IS A LEGACY FILE (CheckValue is actually the HoleCount)
+        bIsLegacy = true;
+        HoleCount = CheckValue;
+        
+        if (DiggerDebug::IO()) 
+            UE_LOG(LogTemp, Warning, TEXT("LoadChunkData: Legacy file detected. Defaulting holes to Sphere."));
+    }
 
     for (int32 i = 0; i < HoleCount; ++i)
     {
         if (FromBinary.AtEnd()) break;
 
         FSpawnedHoleData Hole;
-        // If FSpawnedHoleData contains FVectors/Rotators, the fix above allows this to work
-        FromBinary << Hole;
+
+        // Manual Read to match the manual write in Save
+        FromBinary << Hole.Location;
+        FromBinary << Hole.Rotation;
+        FromBinary << Hole.Scale;
+
+        if (bIsLegacy)
+        {
+            // Legacy files have no shape data -> Default to Sphere
+            Hole.Shape.ShapeType = EHoleShapeType::Sphere;
+        }
+        else
+        {
+            // New files have the shape byte
+            uint8 ShapeByte = 0;
+            FromBinary << ShapeByte;
+            Hole.Shape.ShapeType = (EHoleShapeType)ShapeByte;
+        }
 
         HoleDataArray.Add(Hole);
         SpawnHoleFromData(Hole);
     }
 
     // --- 3. Load Lights ---
-    if (FromBinary.AtEnd())
-    {
-        MarkDirty();
-        return true;
-    }
+    if (FromBinary.AtEnd()) { MarkDirty(); return true; }
 
     int32 LightCount = 0;
     FromBinary << LightCount;
 
-    UWorld* CurrentWorld = GetWorld();
-    if (!CurrentWorld && DiggerManager)
-    {
-        CurrentWorld = DiggerManager->GetWorld();
-    }
+    UWorld* CurrentWorld = GetWorld() ? GetWorld() : (DiggerManager ? DiggerManager->GetWorld() : nullptr);
 
     for (int32 i = 0; i < LightCount; ++i)
     {
         if (FromBinary.AtEnd()) break;
-
         FSavedLightData LightData;
         FromBinary << LightData;
 
-        if (CurrentWorld)
-        {
+        if (CurrentWorld) {
             AActor* NewLight = LightData.SpawnLightActor(CurrentWorld);
-            if (DiggerManager && NewLight)
-            {
-                DiggerManager->SpawnedLights.Add(NewLight);
-            }
+            if (DiggerManager && NewLight) DiggerManager->SpawnedLights.Add(NewLight);
         }
     }
 
@@ -1520,30 +1440,33 @@ void UVoxelChunk::HandleSmoothBrush(
     bModified = true;
 }
 
-// Add this helper to your class or as a static local function
-float UVoxelChunk::GetSDFSafe(int32 X, int32 Y, int32 Z, float LocalVoxelSize, const FVector& ChunkOrigin) const
+// ----------------------------------------------------------------------------------
+// 1. Helper: Safe SDF Lookup (Matches new Header)
+// ----------------------------------------------------------------------------------
+float UVoxelChunk::GetSDFSafe(const FIntVector& Pos, float LocalVoxelSize, const FVector& ChunkOrigin) const
 {
-	// 1. If it exists in the grid, return the explicit modification
-	if (SparseVoxelGrid->HasVoxelAt(X, Y, Z))
-	{
-		return SparseVoxelGrid->GetVoxel(X, Y, Z);
-	}
+    // A. Explicit Voxel (User modified)
+    if (SparseVoxelGrid->HasVoxelAt(Pos.X, Pos.Y, Pos.Z))
+    {
+        return SparseVoxelGrid->GetVoxel(Pos.X, Pos.Y, Pos.Z);
+    }
 
-	// 2. If it doesn't exist, calculate the implicit Landscape Baseline
-	// This prevents "Air" artifacts when smoothing near the ground.
-	FVector WorldPos = ChunkOrigin + FVector(X, Y, Z) * LocalVoxelSize;
-	float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
+    // B. Implicit Landscape (Seamless Fallback)
+    // Even if we don't "attract" to the landscape, we must acknowledge it exists 
+    // at the boundaries to prevent "Air" artifacts (holes) at the edge of the brush.
+    FVector WorldPos = ChunkOrigin + FVector(Pos) * LocalVoxelSize;
+    float TerrainHeight = DiggerManager->GetLandscapeHeightAt(WorldPos);
     
-	// SDF is Distance Z - Height
-	float DistToSurface = WorldPos.Z - TerrainHeight;
-    
-	// Normalize by voxel size to keep in SDF space
-	return DistToSurface / LocalVoxelSize;
+    // SDF: Positive = Air, Negative = Ground
+    return (WorldPos.Z - TerrainHeight) / LocalVoxelSize;
 }
 
+// ----------------------------------------------------------------------------------
+// 2. Main Brush Function
+// ----------------------------------------------------------------------------------
 void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 {
-    Modify(); // Mark dirty for undo
+    Modify(); // Mark dirty for undo system
 
     UVoxelBrushShape* BrushShape = (DiggerManager) ? DiggerManager->GetBrushShapeForType(Stroke.BrushType) : nullptr;
     if (!DiggerManager || !BrushShape || !SparseVoxelGrid) return;
@@ -1551,6 +1474,10 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     const float LocalVoxelSize = FVoxelConversion::LocalVoxelSize;
     const FVector ChunkOrigin = FVoxelConversion::ChunkToWorld(ChunkCoordinates);
     const int32 ChunkDim = FVoxelConversion::ChunkSize * FVoxelConversion::Subdivisions; 
+    
+    // 1. KEEP GHOST PADDING
+    // This is required to prevent the "Wall" artifact. We must update our local knowledge 
+    // of the neighbor's edge so our mesh connects physically.
     const int32 GhostPad = 2; 
 
     // --- BOUNDS CALCULATION ---
@@ -1558,6 +1485,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     FVector LocalMin = (Stroke.BrushPosition - BrushWorldBounds) - ChunkOrigin;
     FVector LocalMax = (Stroke.BrushPosition + BrushWorldBounds) - ChunkOrigin;
 
+    // Iterate into negative/positive ghost space (-GhostPad to Dim+GhostPad)
     int32 StartX = FMath::Max(FMath::FloorToInt(LocalMin.X / LocalVoxelSize), -GhostPad);
     int32 EndX   = FMath::Min(FMath::CeilToInt(LocalMax.X / LocalVoxelSize), ChunkDim + GhostPad);
     int32 StartY = FMath::Max(FMath::FloorToInt(LocalMin.Y / LocalVoxelSize), -GhostPad);
@@ -1571,12 +1499,12 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     int32 VoxelsDug = 0;
     int32 VoxelsAdded = 0;
 
-    // --- BUFFER FOR SMOOTH BRUSH (Determinism) ---
-    // Key: Index hash or FIntVector, Value: New SDF
+    // --- SMOOTH BUFFER ---
+    // Essential for determinism. We read from Grid, write to Buffer.
     TMap<FIntVector, float> SmoothBuffer; 
-    
+
     // -----------------------------------------------------------------------
-    // LOOP 1: CALCULATE (Do not write to Grid yet)
+    // LOOP 1: CALCULATE & PREPARE
     // -----------------------------------------------------------------------
     for (int32 X = StartX; X < EndX; ++X)
     {
@@ -1595,67 +1523,72 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
 
                 if (!BrushShape->IsWithinBounds(VoxelWorldPos, Stroke)) continue;
 
-                // --- BASELINE ---
+                // --- GATHER DATA ---
                 float DistToSurface = VoxelWorldPos.Z - TerrainHeight;
                 float BaselineSDF = DistToSurface / LocalVoxelSize;
 
-                // --- CURRENT VALUE ---
-                float CurrentSDF;
                 bool bHasValue = SparseVoxelGrid->HasVoxelAt(X, Y, Z);
-                CurrentSDF = bHasValue ? SparseVoxelGrid->GetVoxel(X, Y, Z) : BaselineSDF;
+                float CurrentSDF = bHasValue ? SparseVoxelGrid->GetVoxel(X, Y, Z) : BaselineSDF;
 
                 // ==========================================================
-                // PATH A: SMOOTH BRUSH LOGIC
+                // PATH A: SMOOTH BRUSH
                 // ==========================================================
                 if (Stroke.BrushType == EVoxelBrushType::Smooth)
                 {
-                    // 1. Calculate Falloff
                     float Distance = FVector::Dist(VoxelWorldPos, Stroke.BrushPosition);
                     if (Distance > Stroke.BrushRadius) continue;
 
                     float Alpha = 1.0f - (Distance / Stroke.BrushRadius);
-                    Alpha = FMath::Pow(Alpha, Stroke.BrushFalloff); // Non-linear falloff
-                    float Strength = Alpha * Stroke.BrushStrength; // e.g. 0.0 to 1.0
+                    Alpha = FMath::Pow(Alpha, Stroke.BrushFalloff); 
+                    float Strength = Alpha * Stroke.BrushStrength;
 
                     if (Strength <= SMALL_NUMBER) continue;
 
-                    // 2. Gather Neighbors (Using Safe Lookup)
+                    // Gather Neighbors safely
                     float Sum = 0.f;
                     const int Offsets[6][3] = { {1,0,0}, {-1,0,0}, {0,1,0}, {0,-1,0}, {0,0,1}, {0,0,-1} };
                     
                     for (int i = 0; i < 6; i++)
                     {
-                        Sum += GetSDFSafe(X + Offsets[i][0], Y + Offsets[i][1], Z + Offsets[i][2], LocalVoxelSize, ChunkOrigin);
+                        // GetSDFSafe checks HasVoxelAt -> else returns BaselineSDF
+                        Sum += GetSDFSafe(FIntVector(X + Offsets[i][0], Y + Offsets[i][1], Z + Offsets[i][2]), LocalVoxelSize, ChunkOrigin);
                     }
 
-                    // 3. Compute Averages
                     float NeighborAvg = Sum / 6.0f;
-                    
-                    // Blend neighbor average with current for stability
                     float LaplacianSmoothed = FMath::Lerp(CurrentSDF, NeighborAvg, 0.5f);
 
-                    // 4. Landscape Attraction (The "Hybrid" part)
-                    // If we are very far from explicit voxels, pull towards landscape
-                    // to prevent destroying the terrain shape entirely.
-                    float LandscapeInfluence = 0.2f; // Configurable
+                    // Pull towards landscape? (Configurable)
+                    // Set LandscapeInfluence to 0.0f to make smoothing totally free-form
+                    float LandscapeInfluence = DiggerManager->bSmoothLandscapeAware ? 0.2f : 0.0f; 
                     float TargetSDF = FMath::Lerp(LaplacianSmoothed, BaselineSDF, LandscapeInfluence);
 
-                    // 5. Final Blend based on Brush Strength
                     float FinalSDF = FMath::Lerp(CurrentSDF, TargetSDF, Strength);
 
-                    // Store in buffer - DO NOT WRITE YET
+                    // Buffer the result (including Ghosts!)
                     SmoothBuffer.Add(LocalCoord, FinalSDF);
                 }
                 // ==========================================================
-                // PATH B: STANDARD DIG/ADD LOGIC
+                // PATH B: DIG / ADD (With Modifier Slot)
                 // ==========================================================
                 else 
                 {
                     float BrushSDF = BrushShape->CalculateSDF(VoxelWorldPos, Stroke, TerrainHeight);
                     if (FMath::IsNearlyZero(BrushSDF, 0.001f)) continue;
 
-                    // Skip "Air on Air" to prevent bloating data
                     if (Stroke.bDig && !bHasValue && BaselineSDF > 0.5f) continue;
+
+                    // -------------------------------------------------------------
+                    // >>> MODIFIER / NOISE INJECTION POINT <<<
+                    // -------------------------------------------------------------
+                    // If you want noise, apply it to BrushSDF here.
+                    // IMPORTANT: Use VoxelWorldPos for noise math so seams match.
+                    
+                    // Example:
+                    // if (Stroke.BrushType == EVoxelBrushType::Noise) {
+                    //      float Noise = FMath::PerlinNoise3D(VoxelWorldPos * 0.01f);
+                    //      BrushSDF += Noise * Stroke.BrushStrength;
+                    // }
+                    // -------------------------------------------------------------
 
                     float NewSDF = CurrentSDF;
                     if (Stroke.bDig)
@@ -1671,6 +1604,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
                         VoxelsAdded++;
                     }
 
+                    // Direct write is safe for Dig/Add as it doesn't depend on neighbors
                     SparseVoxelGrid->SetVoxel(X, Y, Z, NewSDF, Stroke.bDig);
                     bModified = true;
                 }
@@ -1685,8 +1619,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     {
         for (const auto& Pair : SmoothBuffer)
         {
-            // Only write if significant change to save bandwidth
-            // Or if you want to ensure the grid instantiates:
+            // Apply smoothed values to Grid (Including Ghosts)
             SparseVoxelGrid->SetVoxel(Pair.Key.X, Pair.Key.Y, Pair.Key.Z, Pair.Value, false);
         }
         bModified = true;
@@ -1698,12 +1631,22 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
         FVoxelModificationReport Report;
         Report.ChunkCoordinates = ChunkCoordinates;
         Report.BrushPosition = Stroke.BrushPosition;
-        Report.BrushRadius = Stroke.BrushRadius;
+        
+        // --- SEAM FIX / NORMAL CONSISTENCY ---
+        // We report a radius slightly LARGER than the brush.
+        // This forces DiggerManager to detect overlaps with neighboring chunks.
+        // When a neighbor is detected, DiggerManager will trigger a re-mesh for it.
+        // Re-meshing the neighbor allows it to read the new edge data we just wrote,
+        // fixing the lighting/normal seam.
+        const float SeamSafetyMargin = GhostPad * LocalVoxelSize * 2.0f;
+        Report.BrushRadius = Stroke.BrushRadius + SeamSafetyMargin;
+
         Report.VoxelsDug = VoxelsDug;
         Report.VoxelsAdded = VoxelsAdded;
         DiggerManager->OnVoxelsModified.Broadcast(Report);
     }
 }
+
 
 
 void UVoxelChunk::CreateSolidShellAroundAirVoxels(const TArray<FIntVector>& AirVoxels, bool bHiddenSeam)
@@ -2330,4 +2273,9 @@ void UVoxelChunk::GenerateMesh()
             }
         });
     });
+
+	if (DiggerManager)
+	{
+		DiggerManager->BeginMeshUpdateBatch();
+	}
 }

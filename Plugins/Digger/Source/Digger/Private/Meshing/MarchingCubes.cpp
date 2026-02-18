@@ -239,17 +239,14 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
     const int32 GridDim   = ChunkSize + (2 * Pad);
     const int32 TotalGridSize = GridDim * GridDim * GridDim;
 
-    // Precompute strides
     const int32 StrideY = GridDim;
     const int32 StrideZ = GridDim * GridDim;
 
-    // Heightmap info
     const int32 HMapWidth   = ChunkSize + 1;
     const bool  bHasHeights = (HeightValues.Num() == (HMapWidth * HMapWidth));
     const float GlobalFloorZ = Origin.Z - ShellRadiusWorld - (VoxelSize * 4.0f);
     const float InvalidH     = UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f;
 
-    // Dense SDF grid
     TArray<float> DensityGrid;
     DensityGrid.SetNumUninitialized(TotalGridSize);
 
@@ -259,7 +256,7 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
     };
 
     // ============================================================
-    // STEP 1 — BASELINE LANDSCAPE SDF + VOXEL OVERLAY (FAST PATH)
+    // STEP 1 — BASELINE LANDSCAPE SDF + VOXEL OVERLAY
     // ============================================================
 
     for (int32 Z = -Pad; Z < ChunkSize + Pad; ++Z)
@@ -277,7 +274,6 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
             {
                 const int32 GridIndex = RowBase + (X + Pad);
 
-                // Hard floor
                 if (bBelowFloor)
                 {
                     DensityGrid[GridIndex] = -2.0f;
@@ -293,7 +289,6 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
 
                     float H = HeightValues[cY * HMapWidth + cX];
 
-                    // Seam extrapolation
                     if (X < 0)
                     {
                         const float Hn = HeightValues[cY * HMapWidth + (cX + 1)];
@@ -334,7 +329,7 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
         }
     }
 
-    // Voxel overlay (edits)
+    // Voxel overlay (edits) — LOCAL coords
     for (const auto& Pair : VoxelData)
     {
         const FIntVector& P = Pair.Key;
@@ -348,13 +343,32 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
     }
 
     // ============================================================
-    // STEP 2 — NORMAL GRID (same as before)
+    // STEP 2 — NORMAL GRID (thread-safe, local snapshot)
     // ============================================================
 
     TArray<FVector> NormalGrid;
     if (ShadingMode == EDiggerShadingMode::OrganicGradient)
     {
         NormalGrid.SetNumUninitialized(TotalGridSize);
+
+        auto SampleSDF = [&](int32 X, int32 Y, int32 Z)
+        {
+            if (const FVoxelData* V = VoxelData.Find(FIntVector(X, Y, Z)))
+            {
+                return V->SDFValue;
+            }
+
+            const int32 GX = X + Pad;
+            const int32 GY = Y + Pad;
+            const int32 GZ = Z + Pad;
+
+            const int32 CX = FMath::Clamp(GX, 0, GridDim - 1);
+            const int32 CY = FMath::Clamp(GY, 0, GridDim - 1);
+            const int32 CZ = FMath::Clamp(GZ, 0, GridDim - 1);
+
+            const int32 GridIndex = CX + CY * StrideY + CZ * StrideZ;
+            return DensityGrid[GridIndex];
+        };
 
         for (int32 Z = -Pad + 1; Z < ChunkSize + Pad - 1; ++Z)
         {
@@ -369,12 +383,14 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
                 {
                     const int32 Idx = RowBase + (X + Pad);
 
-                    const float nx = DensityGrid[Idx + 1]       - DensityGrid[Idx - 1];
-                    const float ny = DensityGrid[Idx + StrideY] - DensityGrid[Idx - StrideY];
-                    const float nz = DensityGrid[Idx + StrideZ] - DensityGrid[Idx - StrideZ];
+                    const float nx = SampleSDF(X + 1, Y,     Z) - SampleSDF(X - 1, Y,     Z);
+                    const float ny = SampleSDF(X,     Y + 1, Z) - SampleSDF(X,     Y - 1, Z);
+                    const float nz = SampleSDF(X,     Y,     Z + 1) - SampleSDF(X,     Y,     Z - 1);
 
                     FVector N(nx, ny, nz);
-                    if (!N.Normalize()) N = FVector::UpVector;
+                    if (!N.Normalize())
+                        N = FVector::UpVector;
+
                     NormalGrid[Idx] = N;
                 }
             }
@@ -382,13 +398,21 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
     }
 
     // ============================================================
-    // STEP 3 — MARCHING CUBES (unchanged core, cache‑aware)
+    // STEP 3 — MARCHING CUBES (cache‑aware, no quantization)
     // ============================================================
 
+    // Key = (BaseIdx, EdgeIdx) → unique per cube-edge, no spatial snapping
     TMap<FIntVector, int32> VertexCache;
-    VertexCache.Reserve(ChunkSize * ChunkSize * 2);
+    VertexCache.Reserve(ChunkSize * ChunkSize * 6);
 
-    const float VertexQuant = 1.0f / (VoxelSize * 0.01f);
+    auto MakeVertexKey = [&](int32 BaseIdx, int32 EdgeIdx)
+    {
+        // BaseIdx can be large; pack into 3 ints safely
+        const int32 X = BaseIdx;
+        const int32 Y = EdgeIdx;
+        const int32 Z = 0;
+        return FIntVector(X, Y, Z);
+    };
 
     for (int32 X = 0; X < ChunkSize; ++X)
     {
@@ -446,12 +470,7 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
                         }
                         else
                         {
-                            const FVector RelP = InterpPos - Origin;
-                            const FIntVector Key(
-                                FMath::RoundToInt(RelP.X * VertexQuant),
-                                FMath::RoundToInt(RelP.Y * VertexQuant),
-                                FMath::RoundToInt(RelP.Z * VertexQuant)
-                            );
+                            const FIntVector Key = MakeVertexKey(BaseIdx, EdgeIdx);
 
                             if (int32* Cached = VertexCache.Find(Key))
                             {
@@ -477,6 +496,14 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
                                 }
                             }
                         }
+                    }
+
+                    // Degenerate guard: skip if any two indices are the same
+                    if (VertIndices[0] == VertIndices[1] ||
+                        VertIndices[1] == VertIndices[2] ||
+                        VertIndices[0] == VertIndices[2])
+                    {
+                        continue;
                     }
 
                     OutTriangles.Add(VertIndices[0]);
@@ -526,6 +553,9 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
             N.Normalize();
     }
 }
+
+
+
 
 
 

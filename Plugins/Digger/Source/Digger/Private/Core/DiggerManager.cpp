@@ -1564,6 +1564,198 @@ UVoxelBrushShape* ADiggerManager::GetBrushShapeForType(EVoxelBrushType BrushType
     return nullptr;
 }
 
+// Dirty Chunk handling
+void ADiggerManager::BuildFinalMesh()
+{
+    if (!ProceduralMesh)
+        return;
+
+    // Nothing to build? Do NOT clear the existing mesh.
+    if (GlobalVertices.Num() == 0 || GlobalTriangles.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("BuildFinalMesh: Global mesh is empty, skipping rebuild"));
+        return;
+    }
+
+    // Normalize normals
+    for (FVector& N : GlobalNormals)
+        N.Normalize();
+
+    // Replace the global section
+    ProceduralMesh->ClearAllMeshSections();
+
+    ProceduralMesh->CreateMeshSection(
+        0,
+        GlobalVertices,
+        GlobalTriangles,
+        GlobalNormals,
+        TArray<FVector2D>(),
+        TArray<FColor>(),
+        TArray<FProcMeshTangent>(),
+        true
+    );
+
+    ProceduralMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+    ProceduralMesh->bUseComplexAsSimpleCollision = true;
+}
+
+
+
+void ADiggerManager::RegisterDirtyChunk(const FIntVector& Coord)
+{
+    DirtyChunkCoords.Add(Coord);
+}
+
+// Call this once per “batch” before you kick off mesh generation for all dirty chunks.
+// You can expose it or call it from wherever you trigger updates.
+void ADiggerManager::BeginMeshUpdateBatch()
+{
+    GlobalVertexCache.Empty();
+    GlobalVertices.Empty();
+    GlobalNormals.Empty();
+    GlobalTriangles.Empty();
+
+    // Quantization: 1% of voxel size
+    GlobalVertexQuant = 1.0f / (FVoxelConversion::LocalVoxelSize * 0.01f);
+
+    PendingMeshUpdates = DirtyChunkCoords.Num();
+}
+
+
+void ADiggerManager::NotifyChunkMeshComplete(const FIntVector& Coord)
+{
+    DirtyChunkCoords.Remove(Coord);
+    PendingMeshUpdates--;
+
+    if (PendingMeshUpdates <= 0)
+    {
+        BuildFinalMesh();
+    }
+}
+
+
+
+void ADiggerManager::StitchNormalsAcrossSections()
+{
+    if (!ProceduralMesh)
+        return;
+
+    struct FVertRef
+    {
+        int32 Section;
+        int32 Index;
+    };
+
+    // Try a slightly generous epsilon so border verts actually land together
+    const float Epsilon = FVoxelConversion::LocalVoxelSize * 0.5f;
+    const float Inv     = 1.0f / Epsilon;
+
+    TMap<FIntVector, TArray<FVertRef>> Buckets;
+
+    struct FSectionData
+    {
+        TArray<FVector>          Verts;
+        TArray<FVector>          Normals;
+        TArray<FVector2D>        UVs;
+        TArray<FColor>           Colors;
+        TArray<FProcMeshTangent> Tangents;
+    };
+
+    TMap<int32, FSectionData> Sections;
+
+    const int32 NumSections = ProceduralMesh->GetNumSections();
+
+    // 1. Gather all vertices/normals from all sections
+    for (int32 S = 0; S < NumSections; ++S)
+    {
+        FProcMeshSection* Sec = ProceduralMesh->GetProcMeshSection(S);
+        if (!Sec)
+            continue;
+
+        const int32 VertCount = Sec->ProcVertexBuffer.Num();
+        if (VertCount == 0)
+            continue;
+
+        FSectionData Data;
+        Data.Verts.Reserve(VertCount);
+        Data.Normals.Reserve(VertCount);
+        Data.UVs.Reserve(VertCount);
+        Data.Colors.Reserve(VertCount);
+        Data.Tangents.Reserve(VertCount);
+
+        for (int32 i = 0; i < VertCount; ++i)
+        {
+            const FProcMeshVertex& V = Sec->ProcVertexBuffer[i];
+
+            Data.Verts.Add(V.Position);
+            Data.Normals.Add(V.Normal);
+            Data.UVs.Add(V.UV0);
+            Data.Colors.Add(V.Color);
+            Data.Tangents.Add(V.Tangent);
+
+            const FVector& P = V.Position;
+            const FIntVector Key(
+                FMath::RoundToInt(P.X * Inv),
+                FMath::RoundToInt(P.Y * Inv),
+                FMath::RoundToInt(P.Z * Inv)
+            );
+
+            Buckets.FindOrAdd(Key).Add({ S, i });
+        }
+
+        Sections.Add(S, MoveTemp(Data));
+    }
+
+    // 2. For each bucket with >1 vertex, average *positions* and normals
+    for (auto& Pair : Buckets)
+    {
+        const TArray<FVertRef>& Refs = Pair.Value;
+        if (Refs.Num() < 2)
+            continue;
+
+        FVector PosAccum = FVector::ZeroVector;
+        FVector NrmAccum = FVector::ZeroVector;
+
+        for (const FVertRef& R : Refs)
+        {
+            FSectionData& SecData = Sections[R.Section];
+            PosAccum += SecData.Verts[R.Index];
+            NrmAccum += SecData.Normals[R.Index];
+        }
+
+        const FVector AvgPos = PosAccum / float(Refs.Num());
+        FVector AvgNrm = NrmAccum.GetSafeNormal();
+        if (AvgNrm.IsNearlyZero())
+            AvgNrm = FVector::UpVector;
+
+        for (const FVertRef& R : Refs)
+        {
+            FSectionData& SecData = Sections[R.Section];
+            SecData.Verts[R.Index]   = AvgPos;
+            SecData.Normals[R.Index] = AvgNrm;
+        }
+    }
+
+    // 3. Push updated verts + normals back into the mesh
+    for (auto& SecPair : Sections)
+    {
+        const int32 S = SecPair.Key;
+        FSectionData& D = SecPair.Value;
+
+        ProceduralMesh->UpdateMeshSection(
+            S,
+            D.Verts,
+            D.Normals,
+            D.UVs,
+            D.Colors,
+            D.Tangents
+        );
+    }
+}
+
+
+
+
 
 
 void ADiggerManager::ApplyBrushToAllChunksPIE(FBrushStroke& BrushStroke)
@@ -3539,7 +3731,9 @@ UWorld* ADiggerManager::GetSafeWorld() const
 
 void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
 {
-    // 1. VALIDATION
+    // -------------------------------------------------------------------------
+    // 1. CLASS VALIDATION
+    // -------------------------------------------------------------------------
     if (!DynamicHoleClass)
     {
         EnsureDefaultHoleBP();
@@ -3580,45 +3774,92 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
         return;
     }
 
+    // -------------------------------------------------------------------------
     // 2. AUTHORITATIVE CENTER / ROTATION FROM STROKE (PREVIEW-DRIVEN)
-    FVector Center   = Stroke.BrushPosition; // WYSIWYG from preview
+    // -------------------------------------------------------------------------
+    FVector Center   = Stroke.BrushPosition;
     FVector Extents  = FVector(Stroke.BrushRadius);
     FQuat   Rotation = Stroke.BrushRotation.Quaternion();
     float   Falloff  = Stroke.BrushFalloff;
     EVoxelBrushType BrushType = Stroke.BrushType;
 
-    ActiveBrush->GetPreviewData(
-        Center,
-        Extents,
-        Rotation,
-        Falloff,
-        BrushType,
-        Stroke);
+    ActiveBrush->GetPreviewData(Center, Extents, Rotation, Falloff, BrushType, Stroke);
 
-    FVector  SpawnLocation = Center;
-    FRotator SpawnRotation = Rotation.Rotator();
+    const FVector  SpawnLocation = Center;
+    const FRotator SpawnRotation = Rotation.Rotator();
+    const float    Radius        = Stroke.BrushRadius;
 
-    // 3. VALIDATE THAT WE ARE NEAR LANDSCAPE
-    bool bFoundLandscape = false;
+    // -------------------------------------------------------------------------
+    // 3. MULTI-PATH LANDSCAPE DETECTION
+    //    Path A: camera hit (original)
+    //    Path B: landscape height cache + XY ring search
+    //    Path C: vertical line trace (last resort)
+    // -------------------------------------------------------------------------
+    bool  bFoundLandscape = false;
+    float LandscapeZ      = UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT;
 
-    FHitResult Hit;
-    if (ActiveBrush->GetCameraHitLocation(Hit))
+    // --- Path A: camera hit ---
     {
-        if (ActiveBrush->IsLandscape(Hit.GetActor()))
+        FHitResult CamHit;
+        if (ActiveBrush->GetCameraHitLocation(CamHit))
         {
-            bFoundLandscape = true;
+            if (ActiveBrush->IsLandscape(CamHit.GetActor()))
+            {
+                bFoundLandscape = true;
+                // Use the hit Z as a reference height if cache is unavailable
+                if (LandscapeZ <= UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT)
+                    LandscapeZ = CamHit.ImpactPoint.Z;
+            }
         }
     }
 
-    const float TerrainZ = GetLandscapeHeightAt(SpawnLocation);
-    const bool bValidTerrainZ = TerrainZ > UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT;
-
-    if (!bFoundLandscape && bValidTerrainZ)
+    // --- Path B: height cache with XY ring fallback ---
     {
-        const float MaxDistance = Stroke.BrushRadius * 0.75f;
-        if (FMath::Abs(SpawnLocation.Z - TerrainZ) <= MaxDistance)
+        float CachedZ = GetLandscapeHeightAt(SpawnLocation);
+        if (CachedZ > UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT)
         {
             bFoundLandscape = true;
+            LandscapeZ      = CachedZ;
+        }
+        else
+        {
+            // Ring search: N/S/E/W at 50% radius
+            const float SearchR = Radius * 0.5f;
+            const FVector Ring[] = {
+                FVector( SearchR, 0.f, 0.f), FVector(-SearchR, 0.f, 0.f),
+                FVector(0.f,  SearchR, 0.f), FVector(0.f, -SearchR, 0.f),
+            };
+            for (const FVector& Off : Ring)
+            {
+                CachedZ = GetLandscapeHeightAt(SpawnLocation + Off);
+                if (CachedZ > UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT)
+                {
+                    bFoundLandscape = true;
+                    LandscapeZ      = CachedZ;
+                    break;
+                }
+            }
+        }
+    }
+
+    // --- Path C: vertical line trace ---
+    if (!bFoundLandscape)
+    {
+        if (UWorld* W = GetWorld())
+        {
+            const FVector Start(SpawnLocation.X, SpawnLocation.Y, SpawnLocation.Z + Radius * 2.f);
+            const FVector End  (SpawnLocation.X, SpawnLocation.Y, SpawnLocation.Z - Radius * 4.f);
+            FHitResult    VTrace;
+            FCollisionQueryParams VParams(SCENE_QUERY_STAT(DiggerHandleHoleProbe), true);
+
+            if (W->LineTraceSingleByChannel(VTrace, Start, End, ECC_Visibility, VParams))
+            {
+                if (VTrace.GetActor() && VTrace.GetActor()->IsA(ALandscapeProxy::StaticClass()))
+                {
+                    bFoundLandscape = true;
+                    LandscapeZ      = VTrace.ImpactPoint.Z;
+                }
+            }
         }
     }
 
@@ -3626,37 +3867,51 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
     {
         if (DiggerDebug::Holes())
             UE_LOG(LogTemp, Warning,
-                TEXT("HandleHoleSpawn: No landscape detected near brush center. Skipping hole spawn."));
+                TEXT("HandleHoleSpawn: No landscape detected near %s — hole skipped."),
+                *SpawnLocation.ToString());
         return;
     }
 
-    // 3.b 60% SUBMERGED MAX GATE
-    if (bValidTerrainZ)
+    // -------------------------------------------------------------------------
+    // 3b. UNIFIED DEPTH GATE
+    //
+    //  • Brush must intersect the landscape surface (|brushZ - landscapeZ| <= radius)
+    //  • Top of brush must not be buried more than 60% of radius
+    //  • Brush must not be more than one radius ABOVE the landscape (floating hole)
+    // -------------------------------------------------------------------------
+    const float VerticalDist  = FMath::Abs(SpawnLocation.Z - LandscapeZ);
+    const float TopOfBrush    = SpawnLocation.Z + Radius;
+    const float BurialDepth   = LandscapeZ - TopOfBrush;   // positive = buried below surface
+
+    if (VerticalDist > Radius)
     {
-        const float Radius = Stroke.BrushRadius;
-
-        // Depth of the TOP of the brush sphere below the landscape
-        const float Depth = TerrainZ - (SpawnLocation.Z + Radius);
-        const float MaxAllowedDepth = Radius * 0.6f;
-
-        if (Depth > MaxAllowedDepth)
-        {
-            // Brush is too far underground → do not spawn a hole
-            if (DiggerDebug::Holes())
-            {
-                UE_LOG(LogTemp, Verbose,
-                    TEXT("HandleHoleSpawn: Suppressed hole (too deep). Depth=%.2f, MaxAllowed=%.2f"),
-                    Depth, MaxAllowedDepth);
-            }
-            return;
-        }
+        // Brush doesn't touch the landscape surface at all
+        if (DiggerDebug::Holes())
+            UE_LOG(LogTemp, Verbose,
+                TEXT("HandleHoleSpawn: Brush doesn't reach surface (dist=%.1f, r=%.1f) — skipped."),
+                VerticalDist, Radius);
+        return;
     }
 
-    // 4. SCALE
-    const float ScaleDivisor = UDiggerSettings::Get()->ScaleDivisor;
-    const FVector SpawnScale(Stroke.BrushRadius / ScaleDivisor);
+    const float MaxBurial = Radius * 0.60f;
+    if (BurialDepth > MaxBurial)
+    {
+        if (DiggerDebug::Holes())
+            UE_LOG(LogTemp, Verbose,
+                TEXT("HandleHoleSpawn: Brush too deep (burial=%.1f, max=%.1f) — skipped."),
+                BurialDepth, MaxBurial);
+        return;
+    }
 
+    // -------------------------------------------------------------------------
+    // 4. SCALE
+    // -------------------------------------------------------------------------
+    const float ScaleDivisor = UDiggerSettings::Get()->ScaleDivisor;
+    const FVector SpawnScale(Radius / ScaleDivisor);
+
+    // -------------------------------------------------------------------------
     // 5. CHUNK RESOLUTION
+    // -------------------------------------------------------------------------
     UVoxelChunk* Chunk = GetOrCreateChunkAtWorld(SpawnLocation);
     if (!Chunk)
     {
@@ -3673,24 +3928,30 @@ void ADiggerManager::HandleHoleSpawn(const FBrushStroke& Stroke)
         return;
     }
 
+    // -------------------------------------------------------------------------
     // 6. PREPARE HOLE SHAPE (NO GRID SNAP)
+    // -------------------------------------------------------------------------
     FHoleShape FinalShape = Stroke.HoleShape;
-    FinalShape.ShapeType =
+    FinalShape.ShapeType  =
         (BrushType == EVoxelBrushType::Cube || BrushType == EVoxelBrushType::AdvancedCube)
             ? EHoleShapeType::Cube
             : EHoleShapeType::Sphere;
 
-    // 7. SPAWN HOLE ACTOR (DEFERRED MESH)
+    // -------------------------------------------------------------------------
+    // 7. SPAWN HOLE ACTOR
+    // -------------------------------------------------------------------------
     FSpawnedHoleData Data(SpawnLocation, SpawnRotation, SpawnScale, FinalShape);
-
     Chunk->SpawnHoleFromData(Data);
 
     if (DiggerDebug::Holes())
         UE_LOG(LogTemp, Log,
-            TEXT("HandleHoleSpawn: Spawned hole at %s (Chunk %s) [Brush-Centered, Preview-Consistent]"),
+            TEXT("HandleHoleSpawn: Spawned at %s (Chunk %s) LandscapeZ=%.1f Burial=%.1f"),
             *SpawnLocation.ToString(),
-            *Chunk->GetChunkCoordinates().ToString());
+            *Chunk->GetChunkCoordinates().ToString(),
+            LandscapeZ,
+            BurialDepth);
 }
+
 
 
 

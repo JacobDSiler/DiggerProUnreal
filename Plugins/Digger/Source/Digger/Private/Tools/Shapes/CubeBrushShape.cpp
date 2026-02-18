@@ -17,7 +17,6 @@ float UCubeBrushShape::CalculateSDF_Implementation(
         LocalPos = Stroke.BrushRotation.UnrotateVector(LocalPos);
     }
 
-    // True half-extents of the box
     const FVector HalfExtents = Stroke.bUseAdvancedCubeBrush
         ? FVector(
             Stroke.AdvancedCubeHalfExtentX,
@@ -25,7 +24,6 @@ float UCubeBrushShape::CalculateSDF_Implementation(
             Stroke.AdvancedCubeHalfExtentZ)
         : FVector(Stroke.BrushRadius);
 
-    // Signed distance to box (0 = surface, <0 inside, >0 outside)
     const FVector q(
         FMath::Abs(LocalPos.X),
         FMath::Abs(LocalPos.Y),
@@ -42,22 +40,17 @@ float UCubeBrushShape::CalculateSDF_Implementation(
 
     const float InsideDist = FMath::Min(FMath::Max(d.X, FMath::Max(d.Y, d.Z)), 0.0f);
 
-    const float SignedDist = OutsideDist + InsideDist; // classic box SDF
+    const float SignedDist = OutsideDist + InsideDist;
 
     const float HalfFalloff = Stroke.BrushFalloff * 0.5f;
 
-    float ResultSDF;
+    // ⭐ HARD CLAMP: no effect outside falloff
+    if (SignedDist > HalfFalloff)
+    {
+        return 0.0f;
+    }
 
-    if (Stroke.bDig)
-    {
-        // Dig: inside → air (positive), outside → solid (negative)
-        ResultSDF = -SignedDist;
-    }
-    else
-    {
-        // Add: inside → solid (negative), outside → air (positive)
-        ResultSDF = SignedDist;
-    }
+    float RawSDF = Stroke.bDig ? -SignedDist : SignedDist;
 
     if (Stroke.BrushFalloff > KINDA_SMALL_NUMBER &&
         FMath::Abs(SignedDist) < HalfFalloff)
@@ -65,24 +58,15 @@ float UCubeBrushShape::CalculateSDF_Implementation(
         float Alpha = (SignedDist + HalfFalloff) / Stroke.BrushFalloff;
         Alpha = FMath::SmoothStep(0.0f, 1.0f, Alpha);
 
-        if (Stroke.bDig)
-        {
-            ResultSDF = FMath::Lerp(
-                FVoxelConversion::SDF_AIR,
-                FVoxelConversion::SDF_SOLID,
-                Alpha);
-        }
-        else
-        {
-            ResultSDF = FMath::Lerp(
-                FVoxelConversion::SDF_SOLID,
-                FVoxelConversion::SDF_AIR,
-                Alpha);
-        }
+        RawSDF = Stroke.bDig
+            ? FMath::Lerp(FVoxelConversion::SDF_AIR, FVoxelConversion::SDF_SOLID, Alpha)
+            : FMath::Lerp(FVoxelConversion::SDF_SOLID, FVoxelConversion::SDF_AIR, Alpha);
     }
 
-    return ResultSDF * Stroke.BrushStrength;
+    return RawSDF * Stroke.BrushStrength;
 }
+
+
 
 
 // Keep the Fixed Bounds check from before
@@ -158,6 +142,7 @@ void UCubeBrushShape::GetPreviewData(
     OutFalloff  = Stroke.BrushFalloff;
     OutBrushType = EVoxelBrushType::Cube;
 }
+
 
 
 

@@ -395,8 +395,29 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
             SNew(SCheckBox)
             .Style(FAppStyle::Get(), "RadioButton")
             .IsChecked_Lambda([this, Info]() { return (CurrentBrushType == Info.Type) ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
-            .OnCheckStateChanged_Lambda([this, Info](ECheckBoxState State) {
-                if (State == ECheckBoxState::Checked) { CurrentBrushType = Info.Type; if(Manager) Manager->EditorBrushType = Info.Type; }
+            .OnCheckStateChanged_Lambda([this, Info](ECheckBoxState State)
+            {
+                if (State == ECheckBoxState::Checked)
+                {
+                    CurrentBrushType = Info.Type;
+                    if (Manager)
+                    {
+                        Manager->EditorBrushType = Info.Type;
+                    }
+
+                    // ⬇️ Add this block right here
+                    if (CurrentBrushType == EVoxelBrushType::Smooth)
+                    {
+                        const UDiggerEditorSettings* Settings = UDiggerEditorSettings::Get();
+                        bSmoothLandscapeAware = Settings->bSmoothBrushLandscapeAware;
+
+                        // Push to manager too
+                        if (Manager)
+                        {
+                            Manager->bSmoothLandscapeAware = bSmoothLandscapeAware;
+                        }
+                    }
+                }
             })
             [
                 SNew(STextBlock).Text(FText::FromString(Info.Label))
@@ -443,6 +464,48 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushShapeSection()
                     ]
                 ]
             ]
+            // Smooth Brush Options
+            + SVerticalBox::Slot().AutoHeight().Padding(4)
+            [
+                SNew(SBox)
+                .Visibility_Lambda([this]()
+                {
+                    return CurrentBrushType == EVoxelBrushType::Smooth
+                               ? EVisibility::Visible
+                               : EVisibility::Collapsed;
+                })
+                [
+                    SNew(SVerticalBox)
+                    + SVerticalBox::Slot().AutoHeight()
+                    [
+                        SNew(SCheckBox)
+                        .OnCheckStateChanged_Lambda([this](ECheckBoxState State)
+                        {
+                            bSmoothLandscapeAware = (State == ECheckBoxState::Checked);
+
+                            // Save to settings
+                            UDiggerEditorSettings* Settings = GetMutableDefault<UDiggerEditorSettings>();
+                            Settings->bSmoothBrushLandscapeAware = bSmoothLandscapeAware;
+                            Settings->SaveConfig();
+
+                            // Push to manager
+                            if (Manager)
+                            {
+                                Manager->bSmoothLandscapeAware = bSmoothLandscapeAware;
+                            }
+                        })
+                        .IsChecked_Lambda([this]()
+                        {
+                            return bSmoothLandscapeAware
+                                       ? ECheckBoxState::Checked
+                                       : ECheckBoxState::Unchecked;
+                        })
+                        [
+                            SNew(STextBlock).Text(FText::FromString("Landscape Aware Smoothing"))
+                        ]
+                    ]
+                ]
+            ]
             + SVerticalBox::Slot().AutoHeight()[ MakeOperationSection() ]
         ];
 }
@@ -456,23 +519,103 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeBrushParameterSection()
     ]
     + SVerticalBox::Slot().AutoHeight().Padding(4)
     [
-        SNew(SVerticalBox).Visibility_Lambda([this](){ return bShowBrushParameters ? EVisibility::Visible : EVisibility::Collapsed; })
-        + SVerticalBox::Slot().AutoHeight()
-        [
-            MakeLabeledSliderRow(FText::FromString("Radius"), [this](){return BrushRadius;}, [this](float V){BrushRadius=V;}, 10.f, 1000.f, {50.f, 100.f, 500.f})
-        ]
-        + SVerticalBox::Slot().AutoHeight()
-        [
-            MakeLabeledSliderRow(FText::FromString("Strength"), [this](){return BrushStrength;}, [this](float V){BrushStrength=V;}, 0.f, 1.f, {0.1f, 0.5f, 1.f})
-        ]
-        + SVerticalBox::Slot().AutoHeight()
-        [
-            MakeLabeledSliderRow(FText::FromString("Falloff"), [this](){return BrushFalloff;}, [this](float V){BrushFalloff=V;}, 0.f, 1.f, {0.1f, 0.5f, 1.f})
-        ]
-        + SVerticalBox::Slot().AutoHeight()
-        [
-            MakeLabeledSliderRow(FText::FromString("Force"), [this](){return BrushForce;}, [this](float V){BrushForce=V;}, 0.f, 1.f, {0.1f, 0.5f, 1.f})
-        ]
+        SNew(SVerticalBox)
+.Visibility_Lambda([this](){ return bShowBrushParameters ? EVisibility::Visible : EVisibility::Collapsed; })
+
+// --------------------
+// RADIUS
+// --------------------
++ SVerticalBox::Slot().AutoHeight()
+[
+    MakeLabeledSliderRow(
+        FText::FromString("Radius"),
+        [this](){ return BrushRadius; },
+        [this](float V)
+        {
+            BrushRadius = V;
+
+            if (FDiggerEdMode* Mode = (FDiggerEdMode*)GLevelEditorModeTools()
+                    .GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId))
+            {
+                Mode->BrushCache.Radius = V;
+                Mode->UpdateBrushHUDPanel();
+            }
+        },
+        10.f, 1000.f, {50.f, 100.f, 500.f}
+    )
+]
+
+// --------------------
+// STRENGTH
+// --------------------
++ SVerticalBox::Slot().AutoHeight()
+[
+    MakeLabeledSliderRow(
+        FText::FromString("Strength"),
+        [this](){ return BrushStrength; },
+        [this](float V)
+        {
+            BrushStrength = V;
+
+            if (FDiggerEdMode* Mode = (FDiggerEdMode*)GLevelEditorModeTools()
+                    .GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId))
+            {
+                Mode->BrushCache.Strength = V;
+                Mode->UpdateBrushHUDPanel();
+            }
+        },
+        0.f, 1.f, {0.1f, 0.5f, 1.f}
+    )
+]
+
+// --------------------
+// FALLOFF
+// --------------------
++ SVerticalBox::Slot().AutoHeight()
+[
+    MakeLabeledSliderRow(
+        FText::FromString("Falloff"),
+        [this](){ return BrushFalloff; },
+        [this](float V)
+        {
+            BrushFalloff = V;
+
+            if (FDiggerEdMode* Mode = (FDiggerEdMode*)GLevelEditorModeTools()
+                    .GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId))
+            {
+                Mode->BrushCache.Falloff = V;
+                Mode->UpdateBrushHUDPanel();
+            }
+        },
+        0.f, 1.f, {0.1f, 0.5f, 1.f}
+    )
+]
+
+// --------------------
+// FORCE
+// --------------------
++ SVerticalBox::Slot().AutoHeight()
+[
+    MakeLabeledSliderRow(
+        FText::FromString("Force"),
+        [this](){ return BrushForce; },
+        [this](float V)
+        {
+            BrushForce = V;
+
+            if (FDiggerEdMode* Mode = (FDiggerEdMode*)GLevelEditorModeTools()
+                    .GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId))
+            {
+                Mode->BrushCache.Force = V;
+                Mode->UpdateBrushHUDPanel();
+            }
+        },
+        0.f, 1.f, {0.1f, 0.5f, 1.f}
+    )
+]
+        // --------------------
+        // FORCE MODE Dropdown
+        // --------------------
         + SVerticalBox::Slot().AutoHeight().Padding(4)
         [
             SNew(SHorizontalBox)
@@ -1176,10 +1319,106 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeMirrorButton(double& Target, const
     return SNew(SButton).Text(FText::FromString(Label)).OnClicked_Lambda([&Target](){ Target += 180.0; return FReply::Handled(); });
 }
 
-TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationRow(const FText& Label, float& Value) { return MakeLabeledSliderRow(Label, [&](){return Value;}, [&](float V){Value=V;}, 0, 360, {}); }
-TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationRow(const FText& Label, double& Value) { return MakeLabeledSliderRow(Label, [&](){return (float)Value;}, [&](float V){Value=V;}, 0, 360, {}); }
-TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, float& Value) { return MakeLabeledSliderRow(Label, [&](){return Value;}, [&](float V){Value=V;}, -1000, 1000, {}); }
-TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, double& Value) { return MakeLabeledSliderRow(Label, [&](){return (float)Value;}, [&](float V){Value=V;}, -1000, 1000, {}); }
+// --- Rotation and offset rows ---
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationRow(const FText& Label, float& Value)
+{
+    return MakeLabeledSliderRow(
+        Label,
+        [&](){ return Value; },
+        [&](float V)
+        {
+            Value = V;
+
+            if (FDiggerEdMode* Mode = (FDiggerEdMode*)GLevelEditorModeTools()
+                    .GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId))
+            {
+                if (Label.EqualTo(FText::FromString("X")))
+                    Mode->BrushCache.Rotation.Pitch = V;
+                else if (Label.EqualTo(FText::FromString("Y")))
+                    Mode->BrushCache.Rotation.Yaw = V;
+                else if (Label.EqualTo(FText::FromString("Z")))
+                    Mode->BrushCache.Rotation.Roll = V;
+
+                Mode->UpdateBrushHUDPanel();
+            }
+        },
+        0.f, 360.f, {});
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationRow(const FText& Label, double& Value)
+{
+    return MakeLabeledSliderRow(
+        Label,
+        [&](){ return (float)Value; },
+        [&](float V)
+        {
+            Value = (double)V;
+
+            if (FDiggerEdMode* Mode = (FDiggerEdMode*)GLevelEditorModeTools()
+                    .GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId))
+            {
+                if (Label.EqualTo(FText::FromString("X")))
+                    Mode->BrushCache.Rotation.Pitch = V;
+                else if (Label.EqualTo(FText::FromString("Y")))
+                    Mode->BrushCache.Rotation.Yaw = V;
+                else if (Label.EqualTo(FText::FromString("Z")))
+                    Mode->BrushCache.Rotation.Roll = V;
+
+                Mode->UpdateBrushHUDPanel();
+            }
+        },
+        0.f, 360.f, {});
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, float& Value)
+{
+    return MakeLabeledSliderRow(
+        Label,
+        [&](){ return Value; },
+        [&](float V)
+        {
+            Value = V;
+
+            if (FDiggerEdMode* Mode = (FDiggerEdMode*)GLevelEditorModeTools()
+                    .GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId))
+            {
+                if (Label.EqualTo(FText::FromString("X")))
+                    Mode->BrushCache.Offset.X = V;
+                else if (Label.EqualTo(FText::FromString("Y")))
+                    Mode->BrushCache.Offset.Y = V;
+                else if (Label.EqualTo(FText::FromString("Z")))
+                    Mode->BrushCache.Offset.Z = V;
+
+                Mode->UpdateBrushHUDPanel();
+            }
+        },
+        -1000.f, 1000.f, {});
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, double& Value)
+{
+    return MakeLabeledSliderRow(
+        Label,
+        [&](){ return (float)Value; },
+        [&](float V)
+        {
+            Value = (double)V;
+
+            if (FDiggerEdMode* Mode = (FDiggerEdMode*)GLevelEditorModeTools()
+                    .GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId))
+            {
+                if (Label.EqualTo(FText::FromString("X")))
+                    Mode->BrushCache.Offset.X = V;
+                else if (Label.EqualTo(FText::FromString("Y")))
+                    Mode->BrushCache.Offset.Y = V;
+                else if (Label.EqualTo(FText::FromString("Z")))
+                    Mode->BrushCache.Offset.Z = V;
+
+                Mode->UpdateBrushHUDPanel();
+            }
+        },
+        -1000.f, 1000.f, {});
+}
 
 ECheckBoxState FDiggerEdModeToolkit::IsBrushDebugEnabled() const
 {

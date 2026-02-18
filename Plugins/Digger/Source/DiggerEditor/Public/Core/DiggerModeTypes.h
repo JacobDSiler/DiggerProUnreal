@@ -8,7 +8,8 @@ enum class EDiggerMainMode : uint8
 {
 	Sculpt,
 	Rotate,
-	Offset
+	Offset,
+	Busy
 };
 
 UENUM()

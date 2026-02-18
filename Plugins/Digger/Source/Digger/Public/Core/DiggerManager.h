@@ -230,6 +230,7 @@ public:
 
     // NEW (stub): will be broadcast once after routing a brush across chunks
     FOnBrushFinished OnBrushFinished;
+    bool bSmoothLandscapeAware;
 
     // Simple check to see if we have work unsaved
     bool HasVoxelData() const
@@ -242,8 +243,8 @@ public:
     UVoxelBrushShape* GetActiveBrushShape(EVoxelBrushType BrushType) const;
     // Add this helper so callers don’t have to worry about init/fallback:
     UVoxelBrushShape* GetBrushShapeForType(EVoxelBrushType BrushType);
-    
-    
+
+
     // In ADiggerManager class declaration
     void ApplyLightBrushInEditor(const FBrushStroke& BrushStroke);
 
@@ -274,6 +275,44 @@ public:
     /** Optionally expose this so the editor UI can set which component to target by default. */
     UFUNCTION(BlueprintCallable, Category="Digger|Materials")
     void SetTargetRenderComponent(UPrimitiveComponent* InComponent, int32 InMaterialElementIndex = 0);
+    
+
+    // === Global vertex pool for seam-free geometry ===
+public:
+    // Quantized world position → global vertex index
+    TMap<FIntVector, int32> GlobalVertexCache;
+
+    // Global vertex + normal arrays
+    TArray<FVector> GlobalVertices;
+    TArray<FVector> GlobalNormals;
+
+    // Global triangle list (optional: per-section later)
+    TArray<int32> GlobalTriangles;
+
+    // Quantization scale (tweakable)
+    float GlobalVertexQuant = 1.0f; // set in BeginMeshBatch()
+    
+    // Final assembly into ProceduralMeshComponent
+    void BuildFinalMesh();
+    
+    // Tracks which chunks are scheduled for a mesh rebuild in the current batch
+    TSet<FIntVector> DirtyChunkCoords;
+
+    // How many chunk mesh updates are currently pending in this batch
+    int32 PendingMeshUpdates = 0;
+
+    // Called by chunks when they become dirty
+    void RegisterDirtyChunk(const FIntVector& Coord);
+
+    // Dirty Mesh Batching
+    void BeginMeshUpdateBatch();
+
+    // Called by chunks when their mesh has finished rebuilding
+    void NotifyChunkMeshComplete(const FIntVector& Coord);
+
+    // Your existing stitching function
+    void StitchNormalsAcrossSections();
+
 
 protected:
     /** Master material to instance at runtime. This must point at your M_SedimentMaster. */

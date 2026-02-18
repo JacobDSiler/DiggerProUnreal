@@ -66,6 +66,17 @@ public:
     UPROPERTY(EditAnywhere, Config, Category="Brush Visualization")
     FLinearColor BrushColorDig = FLinearColor(1.0f, 0.1f, 0.1f, 0.5f); // Red
 
+    /** Color to tint the edges/falloff of the brush. */
+    UPROPERTY(EditAnywhere, Config, Category="Brush Visualization")
+    FLinearColor BrushColorFalloff = FLinearColor(1.0f, 0.5f, 0.0f, 0.5f); // Orange
+
+    /** How soft the intersection with the ground looks (in cm). */
+    UPROPERTY(EditAnywhere, Config, Category="Brush Visualization")
+    float BrushDepthFadeDistance = 50.0f;
+
+    UPROPERTY(EditAnywhere, Config, Category="Brush Visualization")
+    float BrushOpacity = 0.5f;
+    
     /**
      * If true, the brush light will change color to match the BrushColor (Add/Dig).
      * If false, it uses the explicit BrushLightColor below.
@@ -112,6 +123,7 @@ public:
     /** Whether the preview should snap to the voxel grid. */
     UPROPERTY(EditAnywhere, Config, Category="Digger|Preview")
     bool bSnapPreviewToGrid = true;
+    
 
     // -------------------------------------------------------------------------
     // BRUSH PREVIEW ICON PATHS
@@ -125,6 +137,9 @@ public:
 
     UPROPERTY(EditAnywhere, Config, Category="Digger|Icons")
     TSoftObjectPtr<UTexture2D> OffsetIcon;
+
+    UPROPERTY(EditAnywhere, Config, Category="Digger|Icons")
+    TSoftObjectPtr<UTexture2D> LoadingIcon;
 
     // -------------------------------------------------------------------------
     // BRUSH PREVIEW MESHES
@@ -147,6 +162,13 @@ public:
 
     UPROPERTY(EditAnywhere, Config, Category="Brush Preview", meta=(AllowedClasses="/Script/Engine.StaticMesh"))
     TSoftObjectPtr<UStaticMesh> TorusBrushMesh;
+
+    // -------------------------------------------------------------------------
+    // BRUSH SETTINGS
+    // -------------------------------------------------------------------------
+    
+    UPROPERTY(EditAnywhere, config, Category="Smooth Brush")
+    bool bSmoothBrushLandscapeAware = false;
 
     // -------------------------------------------------------------------------
     // MATERIALS

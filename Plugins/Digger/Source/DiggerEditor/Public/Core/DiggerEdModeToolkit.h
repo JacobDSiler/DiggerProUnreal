@@ -297,6 +297,7 @@ private:
     TSharedPtr<FString> SelectedWorklightTypeItem;
     
     bool bAutoUnderLandscape = false;
+    bool bSmoothLandscapeAware = false;
 
     void UpdateWorklightType(const FString& NewType);
     void UpdateWorklightIntensity(float NewIntensity);
