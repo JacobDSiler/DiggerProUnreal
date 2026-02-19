@@ -52,6 +52,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Hole")
 	void UpdateHoleMesh();
 
+	// Prepares BrushShapeInstance and CachedStroke without touching the mesh component.
+	// Called by VoxelChunk::OnMeshReady immediately before it assigns the static mesh.
+	void PrepareShapeData();
+
 	// Set the owning chunk for the hole
 	void SetOwningChunk(UVoxelChunk* NewChunk);
 	void ValidateSpawnAgainstLandscape();

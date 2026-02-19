@@ -326,32 +326,42 @@ UVoxelChunk* ADynamicHole::FindOwningChunk(const FIntVector& ChunkCoords) const
 
 
 
+// Prepares shape metadata (BrushShapeInstance, CachedStroke) WITHOUT touching the mesh.
+// Called by VoxelChunk::OnMeshReady before it assigns the static mesh.
+void ADynamicHole::PrepareShapeData()
+{
+	if (!OwningChunk || !DiggerManager || !DiggerManager->HoleShapeLibrary)
+		return;
+
+	BrushShapeInstance = DiggerManager->HoleShapeLibrary->CreateBrushShape(HoleShape.ShapeType);
+
+	const float BaseSize = 100.0f;
+	const FVector Scale = GetActorScale3D();
+
+	CachedStroke = FBrushStroke{};
+	CachedStroke.BrushType                = GetBrushTypeForHole(HoleShape.ShapeType);
+	CachedStroke.BrushPosition            = GetActorLocation();
+	CachedStroke.BrushRotation            = GetActorRotation();
+	CachedStroke.BrushRadius              = BaseSize * Scale.GetMax();
+	CachedStroke.AdvancedCubeHalfExtentX  = BaseSize * Scale.X;
+	CachedStroke.AdvancedCubeHalfExtentY  = BaseSize * Scale.Y;
+	CachedStroke.AdvancedCubeHalfExtentZ  = BaseSize * Scale.Z;
+	CachedStroke.TorusInnerRadius         = 0.5f * BaseSize * FMath::Min3(Scale.X, Scale.Y, Scale.Z);
+	CachedStroke.BrushLength              = BaseSize * Scale.Z;
+	CachedStroke.HoleShape                = HoleShape.ShapeType;
+}
+
+// Full update: prepares shape data AND assigns the mesh.
+// Only call this when you are certain the voxel geometry is already committed
+// (i.e. from VoxelChunk::OnMeshReady, never from AddHoleToChunk or spawn time).
 void ADynamicHole::UpdateHoleMesh()
 {
 	if (!OwningChunk || !DiggerManager || !DiggerManager->HoleShapeLibrary)
 		return;
 
-	SetMeshForShape(HoleShape.ShapeType);
-	// Do Not Assign Mesh Here. We assign it in UVoxelChunk::OnMeshReady!
-
-	// Create brush shape instance for this hole type
-	BrushShapeInstance = DiggerManager->HoleShapeLibrary->CreateBrushShape(HoleShape.ShapeType);
-
-	// Prebuild a stroke (you can tweak BaseSize to match your meshes)
-	const float BaseSize = 100.0f;
-	const FVector Scale = GetActorScale3D();
-
-	CachedStroke = FBrushStroke{};
-	CachedStroke.BrushType      = GetBrushTypeForHole(HoleShape.ShapeType);
-	CachedStroke.BrushPosition  = GetActorLocation();
-	CachedStroke.BrushRotation  = GetActorRotation();
-	CachedStroke.BrushRadius    = BaseSize * Scale.GetMax();
-	CachedStroke.AdvancedCubeHalfExtentX = BaseSize * Scale.X;
-	CachedStroke.AdvancedCubeHalfExtentY = BaseSize * Scale.Y;
-	CachedStroke.AdvancedCubeHalfExtentZ = BaseSize * Scale.Z;
-	CachedStroke.TorusInnerRadius        = 0.5f * BaseSize * FMath::Min3(Scale.X, Scale.Y, Scale.Z);
-	CachedStroke.BrushLength             = BaseSize * Scale.Z;
-	CachedStroke.HoleShape               = HoleShape.ShapeType;
+	// Metadata only — no mesh assignment here.
+	// The mesh is assigned by VoxelChunk::OnMeshReady.
+	PrepareShapeData();
 }
 
 

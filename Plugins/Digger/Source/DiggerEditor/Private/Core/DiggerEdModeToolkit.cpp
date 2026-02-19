@@ -1322,21 +1322,28 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeMirrorButton(double& Target, const
 // --- Rotation and offset rows ---
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationRow(const FText& Label, float& Value)
 {
+    // Determine which rotation axis this row controls by checking the label prefix.
+    // Labels arrive as "X (Pitch)", "Y (Yaw)", "Z (Roll)" so we check the first char.
+    const FString LabelStr = Label.ToString();
+    const bool bIsPitch = LabelStr.StartsWith(TEXT("X"));
+    const bool bIsYaw   = LabelStr.StartsWith(TEXT("Y"));
+    // bIsRoll = everything else (Z)
+
     return MakeLabeledSliderRow(
         Label,
         [&](){ return Value; },
-        [&](float V)
+        [&, bIsPitch, bIsYaw](float V)
         {
             Value = V;
 
             if (FDiggerEdMode* Mode = (FDiggerEdMode*)GLevelEditorModeTools()
                     .GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId))
             {
-                if (Label.EqualTo(FText::FromString("X")))
+                if (bIsPitch)
                     Mode->BrushCache.Rotation.Pitch = V;
-                else if (Label.EqualTo(FText::FromString("Y")))
+                else if (bIsYaw)
                     Mode->BrushCache.Rotation.Yaw = V;
-                else if (Label.EqualTo(FText::FromString("Z")))
+                else
                     Mode->BrushCache.Rotation.Roll = V;
 
                 Mode->UpdateBrushHUDPanel();
@@ -1347,21 +1354,25 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationRow(const FText& Label, fl
 
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationRow(const FText& Label, double& Value)
 {
+    const FString LabelStr = Label.ToString();
+    const bool bIsPitch = LabelStr.StartsWith(TEXT("X"));
+    const bool bIsYaw   = LabelStr.StartsWith(TEXT("Y"));
+
     return MakeLabeledSliderRow(
         Label,
         [&](){ return (float)Value; },
-        [&](float V)
+        [&, bIsPitch, bIsYaw](float V)
         {
             Value = (double)V;
 
             if (FDiggerEdMode* Mode = (FDiggerEdMode*)GLevelEditorModeTools()
                     .GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId))
             {
-                if (Label.EqualTo(FText::FromString("X")))
+                if (bIsPitch)
                     Mode->BrushCache.Rotation.Pitch = V;
-                else if (Label.EqualTo(FText::FromString("Y")))
+                else if (bIsYaw)
                     Mode->BrushCache.Rotation.Yaw = V;
-                else if (Label.EqualTo(FText::FromString("Z")))
+                else
                     Mode->BrushCache.Rotation.Roll = V;
 
                 Mode->UpdateBrushHUDPanel();
@@ -1372,21 +1383,25 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeRotationRow(const FText& Label, do
 
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, float& Value)
 {
+    const FString LabelStr = Label.ToString();
+    const bool bIsX = LabelStr.StartsWith(TEXT("X"));
+    const bool bIsY = LabelStr.StartsWith(TEXT("Y"));
+
     return MakeLabeledSliderRow(
         Label,
         [&](){ return Value; },
-        [&](float V)
+        [&, bIsX, bIsY](float V)
         {
             Value = V;
 
             if (FDiggerEdMode* Mode = (FDiggerEdMode*)GLevelEditorModeTools()
                     .GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId))
             {
-                if (Label.EqualTo(FText::FromString("X")))
+                if (bIsX)
                     Mode->BrushCache.Offset.X = V;
-                else if (Label.EqualTo(FText::FromString("Y")))
+                else if (bIsY)
                     Mode->BrushCache.Offset.Y = V;
-                else if (Label.EqualTo(FText::FromString("Z")))
+                else
                     Mode->BrushCache.Offset.Z = V;
 
                 Mode->UpdateBrushHUDPanel();
@@ -1397,21 +1412,25 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, floa
 
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeOffsetRow(const FText& Label, double& Value)
 {
+    const FString LabelStr = Label.ToString();
+    const bool bIsX = LabelStr.StartsWith(TEXT("X"));
+    const bool bIsY = LabelStr.StartsWith(TEXT("Y"));
+
     return MakeLabeledSliderRow(
         Label,
         [&](){ return (float)Value; },
-        [&](float V)
+        [&, bIsX, bIsY](float V)
         {
             Value = (double)V;
 
             if (FDiggerEdMode* Mode = (FDiggerEdMode*)GLevelEditorModeTools()
                     .GetActiveMode(FDiggerEdMode::EM_DiggerEdModeId))
             {
-                if (Label.EqualTo(FText::FromString("X")))
+                if (bIsX)
                     Mode->BrushCache.Offset.X = V;
-                else if (Label.EqualTo(FText::FromString("Y")))
+                else if (bIsY)
                     Mode->BrushCache.Offset.Y = V;
-                else if (Label.EqualTo(FText::FromString("Z")))
+                else
                     Mode->BrushCache.Offset.Z = V;
 
                 Mode->UpdateBrushHUDPanel();
@@ -1845,6 +1864,35 @@ void FDiggerEdModeToolkit::RequestBrushUIRefresh()
     {
         ToolkitWidget->Invalidate(EInvalidateWidgetReason::LayoutAndVolatility);
     }
+}
+
+void FDiggerEdModeToolkit::OnManagerRespawned()
+{
+    // 1. Drop the stale cached pointer and pick up the new instance.
+    Manager = GetDiggerManager();
+
+    if (!IsValid(Manager))
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("Digger Toolkit: OnManagerRespawned called but no valid "
+                 "DiggerManager was found in the world."));
+        return;
+    }
+
+    // 2. Rebind island delegates — the old manager instance is gone, so any
+    //    delegates registered on it are dangling.  BindIslandDelegates() already
+    //    calls RemoveAll(this) before re-adding, so it is safe to call directly.
+    BindIslandDelegates();
+
+    // 3. Re-push the current brush type so the new manager is in sync with the UI.
+    Manager->EditorBrushType = CurrentBrushType;
+
+    // 4. Refresh the toolkit panel so any manager-dependent widgets repopulate.
+    RequestBrushUIRefresh();
+
+    UE_LOG(LogTemp, Log,
+        TEXT("Digger Toolkit: Rebound to new DiggerManager '%s'."),
+        *Manager->GetName());
 }
 
 void FDiggerEdModeToolkit::SetTemporaryDigOverride(TOptional<bool> Override)

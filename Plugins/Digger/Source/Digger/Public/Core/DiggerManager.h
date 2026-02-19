@@ -309,6 +309,7 @@ public:
 
     // Called by chunks when their mesh has finished rebuilding
     void NotifyChunkMeshComplete(const FIntVector& Coord);
+    void InvalidateLandscapeRVTForDirtyBounds();
 
     // Your existing stitching function
     void StitchNormalsAcrossSections();

@@ -177,9 +177,11 @@ public:
     bool GetMouseWorldHit(FEditorViewportClient* ViewportClient, FVector& OutHitLocation, FHitResult& OutHit);
 private:
     void OnLevelActorAdded(AActor* InActor);
-    
+    void OnLevelActorDeleted(AActor* InActor);
+
     // Handles for delegates
     FDelegateHandle OnLevelActorAddedHandle;
+    FDelegateHandle OnLevelActorDeletedHandle;
 
     // Digger Input Processor
     TSharedPtr<class IInputProcessor> DiggerInputProcessor;
@@ -228,53 +230,90 @@ public:
 
 public:
 
+    // -----------------------------------------------------------------------
+    // SetCurrentMode: sets mode, resets axis, updates HUD + indicator.
+    // Prefer ToggleRotationMode/ToggleOffsetMode for interactive hotkey use.
+    // -----------------------------------------------------------------------
     void SetCurrentMode(EDiggerMainMode NewMode)
     {
         CurrentMode = NewMode;
+        CurrentAxis = EDiggerAxisMode::None;
+        bRotationModeLatched = (NewMode == EDiggerMainMode::Rotate);
+        bOffsetModeLatched   = (NewMode == EDiggerMainMode::Offset);
         UpdateBrushHUDPanel();
+        UpdatePreviewModeIndicator();
         OnDiggerModeChanged.Broadcast(true);
     }
 
+    // -----------------------------------------------------------------------
+    // Atomic toggle helpers — safe to call from FDiggerInputProcessor
+    // (external class) without touching private booleans directly.
+    // Each owns the full latch + mode + axis + HUD + indicator update.
+    // -----------------------------------------------------------------------
+
+    // Toggle Rotation mode on/off. Pressing R again returns to Sculpt.
+    void ToggleRotationMode()
+    {
+        bRotationModeLatched = !bRotationModeLatched;
+        bOffsetModeLatched   = false;
+        CurrentMode = bRotationModeLatched ? EDiggerMainMode::Rotate : EDiggerMainMode::Sculpt;
+        CurrentAxis = EDiggerAxisMode::None;
+        UpdateBrushHUDPanel();
+        UpdatePreviewModeIndicator();
+    }
+
+    // Toggle Offset mode on/off. Pressing O again returns to Sculpt.
+    void ToggleOffsetMode()
+    {
+        bOffsetModeLatched   = !bOffsetModeLatched;
+        bRotationModeLatched = false;
+        CurrentMode = bOffsetModeLatched ? EDiggerMainMode::Offset : EDiggerMainMode::Sculpt;
+        CurrentAxis = EDiggerAxisMode::None;
+        UpdateBrushHUDPanel();
+        UpdatePreviewModeIndicator();
+    }
+
+    // -----------------------------------------------------------------------
+    // Latch state read-only accessors
+    // -----------------------------------------------------------------------
+    [[nodiscard]] bool IsRotationModeLatched() const { return bRotationModeLatched; }
+    [[nodiscard]] bool IsOffsetModeLatched()   const { return bOffsetModeLatched;   }
+
     void CycleAxisMode()
     {
-        // Simple example: cycle through X → Y → Z → None
         switch (CurrentAxis)
         {
-        case EDiggerAxisMode::None: CurrentAxis = EDiggerAxisMode::X; break;
-        case EDiggerAxisMode::X:    CurrentAxis = EDiggerAxisMode::Y; break;
-        case EDiggerAxisMode::Y:    CurrentAxis = EDiggerAxisMode::Z; break;
+        case EDiggerAxisMode::None: CurrentAxis = EDiggerAxisMode::X;    break;
+        case EDiggerAxisMode::X:    CurrentAxis = EDiggerAxisMode::Y;    break;
+        case EDiggerAxisMode::Y:    CurrentAxis = EDiggerAxisMode::Z;    break;
         case EDiggerAxisMode::Z:    CurrentAxis = EDiggerAxisMode::None; break;
         }
-
         UpdateBrushHUDPanel();
     }
 
-    // Make this public so InputProcessor can call it
+    // Modifier-blocked relay (public so the input processor can reach it)
     void TriggerModifierState(bool bBlocked)
     {
         HandleModifierBlocked(bBlocked);
     }
 
-    // Rotation and Offset mode clearing helpers.
-    void ResetActiveAxis()
-    {
-        switch (CurrentAxis)
-        {
-        case EDiggerAxisMode::X: BrushCache.Offset.X = 0; BrushCache.Rotation.Pitch = 0; break;
-        case EDiggerAxisMode::Y: BrushCache.Offset.Y = 0; BrushCache.Rotation.Yaw = 0; break;
-        case EDiggerAxisMode::Z: BrushCache.Offset.Z = 0; BrushCache.Rotation.Roll = 0; break;
-        default: break;
-        }
-
-        UpdateBrushHUDPanel();
-    }
-    
-    void ResetAllAxes()
-    {
-        BrushCache.Offset = FVector::ZeroVector;
-        BrushCache.Rotation = FRotator::ZeroRotator;
-        UpdateBrushHUDPanel();
-    }
+    // -----------------------------------------------------------------------
+    // Axis reset helpers — sync both BrushCache AND the toolkit spinboxes.
+    // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Axis / transform reset helpers (all implemented in .cpp)
+    //
+    //  ResetCurrentModeAxis()   — clear the selected axis on the CURRENT mode only
+    //  ResetCurrentModeAxes()   — clear ALL axes on the CURRENT mode only
+    //  ResetAllTransforms()     — wipe both rotation AND offset (Alt+C action)
+    //
+    //  ResetActiveAxis / ResetAllAxes kept for back-compat (delegate to above).
+    // -----------------------------------------------------------------------
+    void ResetCurrentModeAxis();   // C   — current mode, selected axis only
+    void ResetCurrentModeAxes();   // CC  — current mode, all axes
+    void ResetAllTransforms();     // Alt+C — wipe rotation + offset entirely
+    void ResetActiveAxis();        // legacy alias → ResetCurrentModeAxis
+    void ResetAllAxes();           // legacy alias → ResetCurrentModeAxes
 
     double LastCPressTime = 0.0;
 
@@ -313,16 +352,23 @@ public:
         this->CurrentAxis = InCurrentAxis;
     }
 
-private:
+
     EDiggerAxisMode CurrentAxis = EDiggerAxisMode::None;
     
-
+private:
     // --- Brush Hud Message system ---
     FBrushHUDPanel BrushHUD;
 public:
     void UpdateBrushHUDPanel();
-
     void HandleModifierBlocked(bool bBlocked);
+
+    // -----------------------------------------------------------------------
+    // Focus-independent scroll and axis-select entry points.
+    // Called directly from FDiggerInputProcessor so they work regardless of
+    // whether the viewport has OS focus — no viewport input routing required.
+    // -----------------------------------------------------------------------
+    bool ProcessScrollDelta(float Delta, float DeltaTime);
+    void SelectAxis(EDiggerAxisMode Axis);
     
 private:
     void SyncBrushSettingsToManager(ADiggerManager* Digger, const FBrushCache& Settings);
@@ -332,7 +378,20 @@ private:
     bool bTabletPressureActive = true;
 
     // --- State Variables ---
-    bool bPaintingEnabled = true; 
+    bool bPaintingEnabled = true;
+
+public:
+    [[nodiscard]] bool IsPaintingEnabled() const
+    {
+        return bPaintingEnabled;
+    }
+
+    void SetPaintingEnabled(bool InbPaintingEnabled)
+    {
+        this->bPaintingEnabled = InbPaintingEnabled;
+    }
+
+private:
     bool bIsPainting = false;
     bool bIsDragging = false;
     bool bMouseButtonDown = false;

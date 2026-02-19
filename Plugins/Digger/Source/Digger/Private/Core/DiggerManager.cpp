@@ -42,6 +42,7 @@
 #include "Components/DirectionalLightComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Components/SpotLightComponent.h"
+#include "Components/RuntimeVirtualTextureComponent.h"
 
 // 6. Landscape
 #include "LandscapeProxy.h"
@@ -1573,7 +1574,8 @@ void ADiggerManager::BuildFinalMesh()
     // Nothing to build? Do NOT clear the existing mesh.
     if (GlobalVertices.Num() == 0 || GlobalTriangles.Num() == 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("BuildFinalMesh: Global mesh is empty, skipping rebuild"));
+        if( DiggerDebug::Mesh() )
+            UE_LOG(LogTemp, Warning, TEXT("BuildFinalMesh: Global mesh is empty, skipping rebuild"));
         return;
     }
 
@@ -1630,9 +1632,86 @@ void ADiggerManager::NotifyChunkMeshComplete(const FIntVector& Coord)
     if (PendingMeshUpdates <= 0)
     {
         BuildFinalMesh();
+        InvalidateLandscapeRVTForDirtyBounds();
     }
 }
 
+void ADiggerManager::InvalidateLandscapeRVTForDirtyBounds()
+{
+    UWorld* W = GetSafeWorld();
+    if (!W) return;
+
+    // Collect world-space bounds of every hole across all chunks.
+    // This gives us the minimal region to invalidate rather than the whole landscape.
+    FBox HoleBounds(ForceInit);
+
+    for (auto& Pair : ChunkMap)
+    {
+        UVoxelChunk* Chunk = Pair.Value;
+        if (!Chunk) continue;
+
+        for (const TWeakObjectPtr<ADynamicHole>& HolePtr : Chunk->GetSpawnedHoles())
+        {
+            if (ADynamicHole* Hole = HolePtr.Get())
+            {
+                // Use the hole actor's component bounds — already in world space.
+                FVector Origin, Extent;
+                Hole->GetActorBounds(false, Origin, Extent);
+                // Expand slightly so shadow pages at the boundary are caught.
+                HoleBounds += FBox(Origin - Extent * 1.5f, Origin + Extent * 1.5f);
+            }
+        }
+    }
+
+    if (!HoleBounds.IsValid)
+    {
+        // No holes found — nothing to invalidate.
+        return;
+    }
+
+    const FBoxSphereBounds InvalidationBounds(HoleBounds);
+
+    // Walk every landscape actor in the world and invalidate only the
+    // RVT components whose volume overlaps our hole bounds.
+    for (TActorIterator<ALandscapeProxy> It(W); It; ++It)
+    {
+        ALandscapeProxy* Proxy = *It;
+        if (!Proxy) continue;
+
+        TArray<URuntimeVirtualTextureComponent*> RVTComponents;
+        Proxy->GetComponents<URuntimeVirtualTextureComponent>(RVTComponents);
+
+        for (URuntimeVirtualTextureComponent* RVTComp : RVTComponents)
+        {
+            if (!RVTComp) continue;
+
+            // Only invalidate if the RVT volume actually overlaps our dirty region.
+            if (RVTComp->Bounds.GetBox().Intersect(HoleBounds))
+            {
+                RVTComp->Invalidate(InvalidationBounds);
+            }
+        }
+
+        // Also mark the landscape components that overlap dirty bounds as
+        // render-state dirty so VSM re-renders their shadow depth for this region.
+        TArray<ULandscapeComponent*> LandscapeComponents;
+        Proxy->GetComponents<ULandscapeComponent>(LandscapeComponents);
+
+        for (ULandscapeComponent* LC : LandscapeComponents)
+        {
+            if (!LC) continue;
+            if (LC->Bounds.GetBox().Intersect(HoleBounds))
+            {
+                LC->MarkRenderStateDirty();
+            }
+        }
+    }
+
+#if WITH_EDITOR
+    if (GEditor)
+        GEditor->RedrawLevelEditingViewports();
+#endif
+}
 
 
 void ADiggerManager::StitchNormalsAcrossSections()

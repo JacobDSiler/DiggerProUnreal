@@ -63,6 +63,13 @@ public:
     // --- Public API (Used by EdMode) ---
     void RequestBrushUIRefresh();
     void SetTemporaryDigOverride(TOptional<bool> Override);
+
+    /**
+     * Called by FDiggerEdMode when the DiggerManager was deleted mid-session
+     * and has just been respawned.  Re-caches the manager pointer and rebinds
+     * any delegates that were targeting the old (now-dead) instance.
+     */
+    void OnManagerRespawned();
     
     // Accessors
     float GetBrushRadius() const { return BrushRadius; }

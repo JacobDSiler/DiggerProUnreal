@@ -95,7 +95,8 @@ public:
         const FKey Key = InKeyEvent.GetKey();
 
         const bool bIsModeKey =
-            (Key == EKeys::R || Key == EKeys::O || Key == EKeys::P || Key == EKeys::C);
+            (Key == EKeys::R || Key == EKeys::O || Key == EKeys::P || Key == EKeys::C ||
+             Key == EKeys::X || Key == EKeys::Y || Key == EKeys::Z);
 
         const bool bIsModifier =
             (Key == EKeys::LeftShift || Key == EKeys::RightShift ||
@@ -117,132 +118,149 @@ public:
             }
         }
 
-        // ⭐ Immediately trigger EdMode logic for mode keys
-        if (bIsModeKey)
-        {
-            if (Key == EKeys::R)
-                DiggerMode->SetCurrentMode(EDiggerMainMode::Rotate);
-
-            else if (Key == EKeys::O)
-                DiggerMode->SetCurrentMode(EDiggerMainMode::Offset);
-
-            else if (Key == EKeys::P)
-                DiggerMode->SetCurrentMode(EDiggerMainMode::Sculpt);
-
-            else if (Key == EKeys::C)
-            {
-                const double Now = FPlatformTime::Seconds();
-                const double Delta = Now - DiggerMode->LastCPressTime;
-
-                DiggerMode->LastCPressTime = Now;
-
-                if (Delta < 0.25) // double‑press threshold
-                {
-                    DiggerMode->ResetAllAxes();
-                }
-                else
-                {
-                    DiggerMode->ResetActiveAxis();
-                    DiggerMode->CycleAxisMode();
-                }
-            }
-
-        }
-
         // ⭐ Immediately trigger modifier logic
         if (bIsModifier)
         {
             DiggerMode->HandleModifierBlocked(true);
         }
 
-        // ⭐ Force viewport focus
+        // ⭐ Always force viewport focus first
         if (GEditor)
         {
             if (FViewport* ActiveViewport = GEditor->GetActiveViewport())
             {
                 ActiveViewport->SetUserFocus(true);
+                ActiveViewport->CaptureMouse(true);
             }
         }
 
-        // Let the event bubble to the viewport (now focused)
-        return false;
-    }
-
-bool HandleMouseWheelOrGestureEvent(
-    FSlateApplication& SlateApp,
-    const FPointerEvent& WheelEvent)
-{
-    if (!DiggerMode)
-        return false;
-
-    // ---------------------------------------------------------
-    // 1. Force viewport focus (always)
-    // ---------------------------------------------------------
-    FViewport* ActiveViewport = nullptr;
-    FEditorViewportClient* Client = nullptr;
-
-    if (GEditor)
-    {
-        ActiveViewport = GEditor->GetActiveViewport();
-        if (ActiveViewport)
+        // ⭐ For mode keys: directly invoke the mode logic here.
+        // We cannot rely on bubble-up because Slate buttons/checkboxes hold focus
+        // after a panel click and swallow the key before it reaches the viewport's
+        // InputKey — even after SetUserFocus. Calling directly is the only safe path.
+        if (bIsModeKey)
         {
-            ActiveViewport->SetUserFocus(true);
-            Client = static_cast<FEditorViewportClient*>(ActiveViewport->GetClient());
+            if (Key == EKeys::R)
+            {
+                // ToggleRotationMode owns all latch + mode + axis + HUD + indicator logic.
+                DiggerMode->ToggleRotationMode();
+            }
+            else if (Key == EKeys::O)
+            {
+                // ToggleOffsetMode owns all latch + mode + axis + HUD + indicator logic.
+                DiggerMode->ToggleOffsetMode();
+            }
+            else if (Key == EKeys::P)
+            {
+                DiggerMode->SetPaintingEnabled(!DiggerMode->IsPaintingEnabled());
+                DiggerMode->UpdateBrushHUDPanel();
+            }
+            else if (Key == EKeys::C)
+            {
+                if (DiggerMode->GetCurrentMode() == EDiggerMainMode::Rotate ||
+                    DiggerMode->GetCurrentMode() == EDiggerMainMode::Offset)
+                {
+                    // Check Alt via Slate (authoritative when viewport may not have focus)
+                    const bool bAlt = SlateApp.GetModifierKeys().IsAltDown();
+                    if (bAlt)
+                    {
+                        DiggerMode->ResetAllTransforms();
+                        DiggerMode->LastCPressTime = 0.0;
+                    }
+                    else
+                    {
+                        const double Now    = FPlatformTime::Seconds();
+                        const bool bDouble  = (Now - DiggerMode->LastCPressTime) < 0.35;
+                        DiggerMode->LastCPressTime = Now;
+
+                        if (bDouble || DiggerMode->GetCurrentAxis() == EDiggerAxisMode::None)
+                            DiggerMode->ResetCurrentModeAxes();
+                        else
+                            DiggerMode->ResetCurrentModeAxis();
+                    }
+                    DiggerMode->UpdateBrushHUDPanel();
+                }
+            }
+            else if (Key == EKeys::X)
+            {
+                DiggerMode->SelectAxis(EDiggerAxisMode::X);
+            }
+            else if (Key == EKeys::Y)
+            {
+                DiggerMode->SelectAxis(EDiggerAxisMode::Y);
+            }
+            else if (Key == EKeys::Z)
+            {
+                DiggerMode->SelectAxis(EDiggerAxisMode::Z);
+            }
+            // Consume: prevents double-processing by InputKey.
+            return true;
         }
+
+        // For modifier keys: return false so the viewport still gets
+        // shift/ctrl/alt for camera navigation.
+        return false;
     }
 
-    if (!ActiveViewport || !Client)
-        return false;
-
-    // ---------------------------------------------------------
-    // 2. Read modifier keys directly from the viewport
-    // ---------------------------------------------------------
-    const bool bShift =
-        ActiveViewport->KeyState(EKeys::LeftShift) ||
-        ActiveViewport->KeyState(EKeys::RightShift);
-
-    const bool bCtrl =
-        ActiveViewport->KeyState(EKeys::LeftControl) ||
-        ActiveViewport->KeyState(EKeys::RightControl);
-
-    const bool bAlt =
-        ActiveViewport->KeyState(EKeys::LeftAlt) ||
-        ActiveViewport->KeyState(EKeys::RightAlt);
-
-    const bool bAnyModifier = bShift || bCtrl || bAlt;
-
-    // ---------------------------------------------------------
-    // 3. Decide routing based on mode + modifiers
-    // ---------------------------------------------------------
-    const bool bIsSculptMode =
-        (DiggerMode->GetCurrentMode() == EDiggerMainMode::Sculpt);
-
-    if (bIsSculptMode && !bAnyModifier)
+    // -----------------------------------------------------------------------
+    // Scroll wheel interception.
+    // CRITICAL: Must be declared virtual+override and use the correct 3-arg
+    // UE5 signature — the missing third param (GestureEvent) and missing
+    // virtual/override keywords meant the engine never called this before.
+    // -----------------------------------------------------------------------
+    virtual bool HandleMouseWheelOrGestureEvent(
+        FSlateApplication& SlateApp,
+        const FPointerEvent& WheelEvent,
+        const FPointerEvent* GestureEvent) override
     {
-        // Camera zoom (default Unreal behavior)
-        return false;
+        if (!DiggerMode)
+            return false;
+
+        // 1. We no longer route through Client->InputAxis, so we only need
+        //    to verify the viewport exists. Focus is not required for
+        //    ProcessScrollDelta — it reads modifier state from Slate directly.
+        if (!GEditor || !GEditor->GetActiveViewport())
+            return false;
+
+        // 2. Read modifier state from Slate (OS-level, global — unlike Viewport->KeyState
+        //    which only knows keys pressed while the viewport held focus). This is the
+        //    only reliable source when the user holds Shift/Ctrl/Alt and then moves the
+        //    cursor into the viewport without clicking first.
+        const FModifierKeysState Mods = SlateApp.GetModifierKeys();
+        const bool bShift = Mods.IsShiftDown();
+        const bool bCtrl  = Mods.IsControlDown();
+        const bool bAlt   = Mods.IsAltDown();
+        const bool bAnyModifier = bShift || bCtrl || bAlt;
+
+        // 3. Only intercept when the cursor is actually over the viewport.
+        //    Uses viewport-relative cursor position — no FindWidgetUnderCursor needed.
+        {
+            bool bOverViewport = false;
+            if (FViewport* VP = GEditor->GetActiveViewport())
+            {
+                FIntPoint CursorVP;
+                VP->GetMousePos(CursorVP);
+                const FIntPoint VPSize = VP->GetSizeXY();
+                bOverViewport = (CursorVP.X >= 0 && CursorVP.Y >= 0 &&
+                                 CursorVP.X < VPSize.X && CursorVP.Y < VPSize.Y);
+            }
+            if (!bOverViewport)
+                return false; // cursor over panel/toolbar — let Slate handle normally
+        }
+
+        // 4. Sculpt + no modifier = camera zoom, pass through.
+        //    At this point we know the cursor is over the viewport.
+        const bool bIsSculptMode = (DiggerMode->GetCurrentMode() == EDiggerMainMode::Sculpt);
+        if (bIsSculptMode && !bAnyModifier)
+            return false;
+
+        // 5. Call ProcessScrollDelta directly — bypasses all viewport input routing.
+        //    Works regardless of OS focus, no warmup click needed.
+        DiggerMode->ProcessScrollDelta(WheelEvent.GetWheelDelta(), SlateApp.GetDeltaTime());
+
+        return true; // consumed — prevent viewport camera zoom
     }
 
-    // ---------------------------------------------------------
-    // 4. Brush adjustment (Shift/Ctrl/Alt OR non-sculpt mode)
-    // ---------------------------------------------------------
-    Client->InputAxis(
-        ActiveViewport,
-        WheelEvent.GetPointerIndex(),   // DeviceId-style value
-        EKeys::MouseWheelAxis,
-        WheelEvent.GetWheelDelta(),
-        SlateApp.GetDeltaTime(),
-        1,
-        false
-    );
-
-    return true; // consume scroll so camera does NOT zoom
-}
-
-
-
-
-    // We don't need to intercept these
     virtual bool HandleKeyUpEvent(FSlateApplication& SlateApp, const FKeyEvent& InKeyEvent) override { return false; }
     virtual bool HandleAnalogInputEvent(FSlateApplication& SlateApp, const FAnalogInputEvent& InAnalogInputEvent) override { return false; }
     virtual bool HandleMouseMoveEvent(
@@ -264,25 +282,57 @@ bool HandleMouseWheelOrGestureEvent(
             }
         }
 
-        // Try to restore viewport focus when mouse is inside it
-        if (GEditor)
+        // When the cursor enters the viewport, restore Slate focus to it.
+        // This handles "came back from another OS application" without requiring
+        // a click. We check the viewport-relative cursor position (from FViewport)
+        // which is reliable without needing FindWidgetUnderCursor.
         {
-            if (FViewport* ActiveViewport = GEditor->GetActiveViewport())
+            bool bOverViewport = false;
+            if (FViewport* VP = GEditor ? GEditor->GetActiveViewport() : nullptr)
             {
-                // Check if mouse is inside viewport bounds
-                FIntPoint Pos;
-                ActiveViewport->GetMousePos(Pos);
-                const FIntPoint Size = ActiveViewport->GetSizeXY();
+                FIntPoint CursorVP;
+                VP->GetMousePos(CursorVP);
+                const FIntPoint VPSize = VP->GetSizeXY();
+                bOverViewport = (CursorVP.X >= 0 && CursorVP.Y >= 0 &&
+                                 CursorVP.X < VPSize.X && CursorVP.Y < VPSize.Y);
+            }
 
-                if (Pos.X >= 0 && Pos.Y >= 0 &&
-                    Pos.X < Size.X && Pos.Y < Size.Y)
+            if (bOverViewport)
+            {
+                // SetUserFocus on the raw viewport handles internal Unreal routing.
+                if (FViewport* VP = GEditor->GetActiveViewport())
+                    VP->SetUserFocus(true);
+
+                // ClearAllUserFocus + re-focus via keyboard routes Slate's full
+                // focus pipeline, which flushes any stale focus from the prior
+                // active window and ensures scroll events route to the viewport.
+                if (TSharedPtr<SWidget> FocusedWidget = SlateApp.GetKeyboardFocusedWidget())
                 {
-                    ActiveViewport->SetUserFocus(true);
+                    // Only re-route if something OTHER than the viewport held focus
+                    const FString FType = FocusedWidget->GetTypeAsString();
+                    const bool bFocusOnPanel =
+                        FType != TEXT("SViewport") &&
+                        FType != TEXT("SEditorViewport") &&
+                        FType != TEXT("SLevelViewport");
+
+                    if (bFocusOnPanel)
+                    {
+                        // Release focus from the panel — the viewport will reclaim
+                        // it naturally on the next Slate tick via mouse hover.
+                        SlateApp.ClearKeyboardFocus(EFocusCause::Mouse);
+                    }
+                }
+                else
+                {
+                    // Nothing held Slate focus (came from another OS window).
+                    // Clearing focus here nudges Slate to re-evaluate hover focus
+                    // on the next event, which will land on the viewport.
+                    SlateApp.ClearKeyboardFocus(EFocusCause::Mouse);
                 }
             }
         }
 
-        return false; // allow normal viewport behavior
+        return false; // always pass through — never consume mouse move events
     }
 
 
@@ -372,12 +422,15 @@ static bool IsInsideExistingHole(ADiggerManager* Digger, const FVector& Pos, flo
 static bool IsHoleRedundant(UWorld* World, const FVector& NewHolePos, float NewHoleRadius);
 
 // ---------------------------------------------------------------------------
-// ShouldSpawnHole — authoritative pre-flight check called from HandleHoleSpawn
-// in ADiggerManager.  The EdMode's ApplyBrushWithSettings has its OWN inline
-// check so the manager path is still guarded when invoked from runtime or
-// non-editor code paths.
+// ShouldSpawnHole
 //
-// IMPORTANT: keep this logic in sync with ApplyBrushWithSettings's inline gate.
+// Called from HandleHoleSpawn in ADiggerManager as a runtime-path guard.
+// Uses the same canonical vertical probe logic as ApplyBrushWithSettings
+// so both code paths are consistent.
+//
+// NOTE: BrushPos here should already be surface-anchored (XY of brush,
+// Z = canonical surface Z) when called from the editor path.  For runtime
+// paths that haven't pre-anchored, the vertical probe here will correct it.
 // ---------------------------------------------------------------------------
 static bool ShouldSpawnHole(
     ADiggerManager* Digger,
@@ -389,62 +442,70 @@ static bool ShouldSpawnHole(
     UWorld* World = Digger->GetWorld();
     if (!World)   return false;
 
-    // --- 1. Landscape height with XY search fallback ---
-    TOptional<float> TerrainHeight = Digger->GetLandscapeHeightAt_Internal(BrushPos);
+    // --- 1. Canonical vertical surface probe at BrushPos.XY ---
+    float CanonicalSurfaceZ = UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT;
 
-    if (!TerrainHeight.IsSet())
+    // Try height cache first.
+    TOptional<float> CacheZ = Digger->GetLandscapeHeightAt_Internal(BrushPos);
+    if (CacheZ.IsSet())
     {
-        const float SearchRadius = BrushRadius * 0.5f;
-        const FVector Offsets[] = {
-            FVector( SearchRadius,  0.f,          0.f),
-            FVector(-SearchRadius,  0.f,          0.f),
-            FVector( 0.f,           SearchRadius, 0.f),
-            FVector( 0.f,          -SearchRadius, 0.f),
-        };
-        for (const FVector& Off : Offsets)
-        {
-            TerrainHeight = Digger->GetLandscapeHeightAt_Internal(BrushPos + Off);
-            if (TerrainHeight.IsSet()) break;
-        }
+        CanonicalSurfaceZ = CacheZ.GetValue();
     }
-
-    if (!TerrainHeight.IsSet())
+    else
     {
-        // Last resort: vertical line trace for landscape
-        const FVector Start(BrushPos.X, BrushPos.Y, BrushPos.Z + BrushRadius * 2.f);
-        const FVector End  (BrushPos.X, BrushPos.Y, BrushPos.Z - BrushRadius * 4.f);
+        // Vertical line trace fallback.
+        const FVector Start(BrushPos.X, BrushPos.Y, BrushPos.Z + BrushRadius * 3.f);
+        const FVector End  (BrushPos.X, BrushPos.Y, BrushPos.Z - BrushRadius * 3.f);
         FHitResult ProbeHit;
-        FCollisionQueryParams ProbeParams(SCENE_QUERY_STAT(DiggerShouldSpawnProbe), true);
+        FCollisionQueryParams ProbeParams(SCENE_QUERY_STAT(DiggerShouldSpawnProbe), false);
 
-        if (World->LineTraceSingleByChannel(ProbeHit, Start, End, ECC_Visibility, ProbeParams))
+        if (World->LineTraceSingleByChannel(ProbeHit, Start, End, ECC_Visibility, ProbeParams)
+            && ProbeHit.GetActor()
+            && ProbeHit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
         {
-            if (ProbeHit.GetActor() && ProbeHit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
+            CanonicalSurfaceZ = ProbeHit.ImpactPoint.Z;
+        }
+
+        // Ring search if center XY is over an already-open hole.
+        if (CanonicalSurfaceZ <= UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT)
+        {
+            const float RingR = BrushRadius * 0.4f;
+            const float Angles[] = { 0.f, 90.f, 180.f, 270.f };
+            for (float Ang : Angles)
             {
-                TerrainHeight = ProbeHit.ImpactPoint.Z;
+                const float Rad = FMath::DegreesToRadians(Ang);
+                FVector RingPos(BrushPos.X + RingR * FMath::Cos(Rad),
+                                BrushPos.Y + RingR * FMath::Sin(Rad),
+                                BrushPos.Z);
+
+                TOptional<float> RingZ = Digger->GetLandscapeHeightAt_Internal(RingPos);
+                if (RingZ.IsSet())
+                {
+                    CanonicalSurfaceZ = RingZ.GetValue();
+                    break;
+                }
             }
         }
     }
 
-    if (!TerrainHeight.IsSet())
-        return false; // No landscape found near brush
+    if (CanonicalSurfaceZ <= UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT)
+        return false; // No landscape found
 
-    const float LandscapeZ = TerrainHeight.GetValue();
+    // --- 2. Brush center must be within one radius of the surface ---
+    const float BrushCenterToSurface = BrushPos.Z - CanonicalSurfaceZ;
+    if (BrushCenterToSurface > BrushRadius)
+        return false; // Brush floating above — no hole BP needed
 
-    // --- 2. Brush must intersect the landscape surface ---
-    const float VerticalDist = FMath::Abs(BrushPos.Z - LandscapeZ);
-    if (VerticalDist > BrushRadius)
-        return false;
-
-    // --- 3. 60% burial gate (top of sphere must not be too deep) ---
+    // --- 3. Top of brush sphere must not be more than 60% below surface ---
     const float TopOfBrush     = BrushPos.Z + BrushRadius;
-    const float BurialDepth    = LandscapeZ - TopOfBrush;
+    const float BurialDepth    = CanonicalSurfaceZ - TopOfBrush;
     const float MaxBurialDepth = BrushRadius * 0.60f;
-
     if (BurialDepth > MaxBurialDepth)
         return false;
 
-    // --- 4. Redundancy gate ---
-    if (IsHoleRedundant(World, BrushPos, BrushRadius))
+    // --- 4. Redundancy gate (test at surface-anchored position) ---
+    const FVector SurfaceAnchoredPos(BrushPos.X, BrushPos.Y, CanonicalSurfaceZ);
+    if (IsHoleRedundant(World, SurfaceAnchoredPos, BrushRadius))
         return false;
 
     return true;
@@ -483,11 +544,33 @@ static void EnsureDiggerPrereqs()
     UWorld* World = GEditor->GetEditorWorldContext().World();
     if (!World) return;
 
+    // --- Crash fix: pending-kill manager holds the name "DiggerManager" in the
+    // level registry even after deletion.  GetActorOfClass skips pending-kill
+    // actors, so FindExistingManager returns nullptr while the name is still
+    // reserved — causing SpawnActor to fatal-assert.
+    // Solution: scan with AllActors flag; if a pending-kill instance exists,
+    // flush GC synchronously to release the name before we try to spawn.
     ADiggerManager* Mgr = FindExistingManager(World);
     if (!Mgr)
     {
+        for (TActorIterator<ADiggerManager> It(World, ADiggerManager::StaticClass(),
+             EActorIteratorFlags::AllActors); It; ++It)
+        {
+            // A pending-kill instance is still holding the name — purge it.
+            GEngine->ForceGarbageCollection(/*bForcePurge=*/true);
+            Mgr = FindExistingManager(World);
+            break;
+        }
+    }
+
+    if (!Mgr)
+    {
         FActorSpawnParameters S;
-        S.Name = FName(TEXT("DiggerManager"));
+        S.Name     = FName(TEXT("DiggerManager"));
+        // NameMode::Requested: if "DiggerManager" is somehow still reserved after
+        // the GC flush, UE5 will auto-rename (e.g. DiggerManager_1) instead of
+        // calling a fatal check().  This is the belt-and-suspenders safety net.
+        S.NameMode = FActorSpawnParameters::ESpawnActorNameMode::Requested;
         S.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
         S.ObjectFlags = RF_Transactional;
 
@@ -524,6 +607,42 @@ static void EnsureDiggerPrereqs()
 #endif
 }
 
+
+void FDiggerEdMode::OnLevelActorDeleted(AActor* InActor)
+{
+    // Only care about DiggerManager being deleted while our mode is live.
+    if (!InActor || !InActor->IsA(ADiggerManager::StaticClass())) return;
+
+    UE_LOG(LogTemp, Warning,
+        TEXT("Digger: DiggerManager was deleted while the editor mode was active. "
+             "Scheduling automatic respawn..."));
+
+    // Defer by one tick so the deletion transaction has fully committed and the
+    // actor name has been released from the level registry before we respawn.
+    if (GEditor)
+    {
+        GEditor->GetTimerManager()->SetTimerForNextTick([this]()
+        {
+            // Crash-safe respawn — same path used at Enter().
+            EnsureDiggerPrereqs();
+
+            // Rebind the modifier-blocked delegate to the freshly spawned manager.
+            if (ADiggerManager* NewMgr = FindDiggerManager())
+            {
+                NewMgr->OnModifierBlocked.RemoveAll(this);
+                NewMgr->OnModifierBlocked.AddRaw(this, &FDiggerEdMode::HandleModifierBlocked);
+            }
+
+            // Tell the toolkit to pick up the new manager instance.
+            if (TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit())
+            {
+                DiggerToolkit->OnManagerRespawned();
+            }
+
+            UE_LOG(LogTemp, Log, TEXT("Digger: DiggerManager respawned successfully."));
+        });
+    }
+}
 
 void FDiggerEdMode::OnLevelActorAdded(AActor* InActor)
 {
@@ -614,8 +733,11 @@ void FDiggerEdMode::Enter()
     // Make sure the preview actor exists (no viewport client needed here)
     EnsurePreviewExists(nullptr);
     
-    // 2. Start Listening for new Actor spawns
+    // Start listening for new Actor spawns
     OnLevelActorAddedHandle = GEngine->OnLevelActorAdded().AddRaw(this, &FDiggerEdMode::OnLevelActorAdded);
+
+    // Watch for DiggerManager being deleted so we can auto-respawn it.
+    OnLevelActorDeletedHandle = GEngine->OnLevelActorDeleted().AddRaw(this, &FDiggerEdMode::OnLevelActorDeleted);
 
     // ---------------------------------------------------------
     // REGISTER GLOBAL INPUT PROCESSOR
@@ -652,12 +774,20 @@ void FDiggerEdMode::Exit()
     // 1. Stop Listening
     if (OnLevelActorAddedHandle.IsValid())
     {
-        // Check GEngine exists before accessing (prevent crash on engine shutdown)
         if (GEngine)
         {
             GEngine->OnLevelActorAdded().Remove(OnLevelActorAddedHandle);
         }
         OnLevelActorAddedHandle.Reset();
+    }
+
+    if (OnLevelActorDeletedHandle.IsValid())
+    {
+        if (GEngine)
+        {
+            GEngine->OnLevelActorDeleted().Remove(OnLevelActorDeletedHandle);
+        }
+        OnLevelActorDeletedHandle.Reset();
     }
 
 
@@ -764,19 +894,29 @@ void FDiggerEdMode::UpdateBrushHUDPanel()
         Owner->GetToolkitHost()->GetParentWidget()->Invalidate(EInvalidateWidget::LayoutAndVolatility);
     }
 
+    // Always pull live values from the toolkit so the HUD reflects current state
+    // regardless of how values were changed (scroll wheel, spinbox, key press).
+    if (TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit())
+    {
+        BrushCache.Rotation = DiggerToolkit->GetBrushRotation();
+        BrushCache.Offset   = DiggerToolkit->GetBrushOffset();
+        BrushCache.Radius   = DiggerToolkit->GetBrushRadius();
+        BrushCache.Strength = DiggerToolkit->GetBrushStrength();
+        BrushCache.Falloff  = DiggerToolkit->GetBrushFalloff();
+        BrushCache.Force    = DiggerToolkit->GetBrushForce();
+        BrushCache.PushMode = DiggerToolkit->GetBrushPushMode();
+    }
+
     switch (CurrentMode)
     {
     case EDiggerMainMode::Sculpt:
         {
             BrushHUD.ModeText = TEXT("Sculpt Mode");
-
             BrushHUD.Radius   = BrushCache.Radius;
             BrushHUD.Strength = BrushCache.Strength;
             BrushHUD.Falloff  = BrushCache.Falloff;
             BrushHUD.Force    = BrushCache.Force;
             BrushHUD.PushMode = BrushCache.PushMode;
-
-            // Also show rotation/offset for sculpt mode (your request)
             BrushHUD.Rotation = BrushCache.Rotation;
             BrushHUD.Offset   = BrushCache.Offset;
             break;
@@ -785,10 +925,7 @@ void FDiggerEdMode::UpdateBrushHUDPanel()
     case EDiggerMainMode::Offset:
         {
             BrushHUD.ModeText = TEXT("Offset Mode");
-
             BrushHUD.Offset   = BrushCache.Offset;
-
-            // Clear sculpt values so UI doesn’t show stale data
             BrushHUD.Radius   = 0.f;
             BrushHUD.Strength = 0.f;
             BrushHUD.Falloff  = 0.f;
@@ -799,9 +936,7 @@ void FDiggerEdMode::UpdateBrushHUDPanel()
     case EDiggerMainMode::Rotate:
         {
             BrushHUD.ModeText = TEXT("Rotation Mode");
-
             BrushHUD.Rotation = BrushCache.Rotation;
-
             BrushHUD.Radius   = 0.f;
             BrushHUD.Strength = 0.f;
             BrushHUD.Falloff  = 0.f;
@@ -812,6 +947,119 @@ void FDiggerEdMode::UpdateBrushHUDPanel()
 }
 
 
+// -----------------------------------------------------------------------------------
+// TRANSFORM RESET HELPERS
+// All live in .cpp — they call FDiggerEdModeToolkit methods which require the full
+// type (not available from the forward declaration in DiggerEdMode.h).
+//
+//  ResetCurrentModeAxis()  C        — selected axis, current mode only
+//  ResetCurrentModeAxes()  CC       — all axes, current mode only
+//  ResetAllTransforms()    Alt+C    — wipe rotation + offset entirely
+//  ResetActiveAxis / ResetAllAxes   — legacy aliases
+// -----------------------------------------------------------------------------------
+
+static void ApplyRotationReset(TSharedPtr<FDiggerEdModeToolkit>& Tk, FDiggerEdMode::FBrushCache& Cache,
+                                EDiggerAxisMode Axis, bool bAll)
+{
+    FRotator Rot = Tk->GetBrushRotation();
+    if (bAll)
+    {
+        Rot = FRotator::ZeroRotator;
+        Cache.Rotation = FRotator::ZeroRotator;
+    }
+    else
+    {
+        switch (Axis)
+        {
+        case EDiggerAxisMode::X: Rot.Pitch = 0.f; Cache.Rotation.Pitch = 0.f; break;
+        case EDiggerAxisMode::Y: Rot.Yaw   = 0.f; Cache.Rotation.Yaw   = 0.f; break;
+        case EDiggerAxisMode::Z: Rot.Roll  = 0.f; Cache.Rotation.Roll  = 0.f; break;
+        default: break;
+        }
+    }
+    Tk->SetBrushRotation(Rot);
+}
+
+static void ApplyOffsetReset(TSharedPtr<FDiggerEdModeToolkit>& Tk, FDiggerEdMode::FBrushCache& Cache,
+                              EDiggerAxisMode Axis, bool bAll)
+{
+    FVector Off = Tk->GetBrushOffset();
+    if (bAll)
+    {
+        Off = FVector::ZeroVector;
+        Cache.Offset = FVector::ZeroVector;
+    }
+    else
+    {
+        switch (Axis)
+        {
+        case EDiggerAxisMode::X: Off.X = 0.f; Cache.Offset.X = 0.f; break;
+        case EDiggerAxisMode::Y: Off.Y = 0.f; Cache.Offset.Y = 0.f; break;
+        case EDiggerAxisMode::Z: Off.Z = 0.f; Cache.Offset.Z = 0.f; break;
+        default: break;
+        }
+    }
+    Tk->SetBrushOffset(Off);
+}
+
+// C — clear selected axis on CURRENT mode only (rotation OR offset, not both)
+void FDiggerEdMode::ResetCurrentModeAxis()
+{
+    if (TSharedPtr<FDiggerEdModeToolkit> Tk = GetDiggerToolkit())
+    {
+        if (CurrentMode == EDiggerMainMode::Rotate)
+            ApplyRotationReset(Tk, BrushCache, CurrentAxis, false);
+        else if (CurrentMode == EDiggerMainMode::Offset)
+            ApplyOffsetReset(Tk, BrushCache, CurrentAxis, false);
+    }
+    UpdateBrushHUDPanel();
+}
+
+// CC — clear all axes on CURRENT mode only (rotation OR offset, not both)
+void FDiggerEdMode::ResetCurrentModeAxes()
+{
+    if (TSharedPtr<FDiggerEdModeToolkit> Tk = GetDiggerToolkit())
+    {
+        if (CurrentMode == EDiggerMainMode::Rotate)
+            ApplyRotationReset(Tk, BrushCache, CurrentAxis, true);
+        else if (CurrentMode == EDiggerMainMode::Offset)
+            ApplyOffsetReset(Tk, BrushCache, CurrentAxis, true);
+    }
+    UpdateBrushHUDPanel();
+}
+
+// Alt+C — nuclear reset: wipe both rotation AND offset entirely
+void FDiggerEdMode::ResetAllTransforms()
+{
+    if (TSharedPtr<FDiggerEdModeToolkit> Tk = GetDiggerToolkit())
+    {
+        Tk->SetBrushRotation(FRotator::ZeroRotator);
+        Tk->SetBrushOffset(FVector::ZeroVector);
+    }
+    BrushCache.Rotation = FRotator::ZeroRotator;
+    BrushCache.Offset   = FVector::ZeroVector;
+    UpdateBrushHUDPanel();
+}
+
+// Legacy aliases
+void FDiggerEdMode::ResetActiveAxis()  { ResetCurrentModeAxis();  }
+void FDiggerEdMode::ResetAllAxes()     { ResetCurrentModeAxes();  }
+
+// ---------------------------------------------------------------------------
+// SelectAxis — public entry point for X/Y/Z key presses.
+// Called directly from FDiggerInputProcessor (focus-independent).
+// ---------------------------------------------------------------------------
+void FDiggerEdMode::SelectAxis(EDiggerAxisMode Axis)
+{
+    if (CurrentMode != EDiggerMainMode::Rotate && CurrentMode != EDiggerMainMode::Offset)
+        return;
+
+    if (bIsContinuouslyApplying) StopContinuousApplication();
+
+    CurrentAxis = Axis;
+    UpdateBrushHUDPanel();
+    UpdatePreviewModeIndicator();
+}
 
 void FDiggerEdMode::HandleModifierBlocked(bool bBlocked)
 {
@@ -1102,7 +1350,31 @@ void FDiggerEdMode::ApplyBrushWithSettings(
 
     // -----------------------------------------------------------------------
     // HOLE SPAWN LOGIC
-    // Hardened for launch: single authoritative decision path.
+    // -----------------------------------------------------------------------
+    // ROOT CAUSE OF SURFACE PEELING:
+    //
+    //   HitLocation is the visual brush center — computed from an angled camera
+    //   ray hitting a sloped landscape surface.  Its Z is the Z of the angled
+    //   hit point, NOT the vertical surface height at that XY column.  When the
+    //   hole BP is placed at HitLocation directly, it is anchored to the slope
+    //   tangent rather than the landscape surface, producing wide shallow peels
+    //   instead of precise circular punches.
+    //
+    // THE FIX — CANONICAL SURFACE ANCHOR:
+    //
+    //   1. Determine the landscape surface Z at HitLocation.XY via a strict
+    //      vertical downward probe (not the angled ray hit).  This is the
+    //      "canonical surface Z" regardless of camera angle.
+    //
+    //   2. All depth/burial gates test the brush center Z against this
+    //      canonical surface Z (not the angled hit Z).
+    //
+    //   3. The hole BP spawn position is pinned to:
+    //        (HitLocation.X, HitLocation.Y, CanonicalSurfaceZ)
+    //      so the hole always sits flat on the landscape, not tilted into it.
+    //
+    //   4. The brush center Z is still used for voxel digging (that's correct —
+    //      you want to dig into the slope) — only the HOLE BP placement changes.
     // -----------------------------------------------------------------------
 #if WITH_EDITOR
     if (Settings.bFinalBrushDig)
@@ -1110,93 +1382,120 @@ void FDiggerEdMode::ApplyBrushWithSettings(
         UWorld* World = Digger->GetWorld();
         if (!World) return;
 
-        // [FIX 1] File-scope static cooldown (safer than function-local static which
-        //         never resets if the function's translation unit is hot-reloaded, and
-        //         avoids needing a header change for a member variable).  A single
-        //         EdMode instance is active at a time so this is safe.
+        // Per-session cooldown — file-scope static is safe because only one
+        // EdMode instance is active at a time.
         static float s_LastHoleSpawnTime = -1000.f;
         const float Now = World->GetTimeSeconds();
         if (Now - s_LastHoleSpawnTime < 0.10f) return;
 
-        // [FIX 2] Reliable landscape height sampling with search fallback.
-        //         GetLandscapeHeightAt_Internal can miss if the brush center
-        //         sits on a voxel mesh rather than the raw landscape surface.
-        //         We try up to 5 XY offsets before giving up.
-        TOptional<float> TerrainHeight = Digger->GetLandscapeHeightAt_Internal(HitLocation);
+        // ---------------------------------------------------------------
+        // STEP 1: CANONICAL VERTICAL SURFACE PROBE
+        //
+        // Drop a vertical ray at HitLocation.XY from well above to well
+        // below. Accept only landscape hits. This gives us the true surface
+        // Z at this XY column, independent of camera angle.
+        //
+        // We search a small ring too, because the XY may sit exactly on a
+        // voxel hole boundary where the landscape has already been cut away.
+        // ---------------------------------------------------------------
+        float CanonicalSurfaceZ = UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT;
 
-        if (!TerrainHeight.IsSet())
+        auto VerticalLandscapeProbe = [&](float ProbeX, float ProbeY) -> bool
         {
-            // Search a ring of nearby sample points (N/S/E/W + centre-above).
-            const float SearchRadius = Settings.Radius * 0.5f;
-            const FVector Offsets[] = {
-                FVector( SearchRadius,  0.f,           0.f),
-                FVector(-SearchRadius,  0.f,           0.f),
-                FVector( 0.f,           SearchRadius,  0.f),
-                FVector( 0.f,          -SearchRadius,  0.f),
-                FVector( 0.f,           0.f,           Settings.Radius), // straight up
-            };
-            for (const FVector& Off : Offsets)
+            // Try the landscape height cache first (cheap, no physics).
+            TOptional<float> CacheZ = Digger->GetLandscapeHeightAt_Internal(
+                FVector(ProbeX, ProbeY, HitLocation.Z));
+            if (CacheZ.IsSet())
             {
-                TerrainHeight = Digger->GetLandscapeHeightAt_Internal(HitLocation + Off);
-                if (TerrainHeight.IsSet()) break;
+                CanonicalSurfaceZ = CacheZ.GetValue();
+                return true;
             }
-        }
 
-        // [FIX 3] If still no landscape → do a vertical line trace to find one.
-        //         This handles cases where the brush is positioned above voxel
-        //         geometry that occludes the landscape sample.
-        if (!TerrainHeight.IsSet())
-        {
-            if (UWorld* W = Digger->GetWorld())
+            // Fall back to a vertical line trace (accurate, hits actual geometry).
+            const float SearchHigh = HitLocation.Z + Settings.Radius * 3.f;
+            const float SearchLow  = HitLocation.Z - Settings.Radius * 3.f;
+            FHitResult ProbeHit;
+            FCollisionQueryParams ProbeParams(SCENE_QUERY_STAT(DiggerCanonicalSurfaceProbe), /*bTraceComplex=*/false);
+            // Ignore the preview actor so it can't occlude our probe.
+            if (Preview.IsValid()) ProbeParams.AddIgnoredActor(Preview.Get());
+
+            if (World->LineTraceSingleByChannel(
+                    ProbeHit,
+                    FVector(ProbeX, ProbeY, SearchHigh),
+                    FVector(ProbeX, ProbeY, SearchLow),
+                    ECC_Visibility, ProbeParams)
+                && ProbeHit.GetActor()
+                && ProbeHit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
             {
-                const FVector TraceStart(HitLocation.X, HitLocation.Y, HitLocation.Z + Settings.Radius * 2.f);
-                const FVector TraceEnd  (HitLocation.X, HitLocation.Y, HitLocation.Z - Settings.Radius * 4.f);
-                FHitResult LandscapeHit;
-                FCollisionQueryParams LandscapeParams(SCENE_QUERY_STAT(DiggerHoleLandscapeProbe), true);
+                CanonicalSurfaceZ = ProbeHit.ImpactPoint.Z;
+                return true;
+            }
+            return false;
+        };
 
-                if (W->LineTraceSingleByChannel(LandscapeHit, TraceStart, TraceEnd, ECC_Visibility, LandscapeParams))
+        // Try brush center XY first, then a ring at 40% radius to handle
+        // edge cases where the center XY is over an already-open hole.
+        bool bFoundSurface = VerticalLandscapeProbe(HitLocation.X, HitLocation.Y);
+
+        if (!bFoundSurface)
+        {
+            const float RingR = Settings.Radius * 0.4f;
+            const float Angles[] = { 0.f, 90.f, 180.f, 270.f, 45.f, 135.f, 225.f, 315.f };
+            for (float Ang : Angles)
+            {
+                const float Rad = FMath::DegreesToRadians(Ang);
+                if (VerticalLandscapeProbe(
+                        HitLocation.X + RingR * FMath::Cos(Rad),
+                        HitLocation.Y + RingR * FMath::Sin(Rad)))
                 {
-                    if (LandscapeHit.GetActor() && LandscapeHit.GetActor()->IsA(ALandscapeProxy::StaticClass()))
-                    {
-                        TerrainHeight = LandscapeHit.ImpactPoint.Z;
-                    }
+                    bFoundSurface = true;
+                    break;
                 }
             }
         }
 
-        if (!TerrainHeight.IsSet())
+        if (!bFoundSurface)
         {
             if (DiggerDebug::Holes())
             {
                 UE_LOG(LogTemp, Verbose,
-                    TEXT("ApplyBrushWithSettings: No landscape found near %s — hole skipped."),
-                    *HitLocation.ToString());
+                    TEXT("HoleSpawn: No landscape surface found at XY=(%.1f,%.1f) — skipped."),
+                    HitLocation.X, HitLocation.Y);
             }
             return;
         }
 
-        const float LandscapeZ = TerrainHeight.GetValue();
+        // ---------------------------------------------------------------
+        // STEP 2: DEPTH GATES (against canonical surface, not angled hit Z)
+        //
+        // We test the brush CENTER Z against CanonicalSurfaceZ. The brush
+        // must be close enough to the surface to warrant a hole BP, but not
+        // so deep that it's fully underground (where a hole BP would just
+        // clip or float, causing peeling artifacts).
+        // ---------------------------------------------------------------
 
-        // [FIX 4] Unified depth gate.  
-        //         The brush must intersect the landscape surface (within one radius)
-        //         AND the TOP of the brush must not be more than 60% below it.
-        //         Previously this check ran twice (here and in ShouldSpawnHole),
-        //         using slightly different math — now it's done once.
-        const float VerticalDist = FMath::Abs(HitLocation.Z - LandscapeZ);
-        if (VerticalDist > Settings.Radius)
+        // Gate A: brush center must be within one radius of the surface.
+        // If it's floating more than one radius above, the user is digging
+        // in mid-air and no landscape peel-prevention hole is needed.
+        const float BrushCenterToSurface = HitLocation.Z - CanonicalSurfaceZ;
+
+        if (BrushCenterToSurface > Settings.Radius)
         {
-            // Brush doesn't reach the surface at all — suppress.
+            // Brush is floating above — voxel dig is fine, no hole BP needed.
             if (DiggerDebug::Holes())
             {
                 UE_LOG(LogTemp, Verbose,
-                    TEXT("ApplyBrushWithSettings: Brush too far from surface (dist=%.1f, r=%.1f) — hole skipped."),
-                    VerticalDist, Settings.Radius);
+                    TEXT("HoleSpawn: Brush above surface by %.1f (r=%.1f) — no BP needed."),
+                    BrushCenterToSurface, Settings.Radius);
             }
             return;
         }
 
-        const float TopOfBrush    = HitLocation.Z + Settings.Radius;
-        const float BurialDepth   = LandscapeZ - TopOfBrush;           // positive = buried
+        // Gate B: the top of the brush sphere must not be more than 60%
+        // below the surface. Beyond that the hole BP would be entirely
+        // underground and would produce a floating peel, not a clean punch.
+        const float TopOfBrush     = HitLocation.Z + Settings.Radius;
+        const float BurialDepth    = CanonicalSurfaceZ - TopOfBrush; // positive = top buried
         const float MaxBurialDepth = Settings.Radius * 0.60f;
 
         if (BurialDepth > MaxBurialDepth)
@@ -1204,37 +1503,50 @@ void FDiggerEdMode::ApplyBrushWithSettings(
             if (DiggerDebug::Holes())
             {
                 UE_LOG(LogTemp, Verbose,
-                    TEXT("ApplyBrushWithSettings: Brush too deep (burial=%.1f, max=%.1f) — hole skipped."),
+                    TEXT("HoleSpawn: Top of brush buried %.1f > max %.1f — skipped."),
                     BurialDepth, MaxBurialDepth);
             }
             return;
         }
 
-        // [FIX 5] Redundancy check via manager's cached list (O(n) but cheaper
-        //         than TActorIterator every tick). Falls back to iterator if manager
-        //         doesn't expose a list yet.
-        if (IsHoleRedundant(World, HitLocation, Settings.Radius))
+        // ---------------------------------------------------------------
+        // STEP 3: REDUNDANCY CHECK
+        //
+        // Use the surface-anchored XY position for overlap detection so the
+        // test is consistent with where we'll actually place the hole BP.
+        // ---------------------------------------------------------------
+        const FVector SurfaceAnchoredPos(HitLocation.X, HitLocation.Y, CanonicalSurfaceZ);
+
+        if (IsHoleRedundant(World, SurfaceAnchoredPos, Settings.Radius))
         {
             return;
         }
 
-        // All gates passed — spawn the hole.
+        // ---------------------------------------------------------------
+        // STEP 4: SPAWN — always at the canonical surface position.
+        //
+        // The hole BP's job is to punch a hole in the landscape surface.
+        // It must be anchored to the surface (CanonicalSurfaceZ), not to
+        // the angled brush center (HitLocation.Z). Using HitLocation.Z was
+        // the direct cause of the tilted / peeling landscape surface.
+        // ---------------------------------------------------------------
         FBrushStroke HoleStroke;
-        HoleStroke.BrushPosition = HitLocation;
+        HoleStroke.BrushPosition = SurfaceAnchoredPos;  // ← surface-anchored, not angled hit
         HoleStroke.BrushRadius   = Settings.Radius;
         HoleStroke.BrushType     = Settings.BrushType;
         HoleStroke.bDig          = true;
-        HoleStroke.BrushRotation = Settings.Rotation;
+        // Hole BPs are always axis-aligned (no rotation) — they punch
+        // straight down through the landscape, regardless of brush tilt.
+        HoleStroke.BrushRotation = FRotator::ZeroRotator;
 
         Digger->HandleHoleSpawn(HoleStroke);
         s_LastHoleSpawnTime = Now;
 
-        // [FIX 6] Flush shadow / render state immediately to prevent black ghost artifacts.
+        // Flush shadow/render state to prevent black ghost artifacts.
         if (AActor* HitActor = Hit.GetActor())
         {
             HitActor->MarkComponentsRenderStateDirty();
         }
-
         if (GEditor && GEditor->GetActiveViewport())
         {
             GEditor->GetActiveViewport()->Invalidate();
@@ -1243,8 +1555,9 @@ void FDiggerEdMode::ApplyBrushWithSettings(
         if (DiggerDebug::Holes())
         {
             UE_LOG(LogTemp, Log,
-                TEXT("ApplyBrushWithSettings: Hole spawned at %s  (LandscapeZ=%.1f, burial=%.1f)"),
-                *HitLocation.ToString(), LandscapeZ, BurialDepth);
+                TEXT("HoleSpawn: Spawned at surface (%.1f,%.1f,%.1f). BrushZ=%.1f, SurfZ=%.1f, Burial=%.1f"),
+                SurfaceAnchoredPos.X, SurfaceAnchoredPos.Y, SurfaceAnchoredPos.Z,
+                HitLocation.Z, CanonicalSurfaceZ, BurialDepth);
         }
     }
 #endif
@@ -1678,21 +1991,41 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
         // 7. UPDATE PREVIEW ACTOR
         // ---------------------------------------------------------
         
-        // A. Calculate the color for the LIGHT COMPONENT (Simple logic)
-        FLinearColor ActiveLightColor = P.bAdd ? Settings->BrushColorAdd : Settings->BrushColorDig;
+        // A. Determine the effective dig/add state for color:
+        //    - During a right-click paint stroke, BrushCache.bFinalBrushDig is the inverted truth.
+        //    - During hover, use IsDigMode() which respects the UI toggle.
+        //    We also check if right mouse button is currently held to preview the inverted color.
+        TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit();
+    
+        bool bEffectiveDigForColor = DiggerToolkit.IsValid() ? DiggerToolkit->IsDigMode() : P.bAdd;
+
+        // If we're actively painting with a right-click stroke, use the inverted (actual) state
+        if (bIsPainting && ContinuousSettings.bIsValid && ContinuousSettings.bRightClick)
+        {
+            bEffectiveDigForColor = !bEffectiveDigForColor;
+        }
+        // Also check if the right mouse button is physically held right now (pre-click preview)
+        else if (InViewportClient && InViewportClient->Viewport &&
+                 InViewportClient->Viewport->KeyState(EKeys::RightMouseButton))
+        {
+            bEffectiveDigForColor = !bEffectiveDigForColor;
+        }
+
+        // B. Calculate light color using the effective state
+        FLinearColor ActiveLightColor = bEffectiveDigForColor ? Settings->BrushColorDig : Settings->BrushColorAdd;
         
-        // If user overrides light color in settings:
+        // If user has chosen a custom light color instead of matching brush mode:
         if (Settings && !Settings->bMatchLightColorToBrush)
         {
             ActiveLightColor = Settings->BrushLightColor;
         }
     
-        // B. Call UpdatePreview with all material parameters
+        // C. Call UpdatePreview with all material parameters
         Preview->UpdatePreview(
             Center,
             Extents,
             Falloff,
-            Stroke.bDig,
+            bEffectiveDigForColor,  // Drive material IsAdd flag with the effective state
             P.CellSize,
             PreviewShapeType,
             Rotation,
@@ -1717,52 +2050,7 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
         BrushCache.Radius = P.RadiusXYZ.X;
         LastStrokePreviewCenter = Center;
     
-
-
-    // ---------------------------------------------------------
-    // 8. COLOR & LIGHTING
-    // ---------------------------------------------------------
-    if (Settings)
-    {
-        FLinearColor TargetLightColor = P.bAdd ? Settings->BrushColorDig : Settings->BrushColorAdd;
-
-        TArray<UStaticMeshComponent*> MeshComps;
-        Preview->GetComponents<UStaticMeshComponent>(MeshComps);
-
-        for (UStaticMeshComponent* MeshComp : MeshComps)
-        {
-            if (!MeshComp) continue;
-
-            UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(MeshComp->GetMaterial(0));
-            if (!MID)
-            {
-                MID = MeshComp->CreateAndSetMaterialInstanceDynamic(0);
-            }
-            if (MID)
-            {
-                MID->SetVectorParameterValue(FName("PreviewColor"), TargetLightColor);
-            }
-        }
-
-        if (UPointLightComponent* LightComp = Preview->FindComponentByClass<UPointLightComponent>())
-        {
-            LightComp->SetIntensity(Settings->BrushLightIntensity);
-            LightComp->SetAttenuationRadius(Settings->BrushLightAttenuationRadius);
-
-            if (Settings->bMatchLightColorToBrush)
-            {
-                FLinearColor LightColor = TargetLightColor;
-                LightColor.A = 1.0f;
-                LightComp->SetLightColor(LightColor);
-            }
-            else
-            {
-                LightComp->SetLightColor(Settings->BrushLightColor);
-            }
-        }
-    }
 }
-
 
 
 // -----------------------------------------------------------------------------------
@@ -1840,9 +2128,12 @@ bool FDiggerEdMode::InputKey(
     // ---------------------------------------------------------
     // 1. MODIFIER STATE (SHARED WITH SCROLL CONSUMPTION)
     // ---------------------------------------------------------
-    const bool bShift = Viewport->KeyState(EKeys::LeftShift)   || Viewport->KeyState(EKeys::RightShift);
-    const bool bCtrl  = Viewport->KeyState(EKeys::LeftControl) || Viewport->KeyState(EKeys::RightControl);
-    const bool bAlt   = Viewport->KeyState(EKeys::LeftAlt)     || Viewport->KeyState(EKeys::RightAlt);
+    // Use Slate (OS-level) modifier state — consistent with the scroll handler
+    // and works correctly even when modifiers were held before viewport focus.
+    const FModifierKeysState KeyMods = FSlateApplication::Get().GetModifierKeys();
+    const bool bShift = KeyMods.IsShiftDown();
+    const bool bCtrl  = KeyMods.IsControlDown();
+    const bool bAlt   = KeyMods.IsAltDown();
     const bool bAnyModifier = bShift || bCtrl || bAlt;
 
     const bool bIsSculptMode        = (CurrentMode == EDiggerMainMode::Sculpt);
@@ -1878,46 +2169,19 @@ bool FDiggerEdMode::InputKey(
     if (Key == EKeys::R && bPressed)
     {
         InterruptContinuousSculpting();
-
-        bRotationModeLatched = !bRotationModeLatched;
-        bOffsetModeLatched   = false;
-
-        if (bRotationModeLatched)
-        {
-            CurrentMode = EDiggerMainMode::Rotate;
-            CurrentAxis = EDiggerAxisMode::None;
-        }
-        else
-        {
-            CurrentMode = EDiggerMainMode::Sculpt;
-            CurrentAxis = EDiggerAxisMode::None;
-        }
-
-        UpdateBrushHUDPanel();
-        UpdatePreviewModeIndicator();
+        // NOTE: The input processor may have already handled this key.
+        // ToggleRotationMode is idempotent via its latch — calling it here
+        // is safe only when InputKey fires (viewport had focus to begin with).
+        // The processor returns true (consuming) so this path only runs when
+        // the viewport already held focus and the processor did NOT fire.
+        ToggleRotationMode();
         return true;
     }
 
     if (Key == EKeys::O && bPressed)
     {
         InterruptContinuousSculpting();
-
-        bOffsetModeLatched   = !bOffsetModeLatched;
-        bRotationModeLatched = false;
-
-        if (bOffsetModeLatched)
-        {
-            CurrentMode = EDiggerMainMode::Offset;
-            CurrentAxis = EDiggerAxisMode::None;
-        }
-        else
-        {
-            CurrentMode = EDiggerMainMode::Sculpt;
-            CurrentAxis = EDiggerAxisMode::None;
-        }
-
-        UpdateBrushHUDPanel();
-        UpdatePreviewModeIndicator();
+        ToggleOffsetMode();
         return true;
     }
 
@@ -1942,65 +2206,47 @@ bool FDiggerEdMode::InputKey(
     }
 
     // ---------------------------------------------------------
-    // 4.5. RESET TRANSFORM (C) — SINGLE OR DOUBLE TAP
+    // 4.5. RESET TRANSFORM (C / CC / Alt+C)
+    //
+    //  C         — clear selected axis on the CURRENT mode only
+    //              (no axis selected → clears all axes on current mode)
+    //  C C       — clear ALL axes on the CURRENT mode only
+    //  Alt + C   — reset BOTH rotation AND offset entirely
+    //
+    //  Design rationale: Alt+C is the "nuclear" action (common in Blender/Maya)
+    //  which is immediately discoverable and has no timing pressure.
     // ---------------------------------------------------------
     if (Key == EKeys::C && bPressed)
     {
-        // Only valid in Rotation or Offset modes
         if (CurrentMode == EDiggerMainMode::Rotate || CurrentMode == EDiggerMainMode::Offset)
         {
             InterruptContinuousSculpting();
 
-            // Detect Double Tap manually
-            const double CurrentTime = FPlatformTime::Seconds();
-            const bool bIsDoubleTap  = (CurrentTime - LastCPressTime) < 0.30f; // 300ms threshold
-            LastCPressTime           = CurrentTime;
+            // bAlt already declared in outer InputKey scope — using it directly.
 
-            TSharedPtr<FDiggerEdModeToolkit> DiggerToolkit = GetDiggerToolkit();
-            if (DiggerToolkit.IsValid())
+            // Alt+C: nuclear reset — wipe both rotation and offset regardless of mode
+            if (bAlt)
             {
-                // Logic:
-                // 1. Double Tap -> Reset ALL axes.
-                // 2. Single Tap (No Axis Selected) -> Reset ALL axes.
-                // 3. Single Tap (Axis Selected) -> Reset ONLY that axis.
-                
-                const bool bResetAll = bIsDoubleTap || (CurrentAxis == EDiggerAxisMode::None);
-
-                if (CurrentMode == EDiggerMainMode::Rotate)
-                {
-                    FRotator Rot = DiggerToolkit->GetBrushRotation();
-                    
-                    if (bResetAll)
-                    {
-                        Rot = FRotator::ZeroRotator;
-                    }
-                    else
-                    {
-                        if (CurrentAxis == EDiggerAxisMode::X) Rot.Pitch = 0.0f;
-                        if (CurrentAxis == EDiggerAxisMode::Y) Rot.Yaw   = 0.0f;
-                        if (CurrentAxis == EDiggerAxisMode::Z) Rot.Roll  = 0.0f;
-                    }
-                    DiggerToolkit->SetBrushRotation(Rot);
-                }
-                else if (CurrentMode == EDiggerMainMode::Offset)
-                {
-                    FVector Off = DiggerToolkit->GetBrushOffset();
-
-                    if (bResetAll)
-                    {
-                        Off = FVector::ZeroVector;
-                    }
-                    else
-                    {
-                        if (CurrentAxis == EDiggerAxisMode::X) Off.X = 0.0f;
-                        if (CurrentAxis == EDiggerAxisMode::Y) Off.Y = 0.0f;
-                        if (CurrentAxis == EDiggerAxisMode::Z) Off.Z = 0.0f;
-                    }
-                    DiggerToolkit->SetBrushOffset(Off);
-                }
-
-                UpdateBrushHUDPanel();
+                ResetAllTransforms();
+                LastCPressTime = 0.0; // invalidate double-tap timer
+                return true;
             }
+
+            const double Now       = FPlatformTime::Seconds();
+            const bool bIsDoubleTap = (Now - LastCPressTime) < 0.35;
+            LastCPressTime          = Now;
+
+            if (bIsDoubleTap || CurrentAxis == EDiggerAxisMode::None)
+            {
+                // CC or no-axis: clear all axes on current mode only
+                ResetCurrentModeAxes();
+            }
+            else
+            {
+                // Single C with axis selected: clear that axis on current mode only
+                ResetCurrentModeAxis();
+            }
+
             return true;
         }
     }
@@ -2175,41 +2421,41 @@ bool FDiggerEdMode::InputAxis(
         return false;
     }
 
-    // --- Interrupt continuous sculpting on any scroll used for parameters/modes ---
-    auto InterruptContinuousSculpting = [&]()
-    {
-        if (bIsContinuouslyApplying)
-        {
-            StopContinuousApplication();
-        }
-    };
+    // Delegate entirely to ProcessScrollDelta — which is also called directly
+    // from FDiggerInputProcessor and works without viewport focus.
+    const FModifierKeysState ChkMods = FSlateApplication::Get().GetModifierKeys();
+    const bool bIsSculptMode = (CurrentMode == EDiggerMainMode::Sculpt);
+    const bool bAnyModifier  = ChkMods.IsShiftDown() || ChkMods.IsControlDown() || ChkMods.IsAltDown();
 
-    const bool bCtrl  = Viewport->KeyState(EKeys::LeftControl) || Viewport->KeyState(EKeys::RightControl);
-    const bool bShift = Viewport->KeyState(EKeys::LeftShift)   || Viewport->KeyState(EKeys::RightShift);
-    const bool bAlt   = Viewport->KeyState(EKeys::LeftAlt)     || Viewport->KeyState(EKeys::RightAlt);
+    if (bIsSculptMode && !bAnyModifier)
+        return FEdMode::InputAxis(ViewportClient, Viewport, ControllerId, Key, Delta, DeltaTime);
+
+    ProcessScrollDelta(Delta, DeltaTime);
+    return true;
+}
+
+
+// ---------------------------------------------------------------------------
+// ProcessScrollDelta — the single implementation of all scroll-driven brush
+// parameter changes. Called from InputAxis (viewport path) AND directly from
+// FDiggerInputProcessor (focus-independent path). Modifier state is read from
+// Slate so it works whether or not the viewport currently has OS focus.
+// ---------------------------------------------------------------------------
+bool FDiggerEdMode::ProcessScrollDelta(float Delta, float DeltaTime)
+{
+    if (FMath::IsNearlyZero(Delta)) return false;
+
+    if (bIsContinuouslyApplying) StopContinuousApplication();
+
+    const FModifierKeysState InputAxisMods = FSlateApplication::Get().GetModifierKeys();
+    const bool bCtrl  = InputAxisMods.IsControlDown();
+    const bool bShift = InputAxisMods.IsShiftDown();
+    const bool bAlt   = InputAxisMods.IsAltDown();
     const bool bAnyModifier = bCtrl || bShift || bAlt;
 
-    // In Digger mode:
-    // - If no modifiers and we are in Sculpt mode → let the editor zoom.
-    // - If any modifier OR we are in Rotate/Offset mode → consume scroll.
-    const bool bIsSculptMode = (CurrentMode == EDiggerMainMode::Sculpt);
-    const bool bShouldConsumeScroll = bAnyModifier || !bIsSculptMode;
-
-    if (!bShouldConsumeScroll)
-    {
-        // Pure sculpt, no modifiers: allow normal viewport zoom
-        return FEdMode::InputAxis(ViewportClient, Viewport, ControllerId, Key, Delta, DeltaTime);
-    }
-
-    // From here on, we are *intentionally* blocking viewport zoom.
-    InterruptContinuousSculpting();
-
     TSharedPtr<FDiggerEdModeToolkit> IAToolkit = GetDiggerToolkit();
-    if (!IAToolkit.IsValid())
-    {
-        // Still consume to prevent unwanted zoom
-        return true;
-    }
+    if (!IAToolkit.IsValid()) return false;
+
 
     // -------------------------------------------------------------------------
     // A. ROTATION MODE (R) + Axis (X/Y/Z)
@@ -2241,11 +2487,7 @@ bool FDiggerEdMode::InputAxis(
                                                   Rot.Roll;
         UpdateBrushHUDPanel();
 
-        // ShowBrushHUDMessage(
-        //     FString::Printf(TEXT("Rotate %s: %.1f"), AxisLabel, AxisValue),
-        //     FLinearColor(0.3f, 0.8f, 1.0f));
-
-        return true;
+        return false;
     }
 
     // -------------------------------------------------------------------------
@@ -2277,11 +2519,7 @@ bool FDiggerEdMode::InputAxis(
                                                   Off.Z;
         UpdateBrushHUDPanel();
 
-        // ShowBrushHUDMessage(
-        //     FString::Printf(TEXT("Offset %s: %.1f"), AxisLabel, AxisValue),
-        //     FLinearColor(1.0f, 0.6f, 0.2f));
-
-        return true;
+        return false;
     }
 
     // -------------------------------------------------------------------------
@@ -2314,8 +2552,6 @@ bool FDiggerEdMode::InputAxis(
             Radius = SnapIf(Radius, RADIUS_SNAP_STEP);
             IAToolkit->SetBrushRadius(Radius);
             UpdateBrushHUDPanel();
-
-            //ShowBrushHUDMessage(FString::Printf(TEXT("Radius: %.0f"), Radius));
         }
         else if (bStrengthMode)
         {
@@ -2325,8 +2561,6 @@ bool FDiggerEdMode::InputAxis(
             IAToolkit->SetBrushStrength(Strength);
 
             UpdateBrushHUDPanel();
-
-            //ShowBrushHUDMessage(FString::Printf(TEXT("Strength: %.2f"), Strength));
         }
         else if (bForceMode)
         {
@@ -2336,8 +2570,6 @@ bool FDiggerEdMode::InputAxis(
             IAToolkit->SetBrushForce(Force);
 
             UpdateBrushHUDPanel();
-
-            //ShowBrushHUDMessage(FString::Printf(TEXT("Strength: %.2f"), Strength));
         }
         else if (bFalloffMode)
         {
@@ -2347,7 +2579,6 @@ bool FDiggerEdMode::InputAxis(
             IAToolkit->SetBrushFalloff(Falloff);
 
             UpdateBrushHUDPanel();
-            //ShowBrushHUDMessage(FString::Printf(TEXT("Falloff: %.2f"), Falloff));
         }
 
         return true;

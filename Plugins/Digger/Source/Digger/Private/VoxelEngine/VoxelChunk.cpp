@@ -84,9 +84,6 @@ void UVoxelChunk::ReportVoxelModification(const FVoxelModificationReport& Report
 	}
 }
 
-// VoxelChunk.cpp — UpdateMeshFromData()
-// REMOVE the early OnMeshReady call at line 137:
-//     OnMeshReady(ChunkCoordinates, SectionIndex);   ← DELETE THIS LINE
 
 void UVoxelChunk::UpdateMeshFromData(const TArray<FVector>& Vertices, const TArray<int32>& Triangles, const TArray<FVector>& Normals)
 {
@@ -573,68 +570,49 @@ void UVoxelChunk::RefreshSectionMesh()
 
 void UVoxelChunk::OnMeshReady(FIntVector Coord, int32 SectionIdx)
 {
-    if (Coord != ChunkCoordinates)
-        return;
+	if (Coord != ChunkCoordinates)
+		return;
 
-    if (!HoleShapeLibrary && DiggerManager)
-        HoleShapeLibrary = DiggerManager->GetHoleShapeLibrary();
+	if (!HoleShapeLibrary && DiggerManager)
+		HoleShapeLibrary = DiggerManager->GetHoleShapeLibrary();
 
-    if (!HoleShapeLibrary)
-    {
-        UE_LOG(LogTemp, Error, TEXT("OnMeshReady FAILED: HoleShapeLibrary is NULL"));
-        return;
-    }
+	if (!HoleShapeLibrary)
+	{
+		UE_LOG(LogTemp, Error, TEXT("OnMeshReady FAILED: HoleShapeLibrary is NULL for chunk %s"),
+			*ChunkCoordinates.ToString());
+		return;
+	}
 
-    for (const TWeakObjectPtr<ADynamicHole>& HolePtr : SpawnedHoleInstances)
-    {
-        ADynamicHole* Hole = HolePtr.Get();
-        if (!Hole) continue;
+	for (const TWeakObjectPtr<ADynamicHole>& HolePtr : SpawnedHoleInstances)
+	{
+		ADynamicHole* Hole = HolePtr.Get();
+		if (!Hole) continue;
 
-        UStaticMeshComponent* MeshComp = Hole->GetHoleMeshComponent();
-        if (!MeshComp) continue;
+		UStaticMeshComponent* MeshComp = Hole->GetHoleMeshComponent();
+		if (!MeshComp) continue;
 
-        EHoleShapeType ShapeType = Hole->HoleShape.ShapeType;
-        UStaticMesh* HoleMesh = HoleShapeLibrary->GetMeshForShape(ShapeType);
-        if (!HoleMesh) continue;
+		// Prepare stroke/shape metadata only. No mesh assigned here.
+		Hole->PrepareShapeData();
 
-        // ✅ Always (re)assign — remove the early-out that skips existing meshes.
-        // On subsequent digs the hole already has a mesh, but we still need to
-        // reach the VSM invalidation below. The SetStaticMesh call is a no-op
-        // if the mesh is already correct, so this is safe.
-        MeshComp->SetStaticMesh(HoleMesh);
+		EHoleShapeType ShapeType = Hole->HoleShape.ShapeType;
+		UStaticMesh* HoleMesh = HoleShapeLibrary->GetMeshForShape(ShapeType);
+		if (!HoleMesh) continue;
 
-        if (Hole->WriterMaterial)
-        {
-            const int32 SlotCount = HoleMesh->GetStaticMaterials().Num();
-            for (int32 i = 0; i < SlotCount; i++)
-                MeshComp->SetMaterial(i, Hole->WriterMaterial);
-        }
-    }
+		MeshComp->SetStaticMesh(HoleMesh);
 
-    if (DiggerManager)
-        DiggerManager->NotifyChunkMeshComplete(ChunkCoordinates);
+		if (Hole->WriterMaterial)
+		{
+			const int32 SlotCount = HoleMesh->GetStaticMaterials().Num();
+			for (int32 i = 0; i < SlotCount; i++)
+				MeshComp->SetMaterial(i, Hole->WriterMaterial);
+		}
+	}
 
-    // ✅ VSM cache invalidation + viewport redraw.
-    // This must happen AFTER material/mesh are committed so the RVT writer
-    // has already updated the opacity mask before we force a shadow re-render.
-#if WITH_EDITOR
-    if (GEditor)
-    {
-        // Invalidate landscape shadow contribution for this chunk's region.
-        // MarkComponentsRenderStateDirty() flushes the VSM cached pages
-        // that were built before the opacity hole was written into the RVT.
-        for (TActorIterator<ALandscape> It(DiggerManager->GetWorld()); It; ++It)
-        {
-            if (ALandscape* Landscape = *It)
-            {
-                Landscape->MarkComponentsRenderStateDirty();
-                break;
-            }
-        }
-
-        GEditor->RedrawLevelEditingViewports();
-    }
-#endif
+	// Notify manager that this chunk is done.
+	// Manager's NotifyChunkMeshComplete handles RVT invalidation and
+	// VSM cache busting once the full batch is complete — not per-chunk.
+	if (DiggerManager)
+		DiggerManager->NotifyChunkMeshComplete(ChunkCoordinates);
 }
 
 
@@ -974,24 +952,21 @@ void UVoxelChunk::AddHoleToChunk(ADynamicHole* Hole)
 	}
 
 	SpawnedHoleInstances.AddUnique(Hole);
+
 	if (DiggerDebug::Holes())
 		UE_LOG(LogTemp, Warning,
-			TEXT("AddHoleToChunk: Registered hole %s to chunk %s (Total holes: %d)"),
+			TEXT("AddHoleToChunk: Registered hole %s to chunk %s (Total: %d). Mesh will be assigned in OnMeshReady."),
 			*Hole->GetName(),
 			*ChunkCoordinates.ToString(),
 			SpawnedHoleInstances.Num());
 
-	// --- CRITICAL: ensure hole gets mesh assignment ---
-	
-		// Update the Hole Mesh for the dynamic Hole so it knows what shape to set when the hole is ready to be enabled.
-		Hole->UpdateHoleMesh();
-
-	// Otherwise, hole will be updated inside OnMarchingMeshComplete()
-	if (DiggerDebug::Holes())
-		UE_LOG(LogTemp, Warning,
-			TEXT("AddHoleToChunk: Hole %s will receive mesh assignment when OnMarchingMeshComplete fires"),
-			*Hole->GetName());
-	// 🔥 CRITICAL FIX: ensure mesh generation happens
+	// ✅ DO NOT call Hole->UpdateHoleMesh() here.
+	// UpdateHoleMesh() calls SetMeshForShape() which immediately sets a static mesh
+	// on the HoleMeshComponent. This makes the hole visible in the landscape surface
+	// before the voxel geometry (cave mesh) exists below it — causing a window to sky.
+	//
+	// Instead: only mark the chunk dirty so the async mesh generation starts.
+	// OnMeshReady() will assign the static mesh once the geometry is committed.
 	MarkDirty();
 }
 
