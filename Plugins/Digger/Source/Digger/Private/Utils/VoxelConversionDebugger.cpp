@@ -10,8 +10,8 @@ AVoxelConversionDebugger::AVoxelConversionDebugger()
 
 void AVoxelConversionDebugger::TestPositionConversion(FVector WorldPosition)
 {
-    UE_LOG(LogTemp, Warning, TEXT("==== VOXEL CONVERSION DEBUG ===="));
-    UE_LOG(LogTemp, Warning, TEXT("Testing position: %s"), *WorldPosition.ToString());
+    UE_LOG(LogTemp, Verbose, TEXT("==== VOXEL CONVERSION DEBUG ===="));
+    UE_LOG(LogTemp, Verbose, TEXT("Testing position: %s"), *WorldPosition.ToString());
     
     // Current configuration
     UE_LOG(LogTemp, Warning, TEXT("Configuration: ChunkSize=%d, Subdivisions=%d, GridSize=%f, VoxelSize=%f, Origin=%s"),

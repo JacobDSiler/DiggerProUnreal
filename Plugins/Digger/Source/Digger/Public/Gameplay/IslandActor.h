@@ -4,9 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "DiggerHistory.h"
 #include "IslandActor.generated.h"
 
 class UProceduralMeshComponent;
+class ADiggerManager;
+class UVoxelChunk;
 
 UCLASS()
 class DIGGER_API AIslandActor : public AActor
@@ -19,16 +22,44 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Island")
 	UProceduralMeshComponent* ProcMesh;
 
+	// -------------------------------------------------------------------------
+	// Chunk ownership (same pattern as DynamicHole / DynamicLightActor)
+	// -------------------------------------------------------------------------
+
+	/** Globally unique ID assigned by ADiggerManager::AllocateActorUID(). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chunk")
+	int32 ActorUID = INDEX_NONE;
+
+	/** Chunk this island currently belongs to. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chunk")
+	UVoxelChunk* OwningChunk = nullptr;
+
+	void SetOwningChunk(UVoxelChunk* NewChunk) { OwningChunk = NewChunk; }
+	void SetDiggerManager(ADiggerManager* InManager) { DiggerManager = InManager; }
+	ADiggerManager* GetDiggerManager() const { return DiggerManager; }
+
 	void ApplyPhysics();
 	void RemovePhysics();
+
 	AIslandActor();
 
 protected:
-	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 
+#if WITH_EDITOR
+	virtual void PostEditMove(bool bFinished) override;
+#endif
+
 public:	
-	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
+private:
+	FIntVector CurrentChunkCoords  = FIntVector::ZeroValue;
+	FIntVector PreviousChunkCoords = FIntVector::ZeroValue;
+	FTransform PreMoveTransform;
+
+	UPROPERTY()
+	ADiggerManager* DiggerManager = nullptr;
+
+	UVoxelChunk* FindOwningChunk(const FIntVector& ChunkCoords) const;
 };

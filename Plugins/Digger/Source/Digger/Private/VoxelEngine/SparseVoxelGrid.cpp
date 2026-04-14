@@ -27,9 +27,7 @@
 
 #include "HAL/IConsoleManager.h" // for backend CVars
 
-// If you have FVoxelSDFHelper as a public header, keep it.
-// (Leaving your original absolute include as-is to avoid include path churn.)
-//#include "C:\Users\serpe\Documents\Unreal Projects\DiggerUnreal\Source\DiggerUnreal\Public\Voxel\FVoxelSDFHelper.h"
+// FVoxelSDFHelper is now available via the public include path.
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Runtime toggles & small helpers
@@ -124,7 +122,7 @@ USparseVoxelGrid::USparseVoxelGrid()
 void USparseVoxelGrid::Initialize(UVoxelChunk* ParentChunkReference)
 {
 	ParentChunk = ParentChunkReference;
-	ParentChunkCoordinates = ParentChunk ? ParentChunk->GetChunkCoordinates() : FIntVector::ZeroValue;
+	ParentChunkCoordinates = ParentChunk ? ParentChunk->GetChunkCoords() : FIntVector::ZeroValue;
 
 	// Only set DiggerManager if ParentChunk is valid
 	if (ParentChunk && IsValid(ParentChunk))
@@ -604,7 +602,7 @@ void USparseVoxelGrid::RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove)
 				AsyncTask(ENamedThreads::GameThread, [this, Voxel]()
 				{
 					DrawDebugBox(GetWorld(),
-						FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkCoordinates(), Voxel),
+						FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkCoords(), Voxel),
 						FVector(FVoxelConversion::LocalVoxelSize / 2.0f),
 						FColor::Red, false, 5.0f);
 				});
@@ -641,7 +639,7 @@ void USparseVoxelGrid::RemoveSpecifiedVoxels(const TArray<FIntVector>& LocalVoxe
 			AsyncTask(ENamedThreads::GameThread, [this, Voxel]()
 			{
 				DrawDebugBox(GetWorld(),
-					FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkCoordinates(), Voxel),
+					FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkCoords(), Voxel),
 					FVector(FVoxelConversion::LocalVoxelSize / 2.0f),
 					FColor::Red, false, 5.0f);
 			});
@@ -660,13 +658,31 @@ bool USparseVoxelGrid::RemoveVoxel(const FIntVector& LocalVoxel)
 		AsyncTask(ENamedThreads::GameThread, [this, LocalVoxel]()
 		{
 			DrawDebugBox(GetWorld(),
-				FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkCoordinates(), LocalVoxel),
+				FVoxelConversion::ChunkVoxelToWorld(GetParentChunk()->GetChunkCoords(), LocalVoxel),
 				FVector(FVoxelConversion::LocalVoxelSize / 2.0f),
 				FColor::Red, false, 5.0f);
 		});
 	}
 
 	return VoxelData.Remove(LocalVoxel) > 0;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// ForceSetVoxel — used exclusively by the undo/redo system.
+// Bypasses SetVoxel's blend (Max/Min) and near-zero rejection so that
+// exact historical SDF values are restored faithfully.
+// Caller MUST be on the game thread (undo/redo always runs on game thread).
+// HEADER NOTE: add to USparseVoxelGrid public section:
+//   void ForceSetVoxel(const FIntVector& Key, float SDFValue);
+// ---------------------------------------------------------------------------------------------------------------------
+
+void USparseVoxelGrid::ForceSetVoxel(const FIntVector& Key, float SDFValue)
+{
+	FScopeLock Lock(&VoxelDataMutex);
+	if (FVoxelData* Existing = VoxelData.Find(Key))
+		Existing->SDFValue = SDFValue;
+	else
+		VoxelData.Add(Key, FVoxelData(SDFValue));
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

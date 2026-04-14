@@ -92,7 +92,7 @@ UVoxelChunk* UVoxelBrushShape::GetTargetChunkFromBrushPosition(const FVector3d& 
     FIntVector ChunkPosition = FVoxelConversion::WorldToChunk(BrushPosition);
 
     // Retrieve the chunk from the map
-    UVoxelChunk* NewTargetChunk = DiggerManager->GetOrCreateChunkAtChunk(ChunkPosition);
+    UVoxelChunk* NewTargetChunk = DiggerManager->GetOrCreateChunkAtCoords(ChunkPosition);
     
     // Return the chunk if found, otherwise return nullptr
     return (NewTargetChunk) ? NewTargetChunk : nullptr;
@@ -188,6 +188,7 @@ bool UVoxelBrushShape::GetCameraHitLocation(FHitResult& OutHitResult)
     // Final safety check: if we somehow returned a hole actor, fail.
     if (Hit.bBlockingHit && IsHoleBPActor(Hit.GetActor()))
     {
+        UE_LOG(LogTemp, Error, TEXT("Hit a hole actor, this should not ever return."));
         return false;
     }
 
@@ -323,7 +324,7 @@ FHitResult UVoxelBrushShape::RecursiveTraceThroughHoles_Internal(
 
         if (bShouldSkipLandscape)
         {
-            const float JumpDistance = 20.0f;
+            const float JumpDistance = 1.0f;
             FVector NewStart = Hit.Location + (OriginalDirection * JumpDistance);
 
             if (DiggerDebug::SmartTrace())
@@ -389,7 +390,14 @@ FHitResult UVoxelBrushShape::RecursiveTraceThroughHoles_Internal(
             *Hit.Location.ToString(),
             *HitActor->GetName());
 
+#if WITH_EDITOR
         DrawDebugSphere(World, Hit.Location, 25.0f, 16, FColor::Green, false, 0.5f);
+#endif
+    }
+
+    if(DiggerDebug::Casts() && Depth > 2)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Casted through %d holes before returning..."), Depth);
     }
 
     return Hit;

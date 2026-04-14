@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep:*)",
+      "Bash(xargs wc:*)",
+      "Bash(xargs -0 wc -l)",
+      "Bash(xargs -I {} echo \"Runtime \\(Digger/\\) Total Files: {}\")",
+      "Bash(xargs -I {} echo \"Editor \\(DiggerEditor/\\) Total Files: {}\")",
+      "Bash(xargs echo:*)",
+      "Bash(find:*)"
+    ]
+  }
+}

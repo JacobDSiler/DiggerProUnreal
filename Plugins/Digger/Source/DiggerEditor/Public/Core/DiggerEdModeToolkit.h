@@ -13,11 +13,15 @@
 #include "DiggerFeatureFlags.h"
 #include "SDiggerCaveImporterWidget.h"
 #include "SDiggerLobbyWidget.h"
+#include "UnrealEdMisc.h"
+#include "FileHelpers.h"
 
 // Forward Declarations
 class FEditorViewportClient;
 class SUniformGridPanel;
 class ADiggerManager;
+class UDiggerEditorEventHub;
+class UDiggerIslandRuntimeSubsystem;
 
 
 // Digger Feature Flags Enabled/Disabled Section.
@@ -135,8 +139,14 @@ public:
 
     // --- Sub-Widget Access ---
     TSharedPtr<SDiggerCaveImporterWidget> GetCaveImporterWidget() const { return CaveImporterWidget; }
+    // --- Environment ---
+    bool GetCameraFollowsBrush() const;
+    void SetCameraFollowsBrush(bool bFollow);
+private:
+    bool bCameraFollowsBrush = true;
+public:
 
-    // --- Environment / Worklight API ---
+    // --- Worklight API ---
     void SetViewportClient(FEditorViewportClient* InClient) { CachedViewportClient = InClient; }
     void SpawnOrUpdateWorklight(FEditorViewportClient* ViewportClient);
     void DestroyWorklight();
@@ -312,6 +322,13 @@ private:
     void UpdateWorklightColor(const FLinearColor& NewColor);
 
     // -------------------------------------------------------------------------
+    // HOLE MANAGEMENT
+    // -------------------------------------------------------------------------
+    TSharedRef<SWidget> MakeHoleOptimizationSection();   // builder declaration
+    FIntVector OptimizationTargetChunk = FIntVector(0, 0, 0);  // target state
+    TSharedPtr<STextBlock> HoleOptStatusText;            // live feedback handle
+
+    // -------------------------------------------------------------------------
     // ISLAND MANAGEMENT
     // -------------------------------------------------------------------------
     TSharedPtr<SBox> IslandGridContainer;
@@ -320,7 +337,11 @@ private:
     int32 SelectedIslandIndex = INDEX_NONE;
     FRotator IslandRotation;
 
-    void BindIslandDelegates();
+    void ConnectIslandHub();
+    void DisconnectIslandHub();
+    FDelegateHandle Handle_HubScanStarted;
+    FDelegateHandle Handle_HubIslandDetected;
+
     void OnIslandDetectedHandler(const FIslandData& NewIslandData);
     void AddIsland(const FIslandData& Island);
     void ClearIslands();

@@ -208,6 +208,53 @@ public:
     UPROPERTY(EditAnywhere, Config, Category="Meshing")
     EDiggerEditorShadingMode ShadingMode = EDiggerEditorShadingMode::OrganicGradient;
 
+    // -------------------------------------------------------------------------
+    // VIEWPORT BEHAVIOUR
+    // -------------------------------------------------------------------------
+
+    /** When enabled the viewport camera tracks the brush during painting.
+     *  Toggle with the  L  key while in Digger mode.
+     *  Mirrors the "Camera Follows Brush" checkbox in the toolkit panel. */
+    UPROPERTY(EditAnywhere, Config, Category="Viewport")
+    bool bCameraFollowsBrush = true;
+
+    // -------------------------------------------------------------------------
+    // BRUSH PLACEMENT FALLBACK BEHAVIOUR
+    // -------------------------------------------------------------------------
+
+    /** When SmartTrace finds no voxel mesh hit, the fallback normally returns
+     *  the landscape surface so the user can keep digging.
+     *
+     *  If this is TRUE (recommended for open-world games): the landscape hit
+     *  is always accepted unless the ray is nearly horizontal AND the hit
+     *  point is over a known air voxel (indicating a real tunnel opening).
+     *  Sky holes caused by ungenerated mesh are invisible to this check so
+     *  they correctly fall back to the landscape surface.
+     *
+     *  If FALSE: the old aggressive behaviour — any air voxel below the
+     *  landscape suppresses the hit, which hides the brush over ungenerated
+     *  areas. Only useful for fully pre-baked worlds where every underground
+     *  region is guaranteed to have collision. */
+    UPROPERTY(EditAnywhere, Config, Category="Brush Placement",
+              meta=(DisplayName="Fallback to Landscape When No Mesh Hit"))
+    bool bFallbackToLandscapeWhenNoMeshHit = true;
+
+    /** Minimum angle between the camera ray and the DOWN vector required
+     *  before the air-voxel suppression activates.
+     *  At 0° the ray points straight down — very unlikely to be a tunnel.
+     *  At 90° the ray is horizontal — very likely to be shooting through
+     *  a tunnel into open sky.
+     *
+     *  Only used when bFallbackToLandscapeWhenNoMeshHit = true.
+     *  Default 60°: rays more horizontal than this AND over an air voxel
+     *  will suppress the landscape hit (brush disappears).
+     *  Rays steeper than this always return the landscape hit. */
+    UPROPERTY(EditAnywhere, Config, Category="Brush Placement",
+              meta=(DisplayName="Tunnel Suppression Angle (degrees)",
+                    ClampMin="0.0", ClampMax="89.0",
+                    EditCondition="bFallbackToLandscapeWhenNoMeshHit"))
+    float TunnelSuppressionAngleDeg = 60.f;
+
 public:
     /**
      * Builds a merged mesh config for editor preview.

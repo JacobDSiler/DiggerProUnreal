@@ -4,7 +4,8 @@
 #include "HAL/FileManager.h"
 #include "Misc/OutputDevice.h"
 
-// Initialize defaults to match the example and to be safe if no config is found.
+// Defaults for closed testing - curated for testers.
+// These are overridden by Config/FeatureFlags.ini if present.
 bool FDiggerFeatureFlags::bLoaded                  = false;
 bool FDiggerFeatureFlags::bEnableBrushTools        = true;
 bool FDiggerFeatureFlags::bEnableBrushShapes       = true;
@@ -13,31 +14,31 @@ bool FDiggerFeatureFlags::bEnableEnvironment       = true;
 bool FDiggerFeatureFlags::bEnableNavigation        = true;
 bool FDiggerFeatureFlags::bEnableWorklight         = true;
 bool FDiggerFeatureFlags::bEnableAdditionalTools   = false;
-bool FDiggerFeatureFlags::bEnableIslands           = false;
-bool FDiggerFeatureFlags::bEnableMaterialManager   = false;
+bool FDiggerFeatureFlags::bEnableIslands           = true;
+bool FDiggerFeatureFlags::bEnableMaterialManager   = true;
 bool FDiggerFeatureFlags::bEnableCaveImporter      = false;
 bool FDiggerFeatureFlags::bEnableDMM               = false;
 bool FDiggerFeatureFlags::bEnableExportData        = true;
 bool FDiggerFeatureFlags::bEnableBuild             = false;
 bool FDiggerFeatureFlags::bEnableDeveloperSettings = false;
 
-// Per-brush defaults (true = enabled by default; false = disabled)
+// Per-brush defaults - all polished brushes enabled for testing
 bool FDiggerFeatureFlags::bEnableBrush_Sphere      = true;
 bool FDiggerFeatureFlags::bEnableBrush_Cube        = true;
-bool FDiggerFeatureFlags::bEnableBrush_Cylinder    = false;
+bool FDiggerFeatureFlags::bEnableBrush_Cylinder    = true;
 bool FDiggerFeatureFlags::bEnableSplineBrush       = false;
-bool FDiggerFeatureFlags::bEnableBrush_Capsule     = false;
-bool FDiggerFeatureFlags::bEnableBrush_Cone        = false;
-bool FDiggerFeatureFlags::bEnableBrush_Torus       = false;
-bool FDiggerFeatureFlags::bEnableBrush_Pyramid     = false;
-bool FDiggerFeatureFlags::bEnableBrush_Icosphere   = false;
+bool FDiggerFeatureFlags::bEnableBrush_Capsule     = true;
+bool FDiggerFeatureFlags::bEnableBrush_Cone        = true;
+bool FDiggerFeatureFlags::bEnableBrush_Torus       = true;
+bool FDiggerFeatureFlags::bEnableBrush_Pyramid     = true;
+bool FDiggerFeatureFlags::bEnableBrush_Icosphere   = true;
 bool FDiggerFeatureFlags::bEnableBrush_Stairs      = false;
 bool FDiggerFeatureFlags::bEnableBrush_Custom      = false;
 bool FDiggerFeatureFlags::bEnableBrush_Smooth      = true;
 bool FDiggerFeatureFlags::bEnableBrush_Noise       = true;
 bool FDiggerFeatureFlags::bEnableBrush_Light       = true;
-bool FDiggerFeatureFlags::bEnableBrush_Debug       = true;
-bool FDiggerFeatureFlags::bEnableGenerationSection = false;
+bool FDiggerFeatureFlags::bEnableBrush_Debug       = false;
+bool FDiggerFeatureFlags::bEnableGenerationSection = true;
 
 
 

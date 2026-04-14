@@ -70,6 +70,7 @@ public:
     bool VoxelModificationReports = false;
     bool Seams = false;
     bool SmartTrace = false;
+    bool FlightChecks = false;
 
 private:
     FDiggerDebug();
@@ -111,6 +112,7 @@ namespace DiggerDebug
     inline bool& VoxelModificationReports() { return Get().VoxelModificationReports; }
     inline bool& Seams() { return Get().Seams; }
     inline bool& SmartTrace() { return Get().SmartTrace; }
+    inline bool& FlightChecks() { return Get().FlightChecks; }
 
     inline FDiggerDebug::FFlagRegistry& GetFlagRegistry()
     {
@@ -136,4 +138,5 @@ namespace DiggerDebug
     {
         FDiggerDebug::Get().DrawTraceSegment(World, Start, End, Color, Duration);
     }
+    
 }

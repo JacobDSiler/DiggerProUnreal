@@ -5,6 +5,8 @@
 #include "DiggerDebug.h"
 #include "BrushAssetEditorUtils.h"
 #include "FCustomSDFBrush.h"
+#include "UDiggerEditorEventHub.h"
+#include "DiggerIslandRuntimeSubsystem.h"
 
 // Unreal Engine - Editor & Engine
 #include "EditorModeManager.h"
@@ -12,6 +14,8 @@
 #include "EngineUtils.h"
 #include "Engine/StaticMesh.h"
 #include "Editor.h"
+#include "UnrealEdMisc.h"          // FUnrealEdMisc::Get().RestartEditor()
+#include "FileHelpers.h"           // FEditorFileUtils::SaveDirtyPackages()
 #include "UObject/UnrealType.h" // Required for FBoolProperty and CastField
 
 // Content Browser
@@ -39,6 +43,7 @@
 #include "Styling/SlateStyleRegistry.h"
 #include "Widgets/Colors/SColorPicker.h"
 #include "EditorViewportClient.h"
+#include "VoxelChunk.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/DiggerTextureSet.h"
 #include "Widgets/Images/SImage.h"
@@ -94,12 +99,20 @@ static void NotifyProfileArrayChanged(UDiggerMaterialProfile* Profile, const FNa
 }
 
 
+
 // -----------------------------------------------------------------------------------
 // CONSTRUCTOR & DESTRUCTOR
 // -----------------------------------------------------------------------------------
 
 FDiggerEdModeToolkit::FDiggerEdModeToolkit() : FModeToolkit()
 {
+    // Read camera follow state from persisted editor config.
+    // Falls back to true (follow on) if settings aren't loaded yet.
+    if (const UDiggerEditorSettings* S = UDiggerEditorSettings::Get())
+        bCameraFollowsBrush = S->bCameraFollowsBrush;
+    else
+        bCameraFollowsBrush = true;
+
     WorklightTypeOptions.Add(MakeShared<FString>("Point"));
     WorklightTypeOptions.Add(MakeShared<FString>("Spot"));
     SelectedWorklightTypeItem = WorklightTypeOptions[0];
@@ -134,10 +147,7 @@ FDiggerEdModeToolkit::FDiggerEdModeToolkit() : FModeToolkit()
 
 FDiggerEdModeToolkit::~FDiggerEdModeToolkit()
 {
-    if (Manager == GetDiggerManager())
-    {
-        Manager->OnIslandDetected.RemoveAll(this);
-    }
+    DisconnectIslandHub();
 
     if (DiggerStyleSet.IsValid())
     {
@@ -152,8 +162,8 @@ FDiggerEdModeToolkit::~FDiggerEdModeToolkit()
 
 void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
 {
-    BindIslandDelegates();
     Manager = GetDiggerManager();
+    ConnectIslandHub();
 
     // Style Init... (Keep your existing Style code here)
     if (!FSlateStyleRegistry::FindSlateStyle("DiggerEditorStyle"))
@@ -177,6 +187,8 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         BrushLightAttenuation   = Settings->BrushLightAttenuationRadius;
         BrushLightColor         = Settings->BrushLightColor;
         bMatchBrushLightColor   = Settings->bMatchLightColorToBrush;
+        // Camera follow — persisted in editor config
+        bCameraFollowsBrush = Settings->bCameraFollowsBrush;
         // Outliner Folders
         SetDynamicHolesFolderVisible(Settings->bShowDynamicHolesFolder);
     }
@@ -188,10 +200,62 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     // --- BUILD MAIN WIDGET ---
     TSharedRef<SVerticalBox> MainBox = SNew(SVerticalBox);
 
+    // 0. QUICK TOGGLES — always visible at the top, no expander needed.
+    MainBox->AddSlot().AutoHeight().Padding(8, 6, 8, 2)
+    [
+        SNew(SHorizontalBox)
+
+        // Camera Follows Brush [L]
+        + SHorizontalBox::Slot().AutoWidth().Padding(0,0,16,0).VAlign(VAlign_Center)
+        [
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this]()
+            {
+                return bCameraFollowsBrush
+                    ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+            })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState S)
+            {
+                bCameraFollowsBrush = (S == ECheckBoxState::Checked);
+                if (UDiggerEditorSettings* MS = GetMutableDefault<UDiggerEditorSettings>())
+                {
+                    MS->bCameraFollowsBrush = bCameraFollowsBrush;
+                    MS->SaveConfig();
+                }
+            })
+            .ToolTipText(FText::FromString(
+                TEXT("Camera Follows Brush\nThe viewport camera smoothly tracks your brush while sculpting.\nToggle anytime with the L key.")))
+            [ SNew(STextBlock).Text(FText::FromString("Camera  [L]")) ]
+        ]
+
+        // Landscape Fallback
+        + SHorizontalBox::Slot().AutoWidth().Padding(0,0,4,0).VAlign(VAlign_Center)
+        [
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this]()
+            {
+                const UDiggerEditorSettings* S = UDiggerEditorSettings::Get();
+                const bool bOn = !S || S->bFallbackToLandscapeWhenNoMeshHit;
+                return bOn ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+            })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState S)
+            {
+                if (UDiggerEditorSettings* MS = GetMutableDefault<UDiggerEditorSettings>())
+                {
+                    MS->bFallbackToLandscapeWhenNoMeshHit = (S == ECheckBoxState::Checked);
+                    MS->SaveConfig();
+                }
+            })
+            .ToolTipText(FText::FromString(
+                TEXT("Landscape Fallback\nKeep ON (recommended): the brush snaps to the landscape surface when there is no voxel mesh underneath.\nTurn OFF only if your entire terrain is pre-baked with voxel collision.")))
+            [ SNew(STextBlock).Text(FText::FromString("Landscape Fallback")) ]
+        ]
+    ];
+
     // 1. BRUSH TOOLS (Always Visible)
     MainBox->AddSlot().AutoHeight().Padding(8, 8, 8, 4)
     [
-        SNew(SExpandableArea).AreaTitle(FText::FromString(TEXT("── Brush Tools ──")))
+        SNew(SExpandableArea).AreaTitle(FText::FromString(TEXT("Brush Tools")))
         .InitiallyCollapsed(false)
         .BodyContent()
         [
@@ -220,16 +284,26 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         EnvContent->AddSlot().AutoHeight().Padding(4)
         [
             SNew(SButton).Text(FText::FromString("Refresh Landscape Cache"))
+            .ToolTipText(FText::FromString(TEXT("Rebuilds the cached landscape height data.\nUse this after modifying the landscape outside of Digger.")))
             .OnClicked_Lambda([this](){ if(Manager) Manager->RefreshLandscapeCache(); return FReply::Handled(); })
         ];
 
         MainBox->AddSlot().AutoHeight().Padding(8, 12, 8, 4)
         [
-            SNew(SExpandableArea).AreaTitle(FText::FromString(TEXT("── Environment ──"))).BodyContent()[ EnvContent ]
+            SNew(SExpandableArea).AreaTitle(FText::FromString(TEXT("Environment"))).BodyContent()[ EnvContent ]
         ];
     }
 
-    // 3. ADDITIONAL TOOLS (Gated)
+    // 3. MESH GENERATION (Gated by bEnableGenerationSection)
+    if (FDiggerFeatureFlags::bEnableGenerationSection)
+    {
+        MainBox->AddSlot().AutoHeight().Padding(8, 12, 8, 4)
+        [
+            MakeGenerationSection()
+        ];
+    }
+
+    // 4. ADDITIONAL TOOLS (Gated)
     if (FDiggerFeatureFlags::bEnableAdditionalTools)
     {
         MainBox->AddSlot().AutoHeight().Padding(8, 12, 8, 4)
@@ -238,12 +312,12 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
         ];
     }
 
-    // 4. EXPORT & DATA (Gated)
+    // 5. EXPORT & DATA (Gated)
     if (FDiggerFeatureFlags::bEnableExportData)
     {
         MainBox->AddSlot().AutoHeight().Padding(8, 12, 8, 4)
         [
-            SNew(SExpandableArea).AreaTitle(FText::FromString(TEXT("── Export & Data ──"))).BodyContent()
+            SNew(SExpandableArea).AreaTitle(FText::FromString(TEXT("Export & Data"))).BodyContent()
             [
                 SNew(SVerticalBox)
                 + SVerticalBox::Slot().AutoHeight().Padding(8)[ MakeBuildExportSection() ]
@@ -251,18 +325,25 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
                 + SVerticalBox::Slot().AutoHeight().Padding(8)[ MakeResetDiggerDataWidget() ]
             ]
         ];
+        MainBox->AddSlot().AutoHeight().Padding(8, 12, 8, 4)
+        [
+            SNew(SExpandableArea)
+            .AreaTitle(FText::FromString(TEXT("Hole Optimization")))
+            .InitiallyCollapsed(true)
+            .BodyContent()[ MakeHoleOptimizationSection() ]
+        ];
     }
 
-    // 5. DEVELOPER SETTINGS (Editor Only)
+    // 6. DEVELOPER SETTINGS (Editor Only)
     #if WITH_EDITOR && !UE_BUILD_SHIPPING
-    if (true)//(FDiggerFeatureFlags::bEnableDeveloperSettings)
+    if (FDiggerFeatureFlags::bEnableDeveloperSettings)
     {
         MainBox->AddSlot().AutoHeight().Padding(4)
         [
             SNew(SExpandableArea).AreaTitle(FText::FromString("Developer Settings")).InitiallyCollapsed(true).BodyContent()
             [
                 SNew(SVerticalBox)
-                + SVerticalBox::Slot().AutoHeight().Padding(2)[ SNew(SCheckBox).IsChecked_Lambda([](){ return FDiggerFeatureFlags::bEnableSplineBrush ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; }).OnCheckStateChanged_Lambda([](ECheckBoxState S){ FDiggerFeatureFlags::bEnableSplineBrush = (S==ECheckBoxState::Checked); })[ SNew(STextBlock).Text(FText::FromString("Enable Spline Brush")) ] ]
+                //+ SVerticalBox::Slot().AutoHeight().Padding(2)[ SNew(SCheckBox).IsChecked_Lambda([](){ return FDiggerFeatureFlags::bEnableSplineBrush ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; }).OnCheckStateChanged_Lambda([](ECheckBoxState S){ FDiggerFeatureFlags::bEnableSplineBrush = (S==ECheckBoxState::Checked); })[ SNew(STextBlock).Text(FText::FromString("Enable Spline Brush")) ] ]
 
                 + SVerticalBox::Slot().AutoHeight().Padding(2)
                 [
@@ -301,12 +382,15 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     }
     #endif
 
-    // 6. DEBUG FLAGS
-    MainBox->AddSlot().AutoHeight().Padding(4)
-    [
-        SNew(SExpandableArea).InitiallyCollapsed(true).HeaderContent()[ SNew(STextBlock).Text(FText::FromString("Debug Flags")) ]
-        .BodyContent()[ SAssignNew(DebugFlagListContainer, SVerticalBox) ]
-    ];
+    // 7. DEBUG FLAGS (developer-only)
+    if (FDiggerFeatureFlags::bEnableDeveloperSettings)
+    {
+        MainBox->AddSlot().AutoHeight().Padding(4)
+        [
+            SNew(SExpandableArea).InitiallyCollapsed(true).HeaderContent()[ SNew(STextBlock).Text(FText::FromString("Debug Flags")) ]
+            .BodyContent()[ SAssignNew(DebugFlagListContainer, SVerticalBox) ]
+        ];
+    }
 
     ToolkitWidget = MainBox;
 
@@ -768,6 +852,41 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeWorklightSection()
             [ SNew(STextBlock).Text(FText::FromString("Enable Scene Light")) ]
         ]
 
+        // Camera Follows Brush — L key toggles.
+        // When ON the viewport mouse capture tracks the brush during painting,
+        // keeping the brush centred in view (useful for deep tunnel work).
+        // When OFF the viewport stays stationary and only the brush preview moves,
+        // matching the behaviour of ZBrush's Free Rotation mode.
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 2)
+        [
+            SNew(SCheckBox)
+            .IsChecked_Lambda([this]()
+            {
+                return bCameraFollowsBrush
+                    ? ECheckBoxState::Checked
+                    : ECheckBoxState::Unchecked;
+            })
+            .OnCheckStateChanged_Lambda([this](ECheckBoxState S)
+            {
+                bCameraFollowsBrush = (S == ECheckBoxState::Checked);
+                // Persist to editor config so the choice survives restarts.
+                if (UDiggerEditorSettings* MutableSettings =
+                        GetMutableDefault<UDiggerEditorSettings>())
+                {
+                    MutableSettings->bCameraFollowsBrush = bCameraFollowsBrush;
+                    MutableSettings->SaveConfig();
+                }
+            })
+            .ToolTipText(FText::FromString(
+                "Camera Follows Brush\n"
+                "When enabled the viewport tracks the brush during painting.\n"
+                "Toggle with  L  (Lock/Unlock camera)."))
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString("Camera Follows Brush  [L]"))
+            ]
+        ]
+
         // --- SEPARATOR ---
         + SVerticalBox::Slot().AutoHeight().Padding(0, 8)[ SNew(SSeparator).Orientation(Orient_Horizontal) ]
 
@@ -876,6 +995,14 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
 {
     if (!FDiggerFeatureFlags::bEnableIslands) return SNew(SBox).Visibility(EVisibility::Collapsed);
 
+    // Float policy display names for the combo box.
+    static const TArray<TSharedPtr<FString>> FloatPolicyOptions = {
+        MakeShared<FString>(TEXT("Ignore")),
+        MakeShared<FString>(TEXT("Auto Remove")),
+        MakeShared<FString>(TEXT("To Physics")),
+        MakeShared<FString>(TEXT("To Static"))
+    };
+
     return SNew(SVerticalBox)
     + SVerticalBox::Slot().AutoHeight().Padding(4)
     [
@@ -884,7 +1011,110 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeIslandsSection()
     + SVerticalBox::Slot().AutoHeight().Padding(4)
     [
         SNew(SVerticalBox).Visibility_Lambda([this](){ return bShowIslandsSection ? EVisibility::Visible : EVisibility::Collapsed; })
-        + SVerticalBox::Slot().AutoHeight()
+
+        // --- Island config controls ---
+        + SVerticalBox::Slot().AutoHeight().Padding(2)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
+            [
+                SNew(SButton)
+                .Text(FText::FromString("Detect Islands"))
+                .ToolTipText(FText::FromString(TEXT("Scans all loaded chunks for disconnected floating voxel clusters.\nResults appear in the island list below.")))
+                .OnClicked_Lambda([this]()
+                {
+                    if (IsValid(Manager))
+                    {
+                        if (UWorld* W = Manager->GetWorld())
+                        {
+                            if (auto* Sys = W->GetSubsystem<UDiggerIslandRuntimeSubsystem>())
+                            {
+                                Sys->ScanIslands(Manager);
+                            }
+                        }
+                    }
+                    return FReply::Handled();
+                })
+            ]
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4, 0)
+            [
+                SNew(STextBlock).Text(FText::FromString("Min Voxels:"))
+            ]
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+            [
+                SNew(SSpinBox<int32>)
+                .MinValue(0)
+                .MaxValue(10000)
+                .MinDesiredWidth(60)
+                .Value_Lambda([this]() -> int32
+                {
+                    if (IsValid(Manager))
+                        if (UWorld* W = Manager->GetWorld())
+                            if (auto* Sys = W->GetSubsystem<UDiggerIslandRuntimeSubsystem>())
+                                return Sys->AutoCleanupMinVoxels;
+                    return 0;
+                })
+                .OnValueCommitted_Lambda([this](int32 NewVal, ETextCommit::Type)
+                {
+                    if (IsValid(Manager))
+                        if (UWorld* W = Manager->GetWorld())
+                            if (auto* Sys = W->GetSubsystem<UDiggerIslandRuntimeSubsystem>())
+                                Sys->AutoCleanupMinVoxels = NewVal;
+                })
+            ]
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(2)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(2)
+            [
+                SNew(STextBlock).Text(FText::FromString("Float Policy:"))
+            ]
+            + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+            [
+                SNew(SComboBox<TSharedPtr<FString>>)
+                .OptionsSource(&FloatPolicyOptions)
+                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item)
+                {
+                    return SNew(STextBlock).Text(FText::FromString(*Item));
+                })
+                .OnSelectionChanged_Lambda([this](TSharedPtr<FString> Item, ESelectInfo::Type)
+                {
+                    if (!Item.IsValid() || !IsValid(Manager)) return;
+                    if (UWorld* W = Manager->GetWorld())
+                    {
+                        if (auto* Sys = W->GetSubsystem<UDiggerIslandRuntimeSubsystem>())
+                        {
+                            if (*Item == TEXT("Ignore"))            Sys->FloatPolicy = EIslandFloatPolicy::Ignore;
+                            else if (*Item == TEXT("Auto Remove"))  Sys->FloatPolicy = EIslandFloatPolicy::AutoRemove;
+                            else if (*Item == TEXT("To Physics"))   Sys->FloatPolicy = EIslandFloatPolicy::ConvertToPhysics;
+                            else if (*Item == TEXT("To Static"))    Sys->FloatPolicy = EIslandFloatPolicy::ConvertToStatic;
+                        }
+                    }
+                })
+                [
+                    SNew(STextBlock).Text_Lambda([this]() -> FText
+                    {
+                        if (IsValid(Manager))
+                            if (UWorld* W = Manager->GetWorld())
+                                if (auto* Sys = W->GetSubsystem<UDiggerIslandRuntimeSubsystem>())
+                                {
+                                    switch (Sys->FloatPolicy)
+                                    {
+                                    case EIslandFloatPolicy::Ignore:          return FText::FromString("Ignore");
+                                    case EIslandFloatPolicy::AutoRemove:      return FText::FromString("Auto Remove");
+                                    case EIslandFloatPolicy::ConvertToPhysics:return FText::FromString("To Physics");
+                                    case EIslandFloatPolicy::ConvertToStatic: return FText::FromString("To Static");
+                                    }
+                                }
+                        return FText::FromString("Ignore");
+                    })
+                ]
+            ]
+        ]
+
+        // --- Existing action buttons ---
+        + SVerticalBox::Slot().AutoHeight().Padding(2)
         [
             SNew(SHorizontalBox)
             + SHorizontalBox::Slot().AutoWidth()[ SNew(SButton).Text(FText::FromString("Physics")).OnClicked_Lambda([this](){ OnConvertToPhysicsActorClicked(); return FReply::Handled(); }) ]
@@ -907,7 +1137,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeAdditionalToolsSection()
     if (!FDiggerFeatureFlags::bEnableAdditionalTools) return SNew(SBox).Visibility(EVisibility::Collapsed);
     
     return SNew(SExpandableArea)
-           .AreaTitle(FText::FromString(TEXT("── Additional Tools ──")))
+           .AreaTitle(FText::FromString(TEXT("Additional Tools")))
            .InitiallyCollapsed(true)
            .BodyContent()
            [
@@ -1028,7 +1258,7 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSaveLoadSection()
                 .OnClicked_Lambda([this](){ 
                     FString Name = SaveFileNameWidget->GetText().ToString();
                     if(Manager && !Name.IsEmpty()) {
-                         if (EAppReturnType::Yes == FMessageDialog::Open(EAppMsgType::YesNo, FText::FromString("Delete save file: " + Name + "?"))) {
+                         if (EAppReturnType::Yes == FMessageDialog::Open(EAppMsgType::YesNo, FText::FromString("Permanently delete the save file \"" + Name + "\"?\n\nThis cannot be undone."))) {
                              Manager->DeleteSaveFile(Name); 
                              RefreshSaveFilesList();
                          }
@@ -1063,14 +1293,45 @@ ADiggerManager* FDiggerEdModeToolkit::GetDiggerManager() const
     return nullptr;
 }
 
-void FDiggerEdModeToolkit::BindIslandDelegates()
+void FDiggerEdModeToolkit::ConnectIslandHub()
 {
-    Manager = GetDiggerManager();
-    if (!IsValid(Manager)) return;
-    Manager->OnIslandsDetectionStarted.RemoveAll(this);
-    Manager->OnIslandDetected.RemoveAll(this);
-    Manager->OnIslandsDetectionStarted.AddSP(this, &FDiggerEdModeToolkit::ClearIslands);
-    Manager->OnIslandDetected.AddSP(this, &FDiggerEdModeToolkit::AddIsland);
+    auto* Hub = GEditor->GetEditorSubsystem<UDiggerEditorEventHub>();
+    if (!Hub) return;
+
+    // Disconnect stale handles before re-binding.
+    DisconnectIslandHub();
+
+    // Connect the hub to the current manager and world subsystem.
+    Hub->ConnectToManager(Manager);
+    if (IsValid(Manager))
+    {
+        if (UWorld* W = Manager->GetWorld())
+        {
+            Hub->ConnectToIslandSubsystem(W->GetSubsystem<UDiggerIslandRuntimeSubsystem>());
+        }
+    }
+
+    // Bind toolkit UI callbacks to hub's editor-side delegates.
+    Handle_HubScanStarted = Hub->OnIslandScanStartedEditor.AddSP(
+        this, &FDiggerEdModeToolkit::ClearIslands);
+    Handle_HubIslandDetected = Hub->OnIslandDetectedEditor.AddSP(
+        this, &FDiggerEdModeToolkit::AddIsland);
+}
+
+void FDiggerEdModeToolkit::DisconnectIslandHub()
+{
+    auto* Hub = GEditor->GetEditorSubsystem<UDiggerEditorEventHub>();
+    if (!Hub) return;
+    if (Handle_HubScanStarted.IsValid())
+    {
+        Hub->OnIslandScanStartedEditor.Remove(Handle_HubScanStarted);
+        Handle_HubScanStarted.Reset();
+    }
+    if (Handle_HubIslandDetected.IsValid())
+    {
+        Hub->OnIslandDetectedEditor.Remove(Handle_HubIslandDetected);
+        Handle_HubIslandDetected.Reset();
+    }
 }
 
 void FDiggerEdModeToolkit::ClearIslands()
@@ -1599,33 +1860,171 @@ void FDiggerEdModeToolkit::SetDynamicHolesFolderVisible(bool bVisible)
 
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeGenerationSection()
 {
-    if (!FDiggerFeatureFlags::bEnableGenerationSection) return SNew(SBox).Visibility(EVisibility::Collapsed);
+    if (!FDiggerFeatureFlags::bEnableGenerationSection)
+        return SNew(SBox).Visibility(EVisibility::Collapsed);
 
     return SNew(SExpandableArea)
-        .AreaTitle(FText::FromString("Mesh Generation"))
+        .AreaTitle(FText::FromString(TEXT("Mesh Generation")))
+        .InitiallyCollapsed(false)
         .BodyContent()
         [
             SNew(SVerticalBox)
-            + SVerticalBox::Slot().AutoHeight().Padding(4)
+
+            // ── Method selector ────────────────────────────────────────────
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 6, 8, 2)
             [
                 SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(4)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 8, 0)
                 [
-                    SNew(STextBlock).Text(FText::FromString("Method:"))
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Method:")))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
                 ]
-                + SHorizontalBox::Slot().FillWidth(1.0f).Padding(4)
+                + SHorizontalBox::Slot().FillWidth(1.0f)
                 [
                     SNew(SComboBox<TSharedPtr<FString>>)
                     .OptionsSource(&MeshGenerationOptions)
-                    .OnGenerateWidget_Lambda([](TSharedPtr<FString> InOption) { return SNew(STextBlock).Text(FText::FromString(*InOption)); })
-                    .OnSelectionChanged_Lambda([this](TSharedPtr<FString> NewSelection, ESelectInfo::Type) {
-                        SelectedMeshGenerationMethod = NewSelection;
-                        // Assuming Manager has a method to set this, otherwise just store UI state
-                        // if(Manager) Manager->SetGenMethod(*NewSelection); 
+                    .OnGenerateWidget_Lambda([](TSharedPtr<FString> Opt)
+                    {
+                        return SNew(STextBlock).Text(FText::FromString(*Opt));
+                    })
+                    .OnSelectionChanged_Lambda([this](TSharedPtr<FString> Sel, ESelectInfo::Type)
+                    {
+                        SelectedMeshGenerationMethod = Sel;
+                        // Reserved for future MC / DC / Cubic selector hookup.
+                        // if (Manager && Sel) Manager->SetMeshGenerationMethod(*Sel);
                     })
                     .InitiallySelectedItem(SelectedMeshGenerationMethod)
                     [
-                        SNew(STextBlock).Text_Lambda([this]() { return FText::FromString(SelectedMeshGenerationMethod.IsValid() ? *SelectedMeshGenerationMethod : TEXT("Cubic")); })
+                        SNew(STextBlock).Text_Lambda([this]()
+                        {
+                            return FText::FromString(
+                                SelectedMeshGenerationMethod.IsValid()
+                                    ? *SelectedMeshGenerationMethod
+                                    : TEXT("Marching Cubes"));
+                        })
+                    ]
+                ]
+            ]
+
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 2)
+            [ SNew(SSeparator) ]
+
+            // ── Bake full chunk volume checkbox ────────────────────────────
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 6, 8, 2)
+            [
+                SNew(SCheckBox)
+                .IsChecked_Lambda([this]()
+                {
+                    ADiggerManager* Mgr = GetDiggerManager();
+                    return (Mgr && Mgr->bBakeFullChunkVolume)
+                        ? ECheckBoxState::Checked
+                        : ECheckBoxState::Unchecked;
+                })
+                .OnCheckStateChanged_Lambda([this](ECheckBoxState State)
+                {
+                    if (ADiggerManager* Mgr = GetDiggerManager())
+                        Mgr->bBakeFullChunkVolume = (State == ECheckBoxState::Checked);
+                })
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Bake Full Chunk Volume")))
+                    .ToolTipText(FText::FromString(TEXT(
+                        "ON  — every chunk in the brush radius generates a full solid-volume mesh.\n"
+                        "OFF — only sculpted chunks produce geometry (faster, recommended for editing).")))
+                ]
+            ]
+
+            // ── Bake queue progress ────────────────────────────────────────
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 2, 8, 6)
+            [
+                SNew(STextBlock)
+                .Text_Lambda([this]() -> FText
+                {
+                    ADiggerManager* Mgr = GetDiggerManager();
+                    if (!Mgr) return FText::GetEmpty();
+                    const int32 Q = Mgr->GetBakeQueueSize();
+                    if (Q == 0) return FText::GetEmpty();
+                    return FText::FromString(FString::Printf(
+                        TEXT("Baking... %d chunks remaining"), Q));
+                })
+                .ColorAndOpacity(FSlateColor(FLinearColor(0.9f, 0.75f, 0.2f)))
+            ]
+
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 2)
+            [ SNew(SSeparator) ]
+
+            // ── Bake loaded chunks button + cancel ─────────────────────────
+            + SVerticalBox::Slot().AutoHeight().Padding(8, 6, 8, 2)
+            [
+                SNew(SVerticalBox)
+
+                // Description
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 6)
+                [
+                    SNew(STextBlock)
+                    .AutoWrapText(true)
+                    .Text(FText::FromString(TEXT(
+                        "Rebuilds all chunks currently loaded in the ChunkMap "
+                        "(only chunks that have been visited via lazy loading). "
+                        "Chunks are processed one per tick to keep the editor responsive.")))
+                    .ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f)))
+                ]
+
+                // Button row
+                + SVerticalBox::Slot().AutoHeight()
+                [
+                    SNew(SHorizontalBox)
+
+                    // Bake all loaded chunks
+                    + SHorizontalBox::Slot().FillWidth(1.f).Padding(0, 0, 4, 0)
+                    [
+                        SNew(SButton)
+                        .HAlign(HAlign_Center)
+                        .ContentPadding(FMargin(0, 8))
+                        .ButtonColorAndOpacity(FLinearColor(0.1f, 0.35f, 0.15f))
+                        .ToolTipText(FText::FromString(TEXT(
+                            "Enqueue all loaded chunks for a full-volume bake.\n"
+                            "Respects 'Bake Full Chunk Volume' flag.\n"
+                            "One chunk is processed per tick.")))
+                        .OnClicked_Lambda([this]() -> FReply
+                        {
+                            if (ADiggerManager* Mgr = GetDiggerManager())
+                                Mgr->EnqueueBakeAllLoadedChunks();
+                            return FReply::Handled();
+                        })
+                        [
+                            SNew(STextBlock)
+                            .Justification(ETextJustify::Center)
+                            .Text(FText::FromString(TEXT("Bake All Loaded Chunks")))
+                            .Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
+                        ]
+                    ]
+
+                    // Cancel
+                    + SHorizontalBox::Slot().AutoWidth().Padding(4, 0, 0, 0)
+                    [
+                        SNew(SButton)
+                        .HAlign(HAlign_Center)
+                        .ContentPadding(FMargin(12, 8))
+                        .ButtonColorAndOpacity(FLinearColor(0.35f, 0.1f, 0.1f))
+                        .ToolTipText(FText::FromString(TEXT("Cancel the in-progress bake queue.")))
+                        .IsEnabled_Lambda([this]()
+                        {
+                            ADiggerManager* Mgr = GetDiggerManager();
+                            return Mgr && Mgr->GetBakeQueueSize() > 0;
+                        })
+                        .OnClicked_Lambda([this]() -> FReply
+                        {
+                            if (ADiggerManager* Mgr = GetDiggerManager())
+                                Mgr->CancelBakeQueue();
+                            return FReply::Handled();
+                        })
+                        [
+                            SNew(STextBlock)
+                            .Justification(ETextJustify::Center)
+                            .Text(FText::FromString(TEXT("Cancel")))
+                        ]
                     ]
                 ]
             ]
@@ -1730,6 +2129,23 @@ void FDiggerEdModeToolkit::DestroyWorklight()
     }
 }
 
+bool FDiggerEdModeToolkit::GetCameraFollowsBrush() const
+{
+    return bCameraFollowsBrush;
+}
+
+void FDiggerEdModeToolkit::SetCameraFollowsBrush(bool bFollow)
+{
+    bCameraFollowsBrush = bFollow;
+    // Persist to editor config so the L-key toggle survives restarts.
+    if (UDiggerEditorSettings* MutableSettings =
+            GetMutableDefault<UDiggerEditorSettings>())
+    {
+        MutableSettings->bCameraFollowsBrush = bFollow;
+        MutableSettings->SaveConfig();
+    }
+}
+
 void FDiggerEdModeToolkit::ToggleWorklight(bool bEnable)
 {
     bWorklightEnabled = bEnable;
@@ -1773,6 +2189,369 @@ void FDiggerEdModeToolkit::UpdateWorklightColor(const FLinearColor& NewColor)
     WorklightColor = NewColor;
     if (DiggerWorklightComponent) DiggerWorklightComponent->SetLightColor(NewColor);
 }
+
+// =============================================================================
+// DIGGER — Hole Optimization Panel
+// =============================================================================
+//
+// HOW TO INTEGRATE
+// ─────────────────
+// 1. HEADER  (DiggerEdModeToolkit.h)
+//    Add to the "Section Builders" region (wherever you declare your other
+//    Make___Section() methods):
+//
+//       TSharedRef<SWidget> MakeHoleOptimizationSection();
+//
+//    Add to the private member variable block:
+//
+//       // Hole Optimization state
+//       FIntVector OptimizationTargetChunk = FIntVector(0, 0, 0);
+//       TSharedPtr<STextBlock> HoleOptStatusText;   // live feedback label
+//
+// 2. CPP  (DiggerEdModeToolkit.cpp)
+//    a. Paste the MakeHoleOptimizationSection() implementation below into the
+//       .cpp (near the other Make___Section() definitions is cleanest).
+//
+//    b. In Init(), inside the "ADDITIONAL TOOLS" expandable area (section 3),
+//       or as its own top-level expandable area after section 3, add:
+//
+//          MainBox->AddSlot().AutoHeight().Padding(8, 12, 8, 4)
+//          [
+//              SNew(SExpandableArea)
+//              .AreaTitle(FText::FromString(TEXT("Hole Optimization")))
+//              .InitiallyCollapsed(true)
+//              .BodyContent()[ MakeHoleOptimizationSection() ]
+//          ];
+//
+// 3. INCLUDES  (top of DiggerEdModeToolkit.cpp, already present in your file)
+//    All needed headers (#include "VoxelChunk.h", EngineUtils, etc.) are
+//    already in your include list.  No new includes required.
+//
+// =============================================================================
+
+
+// -----------------------------------------------------------------------------
+// MakeHoleOptimizationSection
+// Builds the Hole Optimization panel body.
+// -----------------------------------------------------------------------------
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeHoleOptimizationSection()
+{
+    // ── Shared status label ───────────────────────────────────────────────────
+    // Declared as a member (HoleOptStatusText) so both button lambdas can write
+    // to it.  We construct it here and store the shared pointer.
+
+    TSharedRef<STextBlock> StatusLabel =
+        SNew(STextBlock)
+        .Text(FText::FromString(TEXT("No operation run yet.")))
+        .ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f)))
+        .AutoWrapText(true);
+
+    HoleOptStatusText = StatusLabel; // store for lambda capture
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    // Retrieves the VoxelChunk at OptimizationTargetChunk, or nullptr.
+    // Logs an error and updates the status label when the chunk is missing.
+    auto GetTargetChunk = [this]() -> UVoxelChunk*
+    {
+        ADiggerManager* Mgr = GetDiggerManager();
+        if (!Mgr)
+        {
+            if (HoleOptStatusText.IsValid())
+                HoleOptStatusText->SetText(
+                    FText::FromString(TEXT("No Digger Manager found. Place one in your level to use this tool.")));
+            return nullptr;
+        }
+
+        UVoxelChunk* Chunk = Mgr->GetChunkAtCoords(OptimizationTargetChunk);
+        if (!Chunk)
+        {
+            if (HoleOptStatusText.IsValid())
+                HoleOptStatusText->SetText(FText::FromString(FString::Printf(
+                    TEXT("Chunk (%d, %d, %d) is not loaded. Try sculpting in that area first."),
+                    OptimizationTargetChunk.X,
+                    OptimizationTargetChunk.Y,
+                    OptimizationTargetChunk.Z)));
+            return nullptr;
+        }
+
+        return Chunk;
+    };
+
+    // Formats a concise summary after an optimization pass.
+    auto MakeResultText = [](const FString& OpName, int32 Before, int32 After) -> FString
+    {
+        const int32 Removed = Before - After;
+        return FString::Printf(
+            TEXT("%s complete — %d holes before, %d after (%d removed)."),
+            *OpName, Before, After, Removed);
+    };
+
+    // ── Layout ────────────────────────────────────────────────────────────────
+    return SNew(SVerticalBox)
+
+    // ── Section description ───────────────────────────────────────────────────
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 6, 8, 2)
+    [
+        SNew(STextBlock)
+        .AutoWrapText(true)
+        .Text(FText::FromString(
+            TEXT("Manually reduce hole actor count on a chunk.\n"
+                 "Dedup removes near-identical holes (same shape / position / scale). "
+                 "Declutter removes holes whose volume is already covered by a larger hole.")))
+        .ColorAndOpacity(FSlateColor(FLinearColor(0.65f, 0.65f, 0.65f)))
+    ]
+
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 2)
+    [ SNew(SSeparator) ]
+
+    // ── Target chunk display (read-only for now, editable later) ─────────────
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 6, 8, 2)
+    [
+        SNew(SHorizontalBox)
+
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 6, 0)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("Target Chunk:")))
+            .Font(FAppStyle::GetFontStyle("PropertyWindow.NormalFont"))
+        ]
+
+        // X
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 2, 0)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("X")))
+            .ColorAndOpacity(FSlateColor(FLinearColor(0.8f, 0.3f, 0.3f)))
+        ]
+        + SHorizontalBox::Slot().MaxWidth(52.f).VAlign(VAlign_Center).Padding(0, 0, 6, 0)
+        [
+            SNew(SNumericEntryBox<int32>)
+            .Value_Lambda([this]() { return TOptional<int32>(OptimizationTargetChunk.X); })
+            .OnValueCommitted_Lambda([this](int32 Val, ETextCommit::Type)
+            {
+                OptimizationTargetChunk.X = Val;
+            })
+        ]
+
+        // Y
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 2, 0)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("Y")))
+            .ColorAndOpacity(FSlateColor(FLinearColor(0.3f, 0.8f, 0.3f)))
+        ]
+        + SHorizontalBox::Slot().MaxWidth(52.f).VAlign(VAlign_Center).Padding(0, 0, 6, 0)
+        [
+            SNew(SNumericEntryBox<int32>)
+            .Value_Lambda([this]() { return TOptional<int32>(OptimizationTargetChunk.Y); })
+            .OnValueCommitted_Lambda([this](int32 Val, ETextCommit::Type)
+            {
+                OptimizationTargetChunk.Y = Val;
+            })
+        ]
+
+        // Z
+        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 2, 0)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("Z")))
+            .ColorAndOpacity(FSlateColor(FLinearColor(0.3f, 0.5f, 0.9f)))
+        ]
+        + SHorizontalBox::Slot().MaxWidth(52.f).VAlign(VAlign_Center)
+        [
+            SNew(SNumericEntryBox<int32>)
+            .Value_Lambda([this]() { return TOptional<int32>(OptimizationTargetChunk.Z); })
+            .OnValueCommitted_Lambda([this](int32 Val, ETextCommit::Type)
+            {
+                OptimizationTargetChunk.Z = Val;
+            })
+        ]
+    ]
+
+    // ── Hole count readout ────────────────────────────────────────────────────
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 2, 8, 6)
+    [
+        SNew(STextBlock)
+        // Re-evaluated every frame so it always reflects live state.
+        .Text_Lambda([this]() -> FText
+        {
+            ADiggerManager* Mgr = GetDiggerManager();
+            if (!Mgr) return FText::FromString(TEXT("Holes in chunk: —"));
+
+            UVoxelChunk* Chunk = Mgr->GetChunkAtCoords(OptimizationTargetChunk);
+            if (!Chunk) return FText::FromString(TEXT("Holes in chunk: (chunk not loaded)"));
+
+            return FText::FromString(FString::Printf(
+                TEXT("Holes in chunk: %d"), Chunk->GetSpawnedHoleCount()));
+        })
+        .ColorAndOpacity(FSlateColor(FLinearColor(0.75f, 0.75f, 0.45f)))
+    ]
+
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 2)
+    [ SNew(SSeparator) ]
+
+    // ── Buttons ───────────────────────────────────────────────────────────────
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+    [
+        SNew(SHorizontalBox)
+
+        // ── Dedup ────────────────────────────────────────────────────────────
+        + SHorizontalBox::Slot().FillWidth(1.f).Padding(0, 0, 4, 0)
+        [
+            SNew(SButton)
+            .HAlign(HAlign_Center)
+            .VAlign(VAlign_Center)
+            .ContentPadding(FMargin(0, 8))
+            .ButtonColorAndOpacity(FLinearColor(0.12f, 0.22f, 0.38f))
+            .ToolTipText(FText::FromString(
+                TEXT("Remove exact or near-identical duplicate holes "
+                     "(same shape, snapped position, and scale).")))
+            .OnClicked_Lambda([this, GetTargetChunk, MakeResultText]() -> FReply
+            {
+                UVoxelChunk* Chunk = GetTargetChunk();
+                if (!Chunk) return FReply::Handled();
+
+                const int32 Before = Chunk->GetSpawnedHoleCount();
+
+                GEditor->BeginTransaction(FText::FromString(
+                    TEXT("Digger: Dedup Holes")));
+                Chunk->DedupHoles();
+                GEditor->EndTransaction();
+
+                const int32 After = Chunk->GetSpawnedHoleCount();
+
+                if (HoleOptStatusText.IsValid())
+                    HoleOptStatusText->SetText(FText::FromString(
+                        MakeResultText(TEXT("Dedup"), Before, After)));
+
+                GEditor->RedrawLevelEditingViewports();
+                return FReply::Handled();
+            })
+            [
+                SNew(STextBlock)
+                .Justification(ETextJustify::Center)
+                .Text(FText::FromString(TEXT("Dedup Holes")))
+                .Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
+            ]
+        ]
+
+        // ── Declutter ────────────────────────────────────────────────────────
+        + SHorizontalBox::Slot().FillWidth(1.f).Padding(4, 0, 0, 0)
+        [
+            SNew(SButton)
+            .HAlign(HAlign_Center)
+            .VAlign(VAlign_Center)
+            .ContentPadding(FMargin(0, 8))
+            .ButtonColorAndOpacity(FLinearColor(0.22f, 0.15f, 0.38f))
+            .ToolTipText(FText::FromString(
+                TEXT("Remove holes whose volume is already covered "
+                     "by a larger overlapping hole.")))
+            .OnClicked_Lambda([this, GetTargetChunk, MakeResultText]() -> FReply
+            {
+                UVoxelChunk* Chunk = GetTargetChunk();
+                if (!Chunk) return FReply::Handled();
+
+                const int32 Before = Chunk->GetSpawnedHoleCount();
+
+                GEditor->BeginTransaction(FText::FromString(
+                    TEXT("Digger: Declutter Holes")));
+                Chunk->DeclutterHoles();
+                GEditor->EndTransaction();
+
+                const int32 After = Chunk->GetSpawnedHoleCount();
+
+                if (HoleOptStatusText.IsValid())
+                    HoleOptStatusText->SetText(FText::FromString(
+                        MakeResultText(TEXT("Declutter"), Before, After)));
+
+                GEditor->RedrawLevelEditingViewports();
+                return FReply::Handled();
+            })
+            [
+                SNew(STextBlock)
+                .Justification(ETextJustify::Center)
+                .Text(FText::FromString(TEXT("Declutter Holes")))
+                .Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
+            ]
+        ]
+    ]
+
+    // ── Run both in sequence ──────────────────────────────────────────────────
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 4)
+    [
+        SNew(SButton)
+        .HAlign(HAlign_Center)
+        .VAlign(VAlign_Center)
+        .ContentPadding(FMargin(0, 6))
+        .ButtonColorAndOpacity(FLinearColor(0.18f, 0.32f, 0.18f))
+        .ToolTipText(FText::FromString(
+            TEXT("Runs Dedup first, then Declutter in a single transaction. "
+                 "Recommended for the best reduction.")))
+        .OnClicked_Lambda([this, GetTargetChunk, MakeResultText]() -> FReply
+        {
+            UVoxelChunk* Chunk = GetTargetChunk();
+            if (!Chunk) return FReply::Handled();
+
+            const int32 Before = Chunk->GetSpawnedHoleCount();
+
+            GEditor->BeginTransaction(FText::FromString(
+                TEXT("Digger: Optimize Holes (Dedup + Declutter)")));
+            Chunk->DedupHoles();
+            Chunk->DeclutterHoles();
+            GEditor->EndTransaction();
+
+            const int32 After = Chunk->GetSpawnedHoleCount();
+
+            if (HoleOptStatusText.IsValid())
+                HoleOptStatusText->SetText(FText::FromString(
+                    MakeResultText(TEXT("Dedup + Declutter"), Before, After)));
+
+            GEditor->RedrawLevelEditingViewports();
+            return FReply::Handled();
+        })
+        [
+            SNew(STextBlock)
+            .Justification(ETextJustify::Center)
+            .Text(FText::FromString(TEXT("Optimize (Dedup + Declutter)")))
+        ]
+    ]
+
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 2)
+    [ SNew(SSeparator) ]
+
+    // ── Status feedback ───────────────────────────────────────────────────────
+    + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 8)
+    [
+        StatusLabel
+    ];
+}
+
+
+// =============================================================================
+// REQUIRED: VoxelChunk::GetSpawnedHoleCount()
+// =============================================================================
+// Add this accessor to VoxelChunk.h (public section) so the UI can read the
+// live count without exposing the full SpawnedHoles array:
+//
+//   int32 GetSpawnedHoleCount() const { return SpawnedHoles.Num(); }
+//
+// And add this to VoxelChunk.h if not already present (used by GetTargetChunk):
+//
+//   // In DiggerManager.h / .cpp — expose a lookup by chunk coordinates:
+//   UVoxelChunk* GetChunkAtCoords(const FIntVector& ChunkCoords) const;
+//
+// If your manager already has GetOrCreateChunkAtCoords() you can alias it, or
+// add a non-creating variant:
+//
+//   UVoxelChunk* ADiggerManager::GetChunkAtCoords(const FIntVector& Coords) const
+//   {
+//       // Assumes you store chunks in a TMap<FIntVector, UVoxelChunk*> called Chunks
+//       UVoxelChunk* const* Found = Chunks.Find(Coords);
+//       return Found ? *Found : nullptr;
+//   }
+//
+// =============================================================================
 
 void FDiggerEdModeToolkit::GetElevationInfo(float& AbsoluteOut, float& RelativeOut) const
 {
@@ -1880,9 +2659,9 @@ void FDiggerEdModeToolkit::OnManagerRespawned()
     }
 
     // 2. Rebind island delegates — the old manager instance is gone, so any
-    //    delegates registered on it are dangling.  BindIslandDelegates() already
-    //    calls RemoveAll(this) before re-adding, so it is safe to call directly.
-    BindIslandDelegates();
+    //    delegates registered on it are dangling. ConnectIslandHub() disconnects
+    //    stale handles before re-binding, so it is safe to call directly.
+    ConnectIslandHub();
 
     // 3. Re-push the current brush type so the new manager is in sync with the UI.
     Manager->EditorBrushType = CurrentBrushType;
@@ -1963,7 +2742,7 @@ void FDiggerEdModeToolkit::RefreshSaveFilesList()
 
 FReply FDiggerEdModeToolkit::OnClearAllClicked()
 {
-    FText Msg = FText::FromString("WARNING: This will delete ALL voxel changes.\nAre you sure?");
+    FText Msg = FText::FromString("This will permanently erase all voxel sculpting in the current level.\n\nThis action cannot be undone. Are you sure?");
     if (FMessageDialog::Open(EAppMsgType::YesNo, Msg) == EAppReturnType::Yes)
     {
         if (Manager)
@@ -2082,23 +2861,21 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDMMHeaderRow()
 
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeDMMToolbar()
 {
+    // Sediment and Landscape tabs are hidden for initial release.
+    // Only Utilities is exposed until DMM is ready for public testing.
     return SNew(SHorizontalBox)
     + SHorizontalBox::Slot().AutoWidth().Padding(2)
     [
-        SNew(SButton).Text(FText::FromString("Sediment")).OnClicked_Lambda([this](){ CurrentDMMMode=EDMMPanelMode::Sediment; SaveDMMState(); return FReply::Handled(); })
-    ]
-    + SHorizontalBox::Slot().AutoWidth().Padding(2)
-    [
-        SNew(SButton).Text(FText::FromString("Landscape")).OnClicked_Lambda([this](){ CurrentDMMMode=EDMMPanelMode::Landscape; SaveDMMState(); return FReply::Handled(); })
-    ]
-    + SHorizontalBox::Slot().FillWidth(1.0f).Padding(4,0)
-    [
-        SNew(SObjectPropertyEntryBox)
-        .AllowedClass(UDiggerMaterialProfile::StaticClass())
-        .ObjectPath_Lambda([this](){ return ActiveMaterialProfile.IsValid() ? ActiveMaterialProfile->GetPathName() : ""; })
-        .OnObjectChanged_Lambda([this](const FAssetData& Data){ ActiveMaterialProfile = Cast<UDiggerMaterialProfile>(Data.GetAsset()); SaveDMMState(); if(SedimentBodyBox.IsValid()) SedimentBodyBox->SetContent(MakeSedimentBody()); })
-        .AllowClear(true)
+        SNew(SButton)
+        .Text(FText::FromString("Utilities"))
+        .OnClicked_Lambda([this]()
+        {
+            CurrentDMMMode = EDMMPanelMode::Utilities;
+            SaveDMMState();
+            return FReply::Handled();
+        })
     ];
+    // Profile picker intentionally omitted until Sediment/Landscape tabs are released.
 }
 
 TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSedimentBody()
@@ -2176,9 +2953,408 @@ TSharedRef<SWidget> FDiggerEdModeToolkit::MakeSedimentLayerRow(int32 Index)
     ];
 }
 
-// Stubs for other DMM tabs
-TSharedRef<SWidget> FDiggerEdModeToolkit::MakeLandscapeBody() { return SNew(STextBlock).Text(FText::FromString("Landscape Mode (Coming Soon)")); }
-TSharedRef<SWidget> FDiggerEdModeToolkit::MakeUtilitiesBody() { return SNew(STextBlock).Text(FText::FromString("Utilities (Coming Soon)")); }
+// Other DMM Tabs
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeLandscapeBody()
+{
+    // Landscape tab — placeholder for future landscape layer painting tools.
+    // For now, direct users to Utilities for the one-click setup.
+    return SNew(SVerticalBox)
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 12)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(
+                "Landscape layer painting tools are planned for a future update.\n"
+                "Use the Utilities tab to set up your landscape for dynamic holes."))
+            .AutoWrapText(true)
+            .ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f)))
+        ];
+}
+
+TSharedRef<SWidget> FDiggerEdModeToolkit::MakeUtilitiesBody()
+{
+    return SNew(SVerticalBox)
+
+        // ── Section title ──────────────────────────────────────────────────
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 8, 4, 4)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString("Dynamic Holes - Landscape Setup"))
+            .Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
+        ]
+
+        // ── Preflight checklist (live, recomputed each frame via _Lambda) ──
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 4)
+        [
+            SNew(SBorder)
+            .BorderImage(FAppStyle::GetBrush("ToolPanel.DarkGroupBorder"))
+            .Padding(8)
+            [
+                SNew(SVerticalBox)
+
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString("Pre-flight Check"))
+                    .Font(FAppStyle::GetFontStyle("PropertyWindow.NormalFont"))
+                    .ColorAndOpacity(FSlateColor(FLinearColor(0.9f, 0.9f, 0.9f)))
+                ]
+
+                // Landscape status
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]()
+                        {
+                            ADiggerManager* Mgr = GetDiggerManager();
+                            if (!Mgr) return FText::FromString("[?]");
+                            auto R = Mgr->RunSetupPreflight();
+                            return FText::FromString(R.bHasLandscape ? "[OK]" : "[!!]");
+                        })
+                        .ColorAndOpacity_Lambda([this]()
+                        {
+                            ADiggerManager* Mgr = GetDiggerManager();
+                            if (!Mgr) return FSlateColor(FLinearColor::Gray);
+                            auto R = Mgr->RunSetupPreflight();
+                            return FSlateColor(R.bHasLandscape
+                                ? FLinearColor(0.2f, 0.9f, 0.2f)
+                                : FLinearColor(0.9f, 0.2f, 0.2f));
+                        })
+                    ]
+                    + SHorizontalBox::Slot().FillWidth(1.f)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]()
+                        {
+                            ADiggerManager* Mgr = GetDiggerManager();
+                            if (!Mgr) return FText::FromString("No DiggerManager in scene");
+                            auto R = Mgr->RunSetupPreflight();
+                            return R.bHasLandscape
+                                ? FText::FromString(FString::Printf(
+                                    TEXT("Landscape found (%d proxy/proxies)"),
+                                    R.LandscapeProxyCount))
+                                : FText::FromString("No landscape found in scene");
+                        })
+                        .AutoWrapText(true)
+                        .ColorAndOpacity(FSlateColor(FLinearColor(0.75f, 0.75f, 0.75f)))
+                    ]
+                ]
+
+                // RVT status
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]()
+                        {
+                            ADiggerManager* Mgr = GetDiggerManager();
+                            if (!Mgr) return FText::FromString("[?]");
+                            auto R = Mgr->RunSetupPreflight();
+                            return FText::FromString(R.bHasRVT ? "[OK]" : "[--]");
+                        })
+                        .ColorAndOpacity_Lambda([this]()
+                        {
+                            ADiggerManager* Mgr = GetDiggerManager();
+                            if (!Mgr) return FSlateColor(FLinearColor::Gray);
+                            auto R = Mgr->RunSetupPreflight();
+                            return FSlateColor(R.bHasRVT
+                                ? FLinearColor(0.2f, 0.9f, 0.2f)
+                                : FLinearColor(0.9f, 0.8f, 0.1f));
+                        })
+                    ]
+                    + SHorizontalBox::Slot().FillWidth(1.f)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]()
+                        {
+                            ADiggerManager* Mgr = GetDiggerManager();
+                            if (!Mgr) return FText::FromString("");
+                            auto R = Mgr->RunSetupPreflight();
+                            return R.bHasRVT
+                                ? FText::FromString("RVT found on landscape")
+                                : FText::FromString(
+                                    "No RVT found - will be created automatically");
+                        })
+                        .AutoWrapText(true)
+                        .ColorAndOpacity(FSlateColor(FLinearColor(0.75f, 0.75f, 0.75f)))
+                    ]
+                ]
+
+                // Material blend mode status
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]()
+                        {
+                            ADiggerManager* Mgr = GetDiggerManager();
+                            if (!Mgr) return FText::FromString("[?]");
+                            auto R = Mgr->RunSetupPreflight();
+                            return FText::FromString(
+                                R.bAllMaterialsMasked ? "[OK]" : "[--]");
+                        })
+                        .ColorAndOpacity_Lambda([this]()
+                        {
+                            ADiggerManager* Mgr = GetDiggerManager();
+                            if (!Mgr) return FSlateColor(FLinearColor::Gray);
+                            auto R = Mgr->RunSetupPreflight();
+                            return FSlateColor(R.bAllMaterialsMasked
+                                ? FLinearColor(0.2f, 0.9f, 0.2f)
+                                : FLinearColor(0.9f, 0.8f, 0.1f));
+                        })
+                    ]
+                    + SHorizontalBox::Slot().FillWidth(1.f)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]()
+                        {
+                            ADiggerManager* Mgr = GetDiggerManager();
+                            if (!Mgr) return FText::FromString("");
+                            auto R = Mgr->RunSetupPreflight();
+                            return R.bAllMaterialsMasked
+                                ? FText::FromString(
+                                    "Landscape material Blend Mode is Masked")
+                                : FText::FromString(
+                                    "Blend Mode not Masked - will be fixed automatically");
+                        })
+                        .AutoWrapText(true)
+                        .ColorAndOpacity(FSlateColor(FLinearColor(0.75f, 0.75f, 0.75f)))
+                    ]
+                ]
+
+                // MF_SetAttribs status
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]()
+                        {
+                            ADiggerManager* Mgr = GetDiggerManager();
+                            if (!Mgr) return FText::FromString("[?]");
+                            auto R = Mgr->RunSetupPreflight();
+                            return FText::FromString(
+                                R.bMFSetAttribsDetected ? "[OK]" : "[--]");
+                        })
+                        .ColorAndOpacity_Lambda([this]()
+                        {
+                            ADiggerManager* Mgr = GetDiggerManager();
+                            if (!Mgr) return FSlateColor(FLinearColor::Gray);
+                            auto R = Mgr->RunSetupPreflight();
+                            return FSlateColor(R.bMFSetAttribsDetected
+                                ? FLinearColor(0.2f, 0.9f, 0.2f)
+                                : FLinearColor(0.9f, 0.8f, 0.1f));
+                        })
+                    ]
+                    + SHorizontalBox::Slot().FillWidth(1.f)
+                    [
+                        SNew(STextBlock)
+                        .Text_Lambda([this]()
+                        {
+                            ADiggerManager* Mgr = GetDiggerManager();
+                            if (!Mgr) return FText::FromString("");
+                            auto R = Mgr->RunSetupPreflight();
+                            return R.bMFSetAttribsDetected
+                                ? FText::FromString(
+                                    "Opacity injection function detected")
+                                : FText::FromString(
+                                    "Opacity injection not found - "
+                                    "will be injected automatically during setup");
+                        })
+                        .AutoWrapText(true)
+                        .ColorAndOpacity(FSlateColor(FLinearColor(0.75f, 0.75f, 0.75f)))
+                    ]
+                ]
+            ]
+        ]
+
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4, 8, 8)
+        [
+            SNew(STextBlock)
+            .AutoWrapText(true)
+            .Text(FText::FromString(
+                "Setup automatically configures everything above. "
+                "Your landscape material will be modified directly - "
+                "Digger injects opacity mask nodes into the material graph "
+                "to enable dynamic holes. A backup of your original material "
+                "is saved to /Game/Digger/Backups/ before any changes are made."))
+            .ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f)))
+        ]
+
+        // ── Main setup button ──────────────────────────────────────────────
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+        [
+            SNew(SButton)
+            .HAlign(HAlign_Center)
+            .VAlign(VAlign_Center)
+            .ButtonColorAndOpacity_Lambda([this]()
+            {
+                ADiggerManager* Mgr = GetDiggerManager();
+                if (!Mgr) return FLinearColor(0.3f, 0.3f, 0.3f);
+                return Mgr->RunSetupPreflight().bHasLandscape
+                    ? FLinearColor(0.1f, 0.4f, 0.15f)
+                    : FLinearColor(0.3f, 0.3f, 0.3f);
+            })
+            .ContentPadding(FMargin(0, 10))
+            .IsEnabled_Lambda([this]()
+            {
+                ADiggerManager* Mgr = GetDiggerManager();
+                return Mgr != nullptr &&
+                       Mgr->RunSetupPreflight().bHasLandscape;
+            })
+            .OnClicked_Lambda([this]() -> FReply
+            {
+                ADiggerManager* Mgr = GetDiggerManager();
+                if (!Mgr) return FReply::Handled();
+
+                const EAppReturnType::Type Confirm = FMessageDialog::Open(
+                    EAppMsgType::YesNo,
+                    FText::FromString(
+                        "Digger will automatically configure your landscape "
+                        "for dynamic holes. This includes:\n\n"
+                        "- Creating an RVT asset if none exists\n"
+                        "- Spawning an RVT Volume covering all landscapes\n"
+                        "- Setting Blend Mode to Masked if needed\n"
+                        "- Injecting opacity mask nodes into your landscape material\n"
+                        "- Setting VirtualTextureRenderPassType to Always\n\n"
+                        "A BACKUP of your original material will be saved to:\n"
+                        "  /Game/Digger/Backups/\n\n"
+                        "The editor will need to restart after setup for\n"
+                        "changes to take effect.\n\n"
+                        "Continue?"));
+
+                if (Confirm != EAppReturnType::Yes)
+                    return FReply::Handled();
+
+                Mgr->AutoSetupLandscapeForDynamicHoles();
+
+                // Save all dirty packages before restart
+                FEditorFileUtils::SaveDirtyPackages(
+                    /*bPromptUserToSave=*/ false,
+                    /*bSaveMapPackages=*/ true,
+                    /*bSaveContentPackages=*/ true);
+
+                // Prompt user to restart
+                const EAppReturnType::Type RestartConfirm = FMessageDialog::Open(
+                    EAppMsgType::YesNo,
+                    FText::FromString(
+                        "Digger: Landscape setup complete!\n\n"
+                        "The editor needs to restart for all material\n"
+                        "changes to take effect properly.\n\n"
+                        "Restart now?"));
+
+                if (RestartConfirm == EAppReturnType::Yes)
+                {
+                    FUnrealEdMisc::Get().RestartEditor(/*bWarn=*/ false);
+                }
+                else
+                {
+                    FNotificationInfo Info(FText::FromString(
+                        "Digger: Setup complete. Please restart the editor "
+                        "for changes to take full effect."));
+                    Info.ExpireDuration = 8.0f;
+                    FSlateNotificationManager::Get().AddNotification(Info);
+                }
+
+                return FReply::Handled();
+            })
+            [
+                SNew(STextBlock)
+                .Justification(ETextJustify::Center)
+                .Text(FText::FromString("Setup Landscape for Dynamic Holes"))
+                .Font(FAppStyle::GetFontStyle("DetailsView.CategoryFontStyle"))
+            ]
+        ]
+
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 2)
+        [ SNew(SSeparator) ]
+
+        // ── Refresh ────────────────────────────────────────────────────────
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 8, 4, 2)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString("Repair / Refresh"))
+            .Font(FAppStyle::GetFontStyle("PropertyWindow.NormalFont"))
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 4)
+        [
+            SNew(STextBlock)
+            .AutoWrapText(true)
+            .Text(FText::FromString(
+                "Re-run setup after sculpting your landscape or changing "
+                "its material to update RVT Volume bounds and material assignments."))
+            .ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f)))
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+        [
+            SNew(SButton)
+            .HAlign(HAlign_Center)
+            .ContentPadding(FMargin(0, 6))
+            .OnClicked_Lambda([this]() -> FReply
+            {
+                if (ADiggerManager* Mgr = GetDiggerManager())
+                    Mgr->AutoSetupLandscapeForDynamicHoles();
+                return FReply::Handled();
+            })
+            [ SNew(STextBlock).Justification(ETextJustify::Center)
+              .Text(FText::FromString("Refresh Landscape Setup")) ]
+        ]
+
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 2)
+        [ SNew(SSeparator) ]
+
+        // ── Shadow flush ───────────────────────────────────────────────────
+        + SVerticalBox::Slot().AutoHeight().Padding(4, 8, 4, 2)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString("Shadow System"))
+            .Font(FAppStyle::GetFontStyle("PropertyWindow.NormalFont"))
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 0, 8, 8)
+        [
+            SNew(STextBlock)
+            .AutoWrapText(true)
+            .Text(FText::FromString(
+                "Digger automatically invalidates shadow cache around each hole. "
+                "Use the button below if you see persistent shadow artifacts."))
+            .ColorAndOpacity(FSlateColor(FLinearColor(0.6f, 0.6f, 0.6f)))
+        ]
+        + SVerticalBox::Slot().AutoHeight().Padding(8, 4)
+        [
+            SNew(SButton)
+            .HAlign(HAlign_Center)
+            .ContentPadding(FMargin(0, 6))
+            .OnClicked_Lambda([this]() -> FReply
+            {
+                if (IConsoleVariable* CVar =
+                    IConsoleManager::Get().FindConsoleVariable(
+                        TEXT("r.Shadow.Virtual.Cache")))
+                {
+                    CVar->Set(0, ECVF_SetByCode);
+                    if (GEditor)
+                    {
+                        GEditor->GetTimerManager()->SetTimerForNextTick(
+                            FTimerDelegate::CreateLambda([CVar]()
+                            {
+                                CVar->Set(1, ECVF_SetByCode);
+                            }));
+                    }
+                }
+                if (GEditor) GEditor->RedrawLevelEditingViewports();
+                return FReply::Handled();
+            })
+            [ SNew(STextBlock).Justification(ETextJustify::Center)
+              .Text(FText::FromString("Force Flush Shadow Cache")) ]
+        ];
+}
+
 
 // DMM Actions
 FReply FDiggerEdModeToolkit::OnDMMHeaderClicked() { bShowMaterialManagerSection = !bShowMaterialManagerSection; return FReply::Handled(); }

@@ -32,6 +32,9 @@ UDiggerEditorSettings::UDiggerEditorSettings()
 	TorusBrushMesh      = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Digger/Digger/DynamicHoles/HoleMeshes/DH_Torus.DH_Torus")));
 
 	bSmoothBrushLandscapeAware = false;
+	bCameraFollowsBrush = true; // follows brush by default; persisted via Config=Editor
+	bFallbackToLandscapeWhenNoMeshHit = true;
+	TunnelSuppressionAngleDeg         = 60.f;
 	
 	// UI/Holes
 	bShowDynamicHolesFolder = false; // default visible

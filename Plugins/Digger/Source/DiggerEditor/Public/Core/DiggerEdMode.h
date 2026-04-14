@@ -25,6 +25,7 @@ class FDiggerEdMode;
 class UPointLightComponent;
 class ABrushPreviewActor;
 class ADiggerManager;
+struct FDiggerLoadProgress;
 
 // FORWARD DECLARATION (Fixes Circular Dependency)
 class FDiggerEdModeToolkit;
@@ -208,7 +209,6 @@ public:
     // Legacy/Helper methods
     void SetPaintMode(bool bEnabled) { bPaintingEnabled = bEnabled; }
     bool IsPaintModeEnabled() const { return bPaintingEnabled; }
-    bool HandleClickSimple(const FVector& RayOrigin, const FVector& RayDirection);
 
     // Continuous Application
     void StartContinuousApplication(const FViewportClick& Click);
@@ -227,6 +227,11 @@ public:
     // Events
     static FOnDiggerModeChanged OnDiggerModeChanged;
     static bool bIsDiggerModeCurrentlyActive;
+
+    // Load progress notification (Slate lives in editor module, not runtime).
+    TWeakPtr<SNotificationItem> LoadProgressNotification;
+    double LoadNotifStartTime = 0.0;
+    void OnDiggerLoadProgress(const FDiggerLoadProgress& Progress);
 
 public:
 
@@ -400,11 +405,21 @@ private:
     bool bOffsetModeLatched   = false;
     bool bIsSamplingNormal = false;
     bool bHasLastStrokeSample = false;
+    // Set by StopContinuousApplication() when it commits the action itself,
+    // so EndTracking knows not to call CommitPendingAction() a second time.
+    bool bStrokeCommittedByContinuous = false;
+
+    // Viewport refresh — set true whenever visuals change, consumed by Tick
+    bool bNeedsViewportRefresh = false;
+    void MarkViewportDirty() { bNeedsViewportRefresh = true; }
 
     // Loading Indication
     float LoadingSpriteRotation = 0.f;
     bool bIsBrushBusy = false;
     
+
+    // Worklight position cache — only update when camera moves significantly
+    FVector LastWorklightCameraPos = FVector(FLT_MAX);
 
     // --- Scroll Velocity Variables ---
     float ScrollVelocity = 0.0f;
@@ -416,6 +431,10 @@ private:
     FVector LastStrokeHitLocation = FVector::ZeroVector;
     FVector LastStrokePreviewCenter = FVector::ZeroVector;
     FVector2D LastPaintLocation = FVector2D::ZeroVector;
+    // XY position of the last successfully spawned hole BP.
+    // Initialised to FLT_MAX sentinel so the first application of any stroke
+    // always passes the distance gate.  Reset at the start of each stroke.
+    FVector LastHoleSpawnPos = FVector(FLT_MAX, FLT_MAX, 0.f);
     float ContinuousApplicationInterval = 5.0f;
 public:
     FBrushCache BrushCache;

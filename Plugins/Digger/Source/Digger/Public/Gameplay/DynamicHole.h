@@ -9,6 +9,7 @@
 
 class ADiggerManager;
 class UVoxelBrushShape;
+class URuntimeVirtualTexture;
 
 
 UCLASS(BlueprintType, Blueprintable)
@@ -20,6 +21,7 @@ public:
 	ADynamicHole();
 	bool ContainsPoint(const FVector& WorldPos) const;
 	FVector ActorToLocal(const FVector& WorldPos) const;
+	void ConfigureRVTRendering(URuntimeVirtualTexture* DiggerRVT);
 
 public:
 	// Add this simple setter
@@ -67,7 +69,16 @@ public:
 	{
 		return CachedStroke.BrushRadius;
 	}
-
+	
+	// Returns the unscaled base radius of this hole type (pre-scale).
+	// Used by SpawnMergedHole to convert a world-space radius back into actor scale.
+	float GetBaseRadius() const
+	{
+		// PrepareShapeData() always derives BrushRadius as BaseSize * Scale.GetMax()
+		// where BaseSize is 100.0f. That is the authoritative base unit for all
+		// hole shapes in this system.
+		return 100.0f;
+	}
 
 public:
 
@@ -111,9 +122,21 @@ protected:
 	virtual void BeginPlay() override;
 
 private:
-	int32 HoleID; // Hole ID assigned by the chunk
-	FIntVector CurrentChunkCoords; // For detecting if the hole has moved between chunks
-	FIntVector PreviousChunkCoords; // For detecting if the hole has moved between chunks
+	int32 HoleID; // Hole ID assigned by the chunk (legacy counter — use HoleUID for new code)
+
+public:
+	// Stable globally-unique ID assigned by ADiggerManager::AllocateActorUID().
+	// INDEX_NONE until SetDiggerManager() assigns one during SpawnHoleFromData.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Hole Data")
+	int32 HoleUID = INDEX_NONE;
+
+private:
+	FIntVector CurrentChunkCoords;  // chunk the hole currently belongs to
+	FIntVector PreviousChunkCoords; // chunk before most recent move
+
+	// Transform captured at the start of a PostEditMove drag so the history
+	// system can record the full pre→post transform delta on mouse-up.
+	FTransform PreMoveTransform;
 
 	UPROPERTY()
 	ADiggerManager* DiggerManager;
@@ -145,8 +168,5 @@ public:
 		return DiggerManager;
 	}
 
-	void SetDiggerManager(ADiggerManager* InDiggerManager)
-	{
-		this->DiggerManager = InDiggerManager;
-	}
+	void SetDiggerManager(ADiggerManager* InDiggerManager);
 };

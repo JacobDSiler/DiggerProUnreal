@@ -362,14 +362,14 @@ void UDiggerLandscapeCache::DebugSample(const FVector& WorldPos)
     if (!H.IsSet())
     {
         DrawDebugSphere(WorldContext, WorldPos, 20.f, 12, FColor::Red, false, 5.f);
-        UE_LOG(LogTemp, Error, TEXT("DebugSample FAILED at %s"), *WorldPos.ToString());
+        UE_LOG(LogTemp, Verbose, TEXT("DebugSample FAILED at %s"), *WorldPos.ToString());
         return;
     }
 
     FVector Hit(WorldPos.X, WorldPos.Y, H.GetValue());
     DrawDebugSphere(WorldContext, Hit, 20.f, 12, FColor::Green, false, 5.f);
 
-    UE_LOG(LogTemp, Warning, TEXT("DebugSample Height=%.2f at %s"), H.GetValue(), *Hit.ToString());
+    UE_LOG(LogTemp, Verbose, TEXT("DebugSample Height=%.2f at %s"), H.GetValue(), *Hit.ToString());
 }
 
 

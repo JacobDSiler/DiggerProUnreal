@@ -95,6 +95,9 @@ public:
 	TMap<FIntVector, FVoxelData> GetAllVoxels() const;
 	TMap<FIntVector, float> GetAllVoxelsSDF() const;
 
+	/** Direct const reference to internal voxel data — avoids copy in mesh generation hot path. */
+	const TMap<FIntVector, FVoxelData>& GetVoxelDataRef() const { return VoxelData; }
+
 
 	void LogVoxelData() const;
 
@@ -110,6 +113,13 @@ public:
 	void RemoveVoxels(const TArray<FIntVector>& VoxelsToRemove);
 	void RemoveSpecifiedVoxels(const TArray<FIntVector>& LocalVoxels);
 	bool RemoveVoxel(const FIntVector& LocalVoxel);
+
+	/**
+	 * Undo/redo primitive — force-writes an exact SDF value without blending
+	 * or near-zero rejection.  Never call this from a brush stroke; use
+	 * SetVoxel() for normal edits so blend semantics are preserved.
+	 */
+	void ForceSetVoxel(const FIntVector& Key, float SDFValue);
 
 	// ------------------------------------------------------------------------------------------
 	// Island tools

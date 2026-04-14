@@ -2,19 +2,16 @@
 
 #include "DynamicHole.h"
 #include "DiggerManager.h"
+#include "DiggerHistory.h"
 #include "HoleShapeLibrary.h"
 #include "VoxelChunk.h"
 #include "Components/StaticMeshComponent.h"
 #include "UObject/ConstructorHelpers.h"
+#include "VT/RuntimeVirtualTexture.h"
 
 ADynamicHole::ADynamicHole()
 {
 	PrimaryActorTick.bCanEverTick = false;
-
-	// ---------------------------------------------------------
-	// Hole Validation
-	// ---------------------------------------------------------
-	ValidateSpawnAgainstLandscape();
 
 	// ---------------------------------------------------------
 	// 1. COMPONENT SETUP
@@ -115,6 +112,17 @@ void ADynamicHole::SetHoleMesh(UStaticMesh* NewMesh)
 	}
 }
 
+void ADynamicHole::ConfigureRVTRendering(URuntimeVirtualTexture* DiggerRVT)
+{
+	if (!HoleMeshComponent || !DiggerRVT) return;
+	// Clear any existing RVTs (e.g. proc mesh RVT from default construction)
+	// and set ONLY the Digger opacity RVT so the hole writes to the correct target.
+	HoleMeshComponent->RuntimeVirtualTextures.Empty();
+	HoleMeshComponent->RuntimeVirtualTextures.Add(DiggerRVT);
+	HoleMeshComponent->VirtualTextureRenderPassType = ERuntimeVirtualTextureMainPassType::Never;
+	HoleMeshComponent->MarkRenderStateDirty();
+}
+
 void ADynamicHole::BeginPlay()
 {
 	Super::BeginPlay();
@@ -189,17 +197,23 @@ void ADynamicHole::PostEditMove(bool bFinished)
 	Super::PostEditMove(bFinished);
 
 	if (!bFinished)
-		return; // Only reassign when the user releases the mouse
+	{
+		// Drag start — snapshot the transform BEFORE the move so we can record
+		// the full delta when bFinished fires.
+		PreMoveTransform = GetActorTransform();
+		return;
+	}
 
-	// Determine new chunk
+	// --- Drag end ---
+
+	// 1. Determine new chunk
 	FIntVector NewCoords = FVoxelConversion::WorldToChunk(GetActorLocation());
 
 	if (NewCoords != CurrentChunkCoords)
 	{
+		// Transfer chunk ownership
 		if (OwningChunk)
-		{
 			OwningChunk->RemoveHoleFromChunk(this);
-		}
 
 		UVoxelChunk* NewChunk = FindOwningChunk(NewCoords);
 		if (NewChunk)
@@ -208,7 +222,21 @@ void ADynamicHole::PostEditMove(bool bFinished)
 			OwningChunk = NewChunk;
 		}
 
-		CurrentChunkCoords = NewCoords;
+		PreviousChunkCoords = CurrentChunkCoords;
+		CurrentChunkCoords  = NewCoords;
+	}
+
+	// 2. Record the move for undo
+	if (DiggerManager && HoleUID != INDEX_NONE)
+	{
+		FDiggerActorMoveRecord Rec;
+		Rec.ActorType     = EDiggerActorType::Hole;
+		Rec.ActorUID      = HoleUID;
+		Rec.PreTransform  = PreMoveTransform;
+		Rec.PostTransform = GetActorTransform();
+		Rec.OldChunkCoords = PreviousChunkCoords;
+		Rec.NewChunkCoords = CurrentChunkCoords;
+		DiggerManager->RecordActorMove(MoveTemp(Rec));
 	}
 }
 #endif
@@ -235,7 +263,7 @@ void ADynamicHole::SetOwningChunk(UVoxelChunk* NewChunk)
 		UE_LOG(LogTemp, Warning,
 			TEXT("DynamicHole %s now owned by chunk %s"),
 			*GetName(),
-			OwningChunk ? *OwningChunk->GetChunkCoordinates().ToString() : TEXT("NONE"));
+			OwningChunk ? *OwningChunk->GetChunkCoords().ToString() : TEXT("NONE"));
 }
 
 void ADynamicHole::ValidateSpawnAgainstLandscape()
@@ -320,7 +348,7 @@ UVoxelChunk* ADynamicHole::FindOwningChunk(const FIntVector& ChunkCoords) const
 	if (!DiggerManager)
 		return nullptr;
 	
-	return DiggerManager->GetOrCreateChunkAtChunk(ChunkCoords);
+	return DiggerManager->GetOrCreateChunkAtCoords(ChunkCoords);
 }
 
 
@@ -349,6 +377,14 @@ void ADynamicHole::PrepareShapeData()
 	CachedStroke.TorusInnerRadius         = 0.5f * BaseSize * FMath::Min3(Scale.X, Scale.Y, Scale.Z);
 	CachedStroke.BrushLength              = BaseSize * Scale.Z;
 	CachedStroke.HoleShape                = HoleShape.ShapeType;
+
+#if WITH_EDITORONLY_DATA
+	if (DiggerManager)
+	{
+		if (URuntimeVirtualTexture* RVT = DiggerManager->ResolveDiggerRVTForPosition(GetActorLocation()))
+			ConfigureRVTRendering(RVT);
+	}
+#endif
 }
 
 // Full update: prepares shape data AND assigns the mesh.
@@ -392,8 +428,18 @@ void ADynamicHole::SyncWithChunk()
 		FVector HoleLocation = GetActorLocation();
 		FRotator HoleRotation = GetActorRotation();
 		FVector HoleScale = GetActorScale();
-
-		// Send updated hole data to the chunk
 		OwningChunk->SaveHoleData(HoleLocation, HoleRotation, HoleScale);
 	}
+}
+
+void ADynamicHole::SetDiggerManager(ADiggerManager* InDiggerManager)
+{
+	DiggerManager = InDiggerManager;
+#if WITH_EDITORONLY_DATA
+	if (DiggerManager)
+	{
+		if (URuntimeVirtualTexture* RVT = DiggerManager->ResolveDiggerRVTForPosition(GetActorLocation()))
+			ConfigureRVTRendering(RVT);
+	}
+#endif
 }

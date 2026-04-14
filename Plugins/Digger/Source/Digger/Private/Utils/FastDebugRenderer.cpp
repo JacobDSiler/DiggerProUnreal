@@ -45,7 +45,6 @@ void UFastDebugRenderer::DrawBoxLinesBatch(UWorld* World, const TArray<FVector>&
     }
 
 
-    UE_LOG(LogTemp, Error, TEXT("FastRenderer Used!"));
     // Batch draw all boxes at once
     FColor DrawColor = Config.Color.ToFColor(true);
     

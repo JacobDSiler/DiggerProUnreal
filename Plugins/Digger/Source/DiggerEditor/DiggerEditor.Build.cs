@@ -100,13 +100,17 @@ public class DiggerEditor : ModuleRules
             "GeometryCore",
         });
 
-        // Networking (editor-only tools like DiggerConnect)
+        // Networking (editor-only tools like DiggerConnect) — optional
         PrivateDependencyModuleNames.AddRange(new[]
         {
-            "SocketIOClient",
             "HTTP",
             "WebSockets",
             "ApplicationCore",
         });
+        string SocketIOPluginDir = Path.Combine(PluginDirectory, "..", "SocketIOClient");
+        if (Directory.Exists(SocketIOPluginDir))
+        {
+            PrivateDependencyModuleNames.Add("SocketIOClient");
+        }
     }
 }

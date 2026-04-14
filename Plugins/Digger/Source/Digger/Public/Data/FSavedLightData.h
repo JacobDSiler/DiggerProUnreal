@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "FLightBrushTypes.h"
 #include "DynamicLightActor.h" // Required to spawn the class
+#include "VoxelConversion.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/SpotLightComponent.h"
 #include "Components/PointLightComponent.h"
@@ -10,6 +11,9 @@
 #include "Engine/SpotLight.h"
 #include "Engine/DirectionalLight.h"
 #include "FSavedLightData.generated.h"
+
+// Forward declare to avoid circular include; implementation in .cpp files.
+class ADiggerManager;
 
 USTRUCT(BlueprintType)
 struct FSavedLightData
@@ -64,10 +68,8 @@ struct FSavedLightData
 		Rotation = LightActor->GetActorRotation();
 		Scale = LightActor->GetActorScale3D();
 
-		// Check if it is our custom actor first
 		if (const ADynamicLightActor* DynamicLight = Cast<ADynamicLightActor>(LightActor))
 		{
-			// Assuming the actor has a component we can inspect
 			if (ULightComponent* LightComp = DynamicLight->FindComponentByClass<ULightComponent>())
 			{
 				LightColor = LightComp->GetLightColor();
@@ -129,63 +131,69 @@ struct FSavedLightData
 		}
 	}
 
-	/** Spawn a light actor in the given world using this saved data */
-	AActor* SpawnLightActor(UWorld* World) const
+	/** Spawn a light actor in the given world using this saved data.
+	 *
+	 *  InDiggerManager: optional.  When provided the spawned light is
+	 *  registered in the UID registry so undo/redo can find it by ID.
+	 *  Pass nullptr when spawning from a context without a manager (e.g.
+	 *  preview, cooking). */
+	AActor* SpawnLightActor(UWorld* World, ADiggerManager* InDiggerManager = nullptr) const
 	{
 		if (!World) return nullptr;
 
-		// 1. Spawn the Custom Dynamic Light Actor
 		ADynamicLightActor* NewLight = World->SpawnActor<ADynamicLightActor>(
 			ADynamicLightActor::StaticClass(), Location, Rotation);
 
-		if (NewLight)
+		if (!NewLight) return nullptr;
+
+		NewLight->SetActorScale3D(Scale);
+		NewLight->InitLight(LightType);
+
+		// Wire up manager + allocate UID so the actor enters the undo registry.
+		if (InDiggerManager)
 		{
-			NewLight->SetActorScale3D(Scale);
+			NewLight->SetDiggerManager(InDiggerManager);
+			const int32 NewUID = InDiggerManager->AllocateActorUID();
+			NewLight->ActorUID = NewUID;
+			InDiggerManager->RegisterActorUID(NewUID, NewLight);
 
-			// 2. Initialize the Component (Create Point/Spot/Dir component based on enum)
-			NewLight->InitLight(LightType);
-
-			// 3. Find the newly created component to apply settings
-			ULightComponent* LightComp = NewLight->FindComponentByClass<ULightComponent>();
-
-			if (LightComp)
-			{
-				// Common Settings
-				LightComp->SetLightColor(LightColor);
-				LightComp->SetIntensity(Intensity);
-
-				// Type-Specific Settings
-				switch (LightType)
-				{
-				case ELightBrushType::Point:
-					if (UPointLightComponent* Point = Cast<UPointLightComponent>(LightComp))
-					{
-						Point->SetAttenuationRadius(Radius);
-						Point->SetLightFalloffExponent(Falloff);
-					}
-					break;
-
-				case ELightBrushType::Spot:
-					if (USpotLightComponent* Spot = Cast<USpotLightComponent>(LightComp))
-					{
-						Spot->SetAttenuationRadius(Radius);
-						Spot->SetLightFalloffExponent(Falloff);
-						Spot->SetInnerConeAngle(Angle);
-						Spot->SetOuterConeAngle(Angle + 10.0f); // Standard offset
-					}
-					break;
-
-				case ELightBrushType::Directional:
-					// Directional usually relies on rotation/intensity/color only
-					break;
-				}
-			}
-            
-            // Ensure folder is set correctly in Editor
-#if WITH_EDITOR
-            NewLight->SetFolderPath(FName("Digger/DynamicLights"));
-#endif
+			// Assign owning chunk
+			FIntVector ChunkCoords = FVoxelConversion::WorldToChunk(Location);
+			if (UVoxelChunk* Chunk = InDiggerManager->GetOrCreateChunkAtCoords(ChunkCoords))
+				NewLight->SetOwningChunk(Chunk);
 		}
+
+		if (ULightComponent* LightComp = NewLight->FindComponentByClass<ULightComponent>())
+		{
+			LightComp->SetLightColor(LightColor);
+			LightComp->SetIntensity(Intensity);
+
+			switch (LightType)
+			{
+			case ELightBrushType::Point:
+				if (UPointLightComponent* Point = Cast<UPointLightComponent>(LightComp))
+				{
+					Point->SetAttenuationRadius(Radius);
+					Point->SetLightFalloffExponent(Falloff);
+				}
+				break;
+			case ELightBrushType::Spot:
+				if (USpotLightComponent* Spot = Cast<USpotLightComponent>(LightComp))
+				{
+					Spot->SetAttenuationRadius(Radius);
+					Spot->SetLightFalloffExponent(Falloff);
+					Spot->SetInnerConeAngle(Angle);
+					Spot->SetOuterConeAngle(Angle + 10.0f);
+				}
+				break;
+			case ELightBrushType::Directional:
+				break;
+			}
+		}
+
+#if WITH_EDITOR
+		NewLight->SetFolderPath(FName("Digger/DynamicLights"));
+#endif
 
 		return NewLight;
 	}

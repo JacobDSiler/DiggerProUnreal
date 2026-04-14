@@ -16,6 +16,9 @@ public class Digger : ModuleRules
             Path.Combine(ModuleDirectory, "Public")
         });
 
+        // Eigen is a sibling plugin at Plugins/Eigen/
+        PublicIncludePaths.Add(Path.Combine(PluginDirectory, "..", "Eigen"));
+
         // Public headers (only paths that actually exist)
         PublicIncludePaths.AddRange(
             new string[] {
@@ -51,15 +54,31 @@ public class Digger : ModuleRules
             "Foliage",
             "GeometryCore",
             "GeometryFramework",
+            "Niagara",
             "MeshDescription",
             "StaticMeshDescription",
             "AssetRegistry",
 
-            // Runtime networking
-            "SocketIOClient",
-            "SocketIOLib",
-            "SIOJson",
         });
+
+        // Runtime networking — optional SocketIO dependency
+        // Only link if the plugin is present (testers may not have it)
+        string SocketIOPluginDir = Path.Combine(PluginDirectory, "..", "SocketIOClient");
+        bool bHasSocketIO = Directory.Exists(SocketIOPluginDir);
+        if (bHasSocketIO)
+        {
+            PublicDependencyModuleNames.AddRange(new[]
+            {
+                "SocketIOClient",
+                "SocketIOLib",
+                "SIOJson",
+            });
+            PublicDefinitions.Add("WITH_SOCKETIO=1");
+        }
+        else
+        {
+            PublicDefinitions.Add("WITH_SOCKETIO=0");
+        }
 
         if (Target.bBuildEditor)
         {
@@ -71,9 +90,8 @@ public class Digger : ModuleRules
                 "MeshBuilder",
                 "MeshUtilities",
                 "MaterialUtilities",
+                "MeshConversion",
             });
         }
-
-        PublicDefinitions.Add("WITH_SOCKETIO=1");
     }
 }

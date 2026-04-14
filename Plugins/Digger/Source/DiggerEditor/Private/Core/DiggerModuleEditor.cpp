@@ -115,8 +115,8 @@ void FDiggerEditorModule::OnPreBeginPIE(bool bIsSimulating)
         return;
     }
 
-    const FText Title = FText::FromString("Digger Plugin");
-    const FText Msg = FText::FromString("Active Voxel Data detected.\n\nYes: Save & Clear (Recommended)\nNo: Clear Only (Data Lost)\nCancel: Abort Play");
+    const FText Title = FText::FromString("Digger");
+    const FText Msg = FText::FromString("You have unsaved voxel sculpting data.\n\nYes: Save changes and enter Play mode (Recommended)\nNo: Discard changes and enter Play mode\nCancel: Stay in the editor");
 
     EAppReturnType::Type Result = FMessageDialog::Open(EAppMsgType::YesNoCancel, Msg, &Title);
 
