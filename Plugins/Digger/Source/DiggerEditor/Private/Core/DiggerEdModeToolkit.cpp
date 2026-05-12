@@ -313,7 +313,7 @@ void FDiggerEdModeToolkit::Init(const TSharedPtr<IToolkitHost>& InitToolkitHost)
     }
 
     // 5. EXPORT & DATA (Gated)
-    if (FDiggerFeatureFlags::bEnableExportData)
+   // if (FDiggerFeatureFlags::bEnableExportData)
     {
         MainBox->AddSlot().AutoHeight().Padding(8, 12, 8, 4)
         [

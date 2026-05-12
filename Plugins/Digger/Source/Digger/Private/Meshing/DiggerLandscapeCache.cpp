@@ -17,6 +17,7 @@ void UDiggerLandscapeCache::Clear()
     Cache.Empty();
     ProcessedProxies.Empty();
     PendingQueue.Empty();
+    BuildResumeRow.Empty();
 }
 
 FIntPoint UDiggerLandscapeCache::WorldToGrid(const FVector& Pos) const
@@ -233,25 +234,40 @@ float UDiggerLandscapeCache::GetHeight(const FVector& Location)
     }
 
     // 4. GAME THREAD RECOVERY
-    // Instead of forcing a full build immediately (which might miss this specific point due to grid alignment),
-    // we just Sample the point directly. This is 100% accurate.
+    // Sample the single point directly — fast and 100% accurate.
+    // We do NOT call BuildCacheForProxy here because it scans the entire
+    // landscape proxy bounds (potentially millions of samples), causing
+    // multi-second hitches on the first dig.  Instead we store just this
+    // one point in the cache and queue the proxy for incremental
+    // background building via TickProcessQueue.
     TOptional<float> Direct = SampleLandscapeHeightPrecise(Location);
     float DirectHeight = Direct.IsSet() ? Direct.GetValue() : INVALID_LANDSCAPE_HEIGHT;
-    
+
     if (DirectHeight > (INVALID_LANDSCAPE_HEIGHT + 1.0f))
     {
-        // We found it! Add to cache for next time (e.g. Async workers)
-        // We need to upgrade to Write Lock briefly
-        // (Optimization: In a real implementation, you'd check if cache exists first)
-        // For now, let's just trigger the full build if cache is missing, 
-        // OR just return the value.
-        
-        // Let's trigger build to help future async tasks
-        if (!ProcessedProxies.Contains(Proxy))
+        // Store this single point in the cache so async workers can find it.
         {
-            BuildCacheForProxy(Proxy);
+            FWriteScopeLock WriteLock(Lock);
+            TSharedPtr<FHeightMap>* MapPtr = Cache.Find(Proxy);
+            if (!MapPtr)
+            {
+                TSharedPtr<FHeightMap> NewMap = MakeShared<FHeightMap>();
+                NewMap->Add(GridKey, DirectHeight);
+                Cache.Add(Proxy, NewMap);
+            }
+            else
+            {
+                (*MapPtr)->Add(GridKey, DirectHeight);
+            }
         }
-        
+
+        // Queue background build so the full proxy cache fills over time
+        // without blocking the current frame.
+        if (!ProcessedProxies.Contains(Proxy) && !PendingQueue.Contains(Proxy))
+        {
+            PendingQueue.AddUnique(Proxy);
+        }
+
         return DirectHeight;
     }
 
@@ -262,10 +278,11 @@ float UDiggerLandscapeCache::GetHeight(const FVector& Location)
 void UDiggerLandscapeCache::RefreshLandscapeCache()
 {
     FWriteScopeLock WriteLock(Lock);
-    
+
     Cache.Empty();
     ProcessedProxies.Empty();
     PendingQueue.Empty();
+    BuildResumeRow.Empty();
     LastAccessedProxy = nullptr;
 
     if (DiggerDebug::Cache())
@@ -322,36 +339,87 @@ void UDiggerLandscapeCache::BuildCacheForProxy(ALandscapeProxy* Proxy)
     int32 GridSize = FVoxelConversion::LocalVoxelSize;
     if (GridSize <= 0) GridSize = 100;
 
-    int32 NumX = FMath::CeilToInt((Bounds.Max.X - Bounds.Min.X) / GridSize) + 4;
-    int32 NumY = FMath::CeilToInt((Bounds.Max.Y - Bounds.Min.Y) / GridSize) + 4;
-    
-    TSharedPtr<FHeightMap> NewMap = MakeShared<FHeightMap>();
-    NewMap->Reserve(NumX * NumY);
+    const int32 TotalRows = FMath::CeilToInt((Bounds.Max.X - Bounds.Min.X) / GridSize) + 1;
+    const int32 TotalCols = FMath::CeilToInt((Bounds.Max.Y - Bounds.Min.Y) / GridSize) + 1;
 
-    // Scan using the Helper
-    for (float X = Bounds.Min.X; X <= Bounds.Max.X; X += GridSize)
+    // Resume from where we left off last tick
+    int32 StartRow = 0;
+    if (int32* ResumePtr = BuildResumeRow.Find(Proxy))
     {
-        for (float Y = Bounds.Min.Y; Y <= Bounds.Max.Y; Y += GridSize)
+        StartRow = *ResumePtr;
+    }
+
+    // Time-budget: never spend more than 4 ms per frame on cache building.
+    static constexpr double MAX_BUILD_TIME_SEC = 0.004;
+    const double StartTime = FPlatformTime::Seconds();
+
+    // Get or create the map for this proxy
+    TSharedPtr<FHeightMap> MapForProxy;
+    {
+        FWriteScopeLock WriteLock(Lock);
+        TSharedPtr<FHeightMap>* Existing = Cache.Find(Proxy);
+        if (Existing)
         {
+            MapForProxy = *Existing;
+        }
+        else
+        {
+            MapForProxy = MakeShared<FHeightMap>();
+            MapForProxy->Reserve(TotalRows * TotalCols);
+            Cache.Add(Proxy, MapForProxy);
+        }
+    }
+
+    int32 SamplesThisTick = 0;
+    bool bFinished = true;
+    int32 Row = StartRow;
+
+    for (; Row < TotalRows; ++Row)
+    {
+        const float X = Bounds.Min.X + Row * GridSize;
+        for (int32 Col = 0; Col < TotalCols; ++Col)
+        {
+            const float Y = Bounds.Min.Y + Col * GridSize;
             FVector WorldPos(X, Y, 0);
             TOptional<float> HOpt = SampleLandscapeHeightPrecise(WorldPos);
             if (HOpt.IsSet())
             {
-                NewMap->Add(WorldToGrid(WorldPos), HOpt.GetValue());
+                FIntPoint Key = WorldToGrid(WorldPos);
+                MapForProxy->Add(Key, HOpt.GetValue());
+            }
+
+            ++SamplesThisTick;
+            // Check time budget every 64 samples
+            if ((SamplesThisTick & 63) == 0 &&
+                (FPlatformTime::Seconds() - StartTime) > MAX_BUILD_TIME_SEC)
+            {
+                bFinished = false;
+                break;
             }
         }
+        if (!bFinished) break;
     }
 
+    if (bFinished)
     {
         FWriteScopeLock WriteLock(Lock);
-        Cache.Add(Proxy, NewMap);
         ProcessedProxies.Add(Proxy);
         PendingQueue.Remove(Proxy);
+        BuildResumeRow.Remove(Proxy);
+
+        if (DiggerDebug::Performance())
+        {
+            UE_LOG(LogTemp, Log, TEXT("Cache Built for %s. Entries: %d"), *Proxy->GetName(), MapForProxy->Num());
+        }
     }
-    
-    if (DiggerDebug::Performance())
+    else
     {
-        UE_LOG(LogTemp, Log, TEXT("Cache Built for %s. Entries: %d"), *Proxy->GetName(), NewMap->Num());
+        // Save resume position for next tick
+        BuildResumeRow.FindOrAdd(Proxy) = Row;
+        if (!PendingQueue.Contains(Proxy))
+        {
+            PendingQueue.AddUnique(Proxy);
+        }
     }
 }
 

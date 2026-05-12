@@ -1618,8 +1618,8 @@ void ADiggerManager::PlayDigFX(EDiggerFXOperation Operation, const FVector& Loca
     LastFXTime = Now;
 
     const FDiggerFXEntry& Entry = FXProfile->GetEntry(Operation);
-    UWorld* World = GetWorld();
-    if (!World) return;
+    UWorld* FXWorld = GetWorld();
+    if (!FXWorld) return;
 
     // Audio
     if (bUse3DSound)
@@ -1627,7 +1627,7 @@ void ADiggerManager::PlayDigFX(EDiggerFXOperation Operation, const FVector& Loca
         if (Entry.Sound3D)
         {
             UGameplayStatics::SpawnSoundAtLocation(
-                World, Entry.Sound3D, Location,
+                FXWorld, Entry.Sound3D, Location,
                 FRotator::ZeroRotator,
                 Entry.VolumeMultiplier);
         }
@@ -1637,7 +1637,7 @@ void ADiggerManager::PlayDigFX(EDiggerFXOperation Operation, const FVector& Loca
         if (Entry.Sound2D)
         {
             UGameplayStatics::PlaySound2D(
-                World, Entry.Sound2D,
+                FXWorld, Entry.Sound2D,
                 Entry.VolumeMultiplier);
         }
     }
@@ -1647,7 +1647,7 @@ void ADiggerManager::PlayDigFX(EDiggerFXOperation Operation, const FVector& Loca
     {
         const FVector Scale(Entry.NiagaraScale * (BrushRadius / 100.f));
         UNiagaraFunctionLibrary::SpawnSystemAtLocation(
-            World, Entry.NiagaraEffect, Location,
+            FXWorld, Entry.NiagaraEffect, Location,
             FRotator::ZeroRotator, Scale,
             /*bAutoDestroy=*/true);
     }
@@ -4271,7 +4271,92 @@ void ADiggerManager::EditorDeferredInit()
     HeightCacheSystem->Initialize(GetSafeWorld());
     UpdateVoxelSize();
     InitializeBrushShapes();
-    PrewarmHolePool();
+
+    // ── Incremental hole-pool prewarm ────────────────────────────────────────
+    // Instead of spawning all 64 actors in one frame (which causes a visible
+    // hitch), we spawn PREWARM_BATCH_SIZE per tick via a repeating timer.
+    // Once the pool reaches its target, OnPrewarmComplete chains into the
+    // deferred LoadAllChunks call.
+    PrewarmSpawnedSoFar = HolePool.Num();
+    PrewarmTargetCount  = FMath::Max(HolePoolSize, PrewarmSpawnedSoFar);
+
+    if (PrewarmSpawnedSoFar >= PrewarmTargetCount)
+    {
+        // Pool is already warm (e.g. hot-reload) — skip straight to load.
+        OnPrewarmComplete();
+    }
+    else if (UWorld* W = GetSafeWorld())
+    {
+        W->GetTimerManager().SetTimer(
+            PrewarmTimerHandle, this,
+            &ADiggerManager::PrewarmHolePoolTick,
+            0.016f, /*bLoop=*/true, /*FirstDelay=*/0.1f);
+
+        UE_LOG(LogTemp, Log,
+            TEXT("Digger: Incremental prewarm started — %d/%d, batch size %d"),
+            PrewarmSpawnedSoFar, PrewarmTargetCount, PREWARM_BATCH_SIZE);
+    }
+#endif
+}
+
+void ADiggerManager::PrewarmHolePoolTick()
+{
+    if (PrewarmSpawnedSoFar >= PrewarmTargetCount)
+    {
+        // Done — stop the timer and move on.
+        if (UWorld* W = GetSafeWorld())
+            W->GetTimerManager().ClearTimer(PrewarmTimerHandle);
+        OnPrewarmComplete();
+        return;
+    }
+
+    TSubclassOf<AActor> HoleClass = GetDynamicHoleClass();
+    if (!HoleClass)
+    {
+        if (const UDiggerSettings* S = UDiggerSettings::Get())
+            HoleClass = S->DefaultHoleActorClass.LoadSynchronous();
+    }
+    if (!HoleClass) return;
+
+    // If the class changed, flush stale pool.
+    if (PooledHoleClass && PooledHoleClass != HoleClass)
+    {
+        FlushHolePool();
+        PrewarmSpawnedSoFar = 0;
+        PooledHoleClass = HoleClass;
+    }
+    if (!PooledHoleClass) PooledHoleClass = HoleClass;
+
+    UWorld* W = GetSafeWorld();
+    if (!W) return;
+
+    const int32 BatchEnd = FMath::Min(PrewarmSpawnedSoFar + PREWARM_BATCH_SIZE,
+                                       PrewarmTargetCount);
+
+    for (int32 i = PrewarmSpawnedSoFar; i < BatchEnd; ++i)
+    {
+        FActorSpawnParameters P;
+        P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        P.ObjectFlags = RF_Transient;
+        P.bHideFromSceneOutliner = true;
+
+        ADynamicHole* NewHole = W->SpawnActor<ADynamicHole>(
+            HoleClass, FVector(0.f, 0.f, -9999999.f), FRotator::ZeroRotator, P);
+        if (NewHole)
+        {
+            NewHole->SetActorHiddenInGame(true);
+            NewHole->SetActorEnableCollision(false);
+            HolePool.Add(NewHole);
+        }
+    }
+
+    PrewarmSpawnedSoFar = BatchEnd;
+}
+
+void ADiggerManager::OnPrewarmComplete()
+{
+    UE_LOG(LogTemp, Log, TEXT("Digger: Hole pool prewarm complete — %d actors ready."),
+        HolePool.Num());
 
     // Load all saved chunks (voxels + holes) so they appear in the editor
     // immediately after a restart without requiring PIE.
@@ -4299,7 +4384,6 @@ void ADiggerManager::EditorDeferredInit()
             }
         }, 0.5f, false);
     }
-#endif
 }
 
 

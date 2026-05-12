@@ -421,7 +421,7 @@ private:
     bool bShowWorklightSection = false;
     bool bNavigationSection = false;
     bool bShowIslandsSection = false;
-    bool bShowSaveLoadSection = false;
+    bool bShowSaveLoadSection = true;
     bool bShowRotation = false;
     bool bShowOffset = false;
     bool bShowBrushParameters = true;

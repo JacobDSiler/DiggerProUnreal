@@ -4,6 +4,7 @@
 #include "DiggerEdMode.h"
 #include "AssetToolsModule.h"
 #include "DiggerEdModeToolkit.h"
+#include "DiggerFeatureFlags.h"
 #include "IAssetTools.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Engine/CollisionProfile.h"
@@ -18,6 +19,10 @@
 
 void FDiggerEditorModule::StartupModule()
 {
+    // Load feature flags from Config/FeatureFlags.ini before anything else.
+    // This controls which UI panels (Debug Flags, Developer Settings, etc.) are visible.
+    FDiggerFeatureFlags::LoadFlagsFromPluginConfig();
+
     FEditorModeRegistry::Get().RegisterMode<FDiggerEdMode>(
         FDiggerEdMode::EM_DiggerEdModeId,
         LOCTEXT("DiggerEdModeName", "Digger Editor"),

@@ -73,6 +73,10 @@ private:
 	UPROPERTY()
 	TArray<ALandscapeProxy*> PendingQueue;
 
+	// Resume index for incremental BuildCacheForProxy — tracks how many
+	// grid rows have been completed so we can pick up where we left off.
+	TMap<ALandscapeProxy*, int32> BuildResumeRow;
+
 	// Thread Safety
 	FRWLock Lock;
 public:

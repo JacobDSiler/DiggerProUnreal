@@ -967,8 +967,18 @@ void UMarchingCubes::GenerateMesh_MarchingCubes(
 //         Every subsequent remesh returns immediately from cache.
 // =============================================================================
  
-// REVERT — exact original CaptureHeightMap from uploaded MarchingCubes.cpp
-// Replace whatever is in your file with this verbatim. No cache, no changes.
+// =============================================================================
+// CaptureHeightMap — optimised two-tier lookup
+//
+// Tier 1: Check the landscape height cache (TMap lookup, sub-microsecond).
+//         Points that were cached by prior chunks, strokes, or background
+//         TickProcessQueue hits return immediately.
+// Tier 2: On cache miss, fall back to direct landscape sampling and insert
+//         the result into the cache so future queries are instant.
+//
+// This avoids the previous pattern of 17,000+ direct landscape queries per
+// chunk on every cold capture while keeping results identical.
+// =============================================================================
 
 TArray<float> UMarchingCubes::CaptureHeightMap(const FVector& Origin, float VoxelSize, int32 GridResolution, int32 Pad)
 {
@@ -976,20 +986,40 @@ TArray<float> UMarchingCubes::CaptureHeightMap(const FVector& Origin, float Voxe
 	TArray<float> Heights;
 	Heights.SetNumUninitialized(SampleSize * SampleSize);
 
-	if (DiggerManager)
-	{
-		for (int32 y = 0; y < SampleSize; ++y)
-		{
-			for (int32 x = 0; x < SampleSize; ++x)
-			{
-				const FVector ColumnPos = Origin + FVector((x - Pad) * VoxelSize, (y - Pad) * VoxelSize, 0.0f);
-				Heights[y * SampleSize + x] = DiggerManager->GetLandscapeHeightAt(ColumnPos);
-			}
-		}
-	}
-	else
+	if (!DiggerManager)
 	{
 		for (float& Val : Heights) Val = UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT;
+		return Heights;
+	}
+
+	// Try the landscape cache first (sub-microsecond TMap lookup for warm
+	// entries). On miss, fall back to direct landscape sampling.  This keeps
+	// results identical to the original code while being much faster when
+	// adjacent chunks have already warmed the cache.
+	UDiggerLandscapeCache* CapturedHeightCache = DiggerManager->AccessHeightCacheSystem();
+
+	for (int32 y = 0; y < SampleSize; ++y)
+	{
+		for (int32 x = 0; x < SampleSize; ++x)
+		{
+			const FVector ColumnPos = Origin + FVector((x - Pad) * VoxelSize, (y - Pad) * VoxelSize, 0.0f);
+
+			float H = UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT;
+
+			// Tier 1: cached lookup (fast)
+			if (CapturedHeightCache)
+			{
+				H = CapturedHeightCache->GetHeight(ColumnPos);
+			}
+
+			// Tier 2: direct sampling (guaranteed correct, original path)
+			if (H <= UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.0f)
+			{
+				H = DiggerManager->GetLandscapeHeightAt(ColumnPos);
+			}
+
+			Heights[y * SampleSize + x] = H;
+		}
 	}
 
 	return Heights;

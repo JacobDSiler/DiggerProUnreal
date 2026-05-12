@@ -396,6 +396,9 @@ public:
         this->bPaintingEnabled = InbPaintingEnabled;
     }
 
+    /** Mark viewport for redraw next tick. Called after brush ops, preview moves, etc. */
+    void MarkViewportDirty() { bNeedsViewportRefresh = true; }
+
 private:
     bool bIsPainting = false;
     bool bIsDragging = false;
@@ -411,7 +414,6 @@ private:
 
     // Viewport refresh — set true whenever visuals change, consumed by Tick
     bool bNeedsViewportRefresh = false;
-    void MarkViewportDirty() { bNeedsViewportRefresh = true; }
 
     // Loading Indication
     float LoadingSpriteRotation = 0.f;

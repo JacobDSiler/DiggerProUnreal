@@ -174,7 +174,9 @@ public:
             if (FViewport* ActiveViewport = GEditor->GetActiveViewport())
             {
                 ActiveViewport->SetUserFocus(true);
-                ActiveViewport->CaptureMouse(true);
+                // Never capture the mouse — allow default UE5 right-click
+                // viewport navigation (orbit/pan/fly) at all times.
+                ActiveViewport->CaptureMouse(false);
             }
         }
 
@@ -725,13 +727,14 @@ void FDiggerEdMode::Enter()
         }
     }
 
-    // Give keyboard/mouse focus to the active viewport so R/O/X/Y/Z + wheel are seen
+    // Give keyboard/mouse focus to the active viewport so R/O/X/Y/Z + wheel are seen.
+    // Never capture the mouse — default UE5 right-click navigation always available.
     if (GEditor)
     {
         if (FViewport* ActiveViewport = GEditor->GetActiveViewport())
         {
             ActiveViewport->SetUserFocus(true);
-            ActiveViewport->CaptureMouse(true);
+            ActiveViewport->CaptureMouse(false);
         }
     }
 
@@ -1878,13 +1881,23 @@ bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient,
                 const FVector RayDir = (TraceEnd - TraceStart).GetSafeNormal();
                 const float   Step   = 10.f;
 
-                // ── Hole actor suppression (always active) ────────────────
+                // ── Check landscape fallback setting FIRST ───────────────
+                const UDiggerEditorSettings* EdSettings = UDiggerEditorSettings::Get();
+                const bool bFallbackToLandscape =
+                    !EdSettings || EdSettings->bFallbackToLandscapeWhenNoMeshHit;
+
+                // ── Hole actor suppression ────────────────────────────────
                 // If the hit point is inside an open hole BP volume the ray
-                // passed through the hole mesh — suppress it so the brush
-                // doesn't snap to a landscape face that is visually open.
-                if (Digger->IsInsideHole(P)
-                    || Digger->IsInsideHole(P + RayDir * Step)
-                    || Digger->IsInsideHole(P - RayDir * Step))
+                // passed through the hole mesh.
+                // When landscape fallback is enabled (default): SKIP suppression.
+                // The landscape surface is exactly where the brush should be
+                // so the user can keep digging or generate mesh at that spot.
+                // When landscape fallback is disabled (pre-baked worlds only):
+                // suppress the hit so the brush doesn't snap to an open face.
+                if (!bFallbackToLandscape
+                    && (Digger->IsInsideHole(P)
+                        || Digger->IsInsideHole(P + RayDir * Step)
+                        || Digger->IsInsideHole(P - RayDir * Step)))
                 {
                     if (DiggerDebug::Casts())
                         UE_LOG(LogTemp, Warning, TEXT("Fallback: inside hole volume — suppressed"));
@@ -1908,10 +1921,7 @@ bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient,
                 //                            → Brush Placement
                 // That setting is for fully pre-baked worlds only.
 
-                const UDiggerEditorSettings* EdSettings = UDiggerEditorSettings::Get();
-                const bool bFallbackToLandscape =
-                    !EdSettings || EdSettings->bFallbackToLandscapeWhenNoMeshHit;
-
+                // bFallbackToLandscape already resolved above (before hole check)
                 if (bFallbackToLandscape)
                 {
                     // Hard fallback — always accept this landscape hit.
@@ -1962,6 +1972,55 @@ bool FDiggerEdMode::GetMouseWorldHit(FEditorViewportClient* ViewportClient,
                 UE_LOG(LogTemp, Error, TEXT("Fallback hit: %s"), *FallbackHit.ImpactPoint.ToString());
 
             return true;
+        }
+    }
+
+    // ---------------------------------------------------------
+    // 6. Last-resort landscape height query
+    // Both SmartTrace and fallback line trace missed (e.g. ray aimed
+    // through a cave opening into empty air below the landscape).
+    // Project the ray onto the landscape surface at the cursor XY so
+    // the brush stays visible and the user can keep sculpting.
+    // ---------------------------------------------------------
+    if (Digger)
+    {
+        const UDiggerEditorSettings* LRSettings = UDiggerEditorSettings::Get();
+        const bool bFallback = !LRSettings || LRSettings->bFallbackToLandscapeWhenNoMeshHit;
+        if (bFallback)
+        {
+            // Find where the ray intersects Z=0 plane to get approximate XY
+            const FVector RayDir = (TraceEnd - TraceStart).GetSafeNormal();
+            if (!FMath::IsNearlyZero(RayDir.Z))
+            {
+                // Intersect ray with the approximate landscape Z
+                const float ApproxZ = Digger->GetActorLocation().Z;
+                const float T = (ApproxZ - TraceStart.Z) / RayDir.Z;
+                if (T > 0.f)
+                {
+                    const FVector PlaneHit = TraceStart + RayDir * T;
+                    const float LandscapeZ = Digger->GetLandscapeHeightAt(
+                        FVector(PlaneHit.X, PlaneHit.Y, 0.f));
+
+                    if (LandscapeZ > UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.f)
+                    {
+                        FHitResult LandscapeHit;
+                        LandscapeHit.bBlockingHit  = true;
+                        LandscapeHit.ImpactPoint   = FVector(PlaneHit.X, PlaneHit.Y, LandscapeZ);
+                        LandscapeHit.Location      = LandscapeHit.ImpactPoint;
+                        LandscapeHit.ImpactNormal  = FVector::UpVector;
+                        LandscapeHit.TraceStart    = TraceStart;
+                        LandscapeHit.TraceEnd      = TraceEnd;
+                        OutHit         = LandscapeHit;
+                        OutHitLocation = LandscapeHit.ImpactPoint;
+
+                        if (DiggerDebug::Casts())
+                            UE_LOG(LogTemp, Warning,
+                                TEXT("Last-resort: landscape height fallback at %s"),
+                                *LandscapeHit.ImpactPoint.ToString());
+                        return true;
+                    }
+                }
+            }
         }
     }
 
@@ -2053,7 +2112,7 @@ void FDiggerEdMode::UpdatePreviewAtCursor(FEditorViewportClient* InViewportClien
     FHitResult Hit;
     if (!TraceUnderCursor(InViewportClient, Hit))
     {
-        if (Preview->IsVisible())
+        if (!Preview->IsHidden())
             MarkViewportDirty();
         Preview->SetVisible(false);
         BrushCache.CachedBrushPreviewCenter = FVector::ZeroVector;
@@ -2355,32 +2414,10 @@ bool FDiggerEdMode::InputDelta(FEditorViewportClient* InViewportClient, FViewpor
 
 bool FDiggerEdMode::StartTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
 {
-    // Check modifiers directly from the viewport
-    const bool bShift = InViewport->KeyState(EKeys::LeftShift) || InViewport->KeyState(EKeys::RightShift);
-    const bool bCtrl  = InViewport->KeyState(EKeys::LeftControl) || InViewport->KeyState(EKeys::RightControl);
-    const bool bAlt   = InViewport->KeyState(EKeys::LeftAlt) || InViewport->KeyState(EKeys::RightAlt);
-
-    // If a modifier is held, return FALSE.
-    // This tells the Editor: "I don't want to track this mouse drag; YOU handle it."
-    // This enables Alt-Orbit / Pan / Zoom.
-    if (bShift || bCtrl || bAlt)
-    {
-        return false; 
-    }
-
-    // If painting is enabled (and no modifiers), WE track the mouse.
-    if (bPaintingEnabled)
-    {
-        bIsDragging = true;
-
-        // Open a pending history action for this drag stroke.
-        // CommitPendingAction() will seal it on EndTracking.
-        if (ADiggerManager* Digger = FindDiggerManager())
-            Digger->BeginStroke(TEXT("Stroke"));
-
-        return true;
-    }
-
+    // Always let the editor viewport handle mouse drags.
+    // This preserves standard UE5 right-click camera navigation
+    // (orbit, pan, fly) at all times.  Painting is driven entirely
+    // by the InputKey + Tick path and does not need StartTracking.
     return FEdMode::StartTracking(InViewportClient, InViewport);
 }
 
@@ -3002,20 +3039,12 @@ void FDiggerEdMode::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
     
     // ---------------------------------------------------------------------
     // Ensure viewport focus when in Rotate/Offset mode so R/O/X/Y/Z always work.
-    // When Camera Follows Brush is OFF we skip CaptureMouse so the viewport
-    // stays stationary — the user's camera is unaffected by painting.
+    // Never capture mouse — default UE5 right-click navigation always available.
+    // Painting uses InputKey + Tick path, independent of mouse capture.
     // ---------------------------------------------------------------------
     if (ViewportClient && ViewportClient->Viewport)
     {
-        const bool bCameraFollow = [this]() -> bool {
-            if (TSharedPtr<FDiggerEdModeToolkit> T = GetDiggerToolkit())
-                return T->GetCameraFollowsBrush();
-            return true; // default on if toolkit not yet ready
-        }();
-
         ViewportClient->Viewport->SetUserFocus(true);
-        if (bCameraFollow)
-            ViewportClient->Viewport->CaptureMouse(true);
     }
 
     

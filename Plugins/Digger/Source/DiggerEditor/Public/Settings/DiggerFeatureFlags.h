@@ -16,7 +16,7 @@
  * bEnableIslands=false
  * bEnableAdditionalTools=false
  * bEnableDMM=false
- * bEnableExportData=false
+ * bEnableExportData=true
  * bEnableDeveloperSettings=false
  *
  * Loading is performed once by calling LoadFlagsFromPluginConfig().

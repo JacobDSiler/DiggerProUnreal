@@ -2138,10 +2138,22 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     TArray<float> SDFFlat;
     SDFFlat.SetNumUninitialized(SnapSX * SnapSY * SnapSZ);
 
+    // Brush Z used as virtual terrain surface when landscape heights are invalid
+    // (inside landscape holes).  Prevents garbage SDF values.
+    const float BrushFallbackZ = Stroke.BrushPosition.Z;
+
+    // Helper: returns a safe column height, falling back to BrushFallbackZ
+    // when the landscape query returns INVALID.
+    auto GetSafeColumnHeight = [&](int32 X, int32 Y) -> float
+    {
+        const float H = GetCachedColumnHeight(X, Y);
+        return (H > (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.f)) ? H : BrushFallbackZ;
+    };
+
     for (int32 X = SnapX0; X <= SnapX1; ++X)
     for (int32 Y = SnapY0; Y <= SnapY1; ++Y)
     {
-        const float ColH = GetCachedColumnHeight(X, Y);
+        const float ColH = GetSafeColumnHeight(X, Y);
 
         for (int32 Z = SnapZ0; Z <= SnapZ1; ++Z)
         {
@@ -2168,7 +2180,7 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
             Z < SnapZ0 || Z > SnapZ1)
         {
             const FVector VP  = ChunkOrigin + FVector(X, Y, Z) * LocalVoxelSize;
-            return (VP.Z - GetCachedColumnHeight(X, Y)) / LocalVoxelSize;
+            return (VP.Z - GetSafeColumnHeight(X, Y)) / LocalVoxelSize;
         }
         return SDFFlat[(X-SnapX0) + SnapSX*(Y-SnapY0) + SnapSX*SnapSY*(Z-SnapZ0)];
     };
@@ -2187,9 +2199,11 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
     {
         float TerrainHeight = GetCachedColumnHeight(X, Y);
 
-        // If the landscape query failed (column outside landscape bounds at a
-        // chunk seam), fall back to the nearest valid cardinal sample.
-        // Skipping the column entirely leaves an uncleared ridge of voxels.
+        // If the landscape query failed (column inside a landscape hole or
+        // outside landscape bounds), fall back to the nearest valid cardinal
+        // sample first, then to the brush hit-point Z as the virtual surface.
+        // Previously this column was skipped entirely, which prevented voxel
+        // mesh from generating inside landscape holes.
         if (TerrainHeight <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.f))
         {
             const int32 CardinalOffsets[][2] = { {1,0}, {-1,0}, {0,1}, {0,-1} };
@@ -2202,8 +2216,12 @@ void UVoxelChunk::ApplyBrushStroke(const FBrushStroke& Stroke)
                     break;
                 }
             }
+            // If still no valid height (entire region is a hole), use the
+            // brush position Z as the virtual terrain surface.  This lets
+            // the brush write voxels relative to where the user is clicking
+            // so Marching Cubes can generate mesh inside the hole.
             if (TerrainHeight <= (UDiggerLandscapeCache::INVALID_LANDSCAPE_HEIGHT + 1.f))
-                continue; // truly outside landscape — nothing to sculpt
+                TerrainHeight = Stroke.BrushPosition.Z;
         }
 
         for (int32 Z = StartZ; Z < EndZ; ++Z)

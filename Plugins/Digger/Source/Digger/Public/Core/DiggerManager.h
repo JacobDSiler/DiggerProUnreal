@@ -971,6 +971,14 @@ private:
     UPROPERTY(Transient)
     TSubclassOf<AActor> PooledHoleClass;
 
+    // Incremental prewarm state (editor startup)
+    FTimerHandle PrewarmTimerHandle;
+    int32 PrewarmSpawnedSoFar = 0;
+    int32 PrewarmTargetCount  = 0;
+    static constexpr int32 PREWARM_BATCH_SIZE = 8;
+    void PrewarmHolePoolTick();
+    void OnPrewarmComplete();
+
 public:
     // ── Baked Holes Mesh ─────────────────────────────────────────────────────
     // Merges all rendered hole geometry into a single ProceduralMeshComponent
@@ -1448,6 +1456,7 @@ private:
     // it after PIE ends without losing the user's preference.
     bool bHistoryEnabledBeforePIE = true;
 
+public:
     // ── Dig FX (Sound + Niagara) ────────────────────────────────────────────
     /** Optional FX profile mapping dig operations to sounds and particles. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Digger|FX")
